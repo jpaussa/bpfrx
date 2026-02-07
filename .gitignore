@@ -1,0 +1,20 @@
+# Go
+/bpfrxd
+*.test
+*.out
+
+# eBPF generated
+*_bpfel.go
+*_bpfeb.go
+*_bpfel.o
+*_bpfeb.o
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
