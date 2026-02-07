@@ -38,27 +38,37 @@ func (m *Manager) SetPolicyRule(policySetID uint32, ruleIndex uint32, rule Polic
 }
 
 // SetAddressBookEntry writes an LPM trie entry for an address.
+// Auto-detects IPv4 vs IPv6 from the CIDR and routes to the correct map.
 func (m *Manager) SetAddressBookEntry(cidr string, addressID uint32) error {
-	zm, ok := m.maps["address_book_v4"]
-	if !ok {
-		return fmt.Errorf("address_book_v4 map not found")
-	}
-
 	_, ipNet, err := net.ParseCIDR(cidr)
 	if err != nil {
 		return fmt.Errorf("parse CIDR %q: %w", cidr, err)
 	}
 
 	ones, _ := ipNet.Mask.Size()
-	ip4 := ipNet.IP.To4()
-	if ip4 == nil {
-		return fmt.Errorf("only IPv4 addresses supported: %s", cidr)
+
+	if ip4 := ipNet.IP.To4(); ip4 != nil {
+		zm, ok := m.maps["address_book_v4"]
+		if !ok {
+			return fmt.Errorf("address_book_v4 map not found")
+		}
+		key := LPMKeyV4{
+			PrefixLen: uint32(ones),
+			Addr:      binary.BigEndian.Uint32(ip4),
+		}
+		val := AddrValue{AddressID: addressID}
+		return zm.Update(key, val, ebpf.UpdateAny)
 	}
 
-	key := LPMKeyV4{
-		PrefixLen: uint32(ones),
-		Addr:      binary.BigEndian.Uint32(ip4),
+	// IPv6
+	zm, ok := m.maps["address_book_v6"]
+	if !ok {
+		return fmt.Errorf("address_book_v6 map not found")
 	}
+	key := LPMKeyV6{
+		PrefixLen: uint32(ones),
+	}
+	copy(key.Addr[:], ipNet.IP.To16())
 	val := AddrValue{AddressID: addressID}
 	return zm.Update(key, val, ebpf.UpdateAny)
 }
@@ -221,6 +231,100 @@ func (m *Manager) ClearSNATRules() error {
 	return nil
 }
 
+// IterateSessionsV6 iterates all IPv6 session entries, calling fn for each.
+func (m *Manager) IterateSessionsV6(fn func(SessionKeyV6, SessionValueV6) bool) error {
+	sm, ok := m.maps["sessions_v6"]
+	if !ok {
+		return fmt.Errorf("sessions_v6 map not found")
+	}
+
+	var key SessionKeyV6
+	var val SessionValueV6
+	iter := sm.Iterate()
+	for iter.Next(&key, &val) {
+		if !fn(key, val) {
+			break
+		}
+	}
+	return iter.Err()
+}
+
+// DeleteSessionV6 deletes an IPv6 session entry by key.
+func (m *Manager) DeleteSessionV6(key SessionKeyV6) error {
+	sm, ok := m.maps["sessions_v6"]
+	if !ok {
+		return fmt.Errorf("sessions_v6 map not found")
+	}
+	return sm.Delete(key)
+}
+
+// SetDNATEntryV6 writes a dnat_table_v6 entry.
+func (m *Manager) SetDNATEntryV6(key DNATKeyV6, val DNATValueV6) error {
+	zm, ok := m.maps["dnat_table_v6"]
+	if !ok {
+		return fmt.Errorf("dnat_table_v6 map not found")
+	}
+	return zm.Update(key, val, ebpf.UpdateAny)
+}
+
+// DeleteDNATEntryV6 deletes a dnat_table_v6 entry.
+func (m *Manager) DeleteDNATEntryV6(key DNATKeyV6) error {
+	zm, ok := m.maps["dnat_table_v6"]
+	if !ok {
+		return fmt.Errorf("dnat_table_v6 map not found")
+	}
+	return zm.Delete(key)
+}
+
+// ClearDNATStaticV6 deletes all static (flags=1) dnat_table_v6 entries.
+func (m *Manager) ClearDNATStaticV6() error {
+	zm, ok := m.maps["dnat_table_v6"]
+	if !ok {
+		return fmt.Errorf("dnat_table_v6 map not found")
+	}
+	var key DNATKeyV6
+	var val DNATValueV6
+	iter := zm.Iterate()
+	var toDelete []DNATKeyV6
+	for iter.Next(&key, &val) {
+		if val.Flags == DNATFlagStatic {
+			toDelete = append(toDelete, key)
+		}
+	}
+	for _, k := range toDelete {
+		zm.Delete(k)
+	}
+	return nil
+}
+
+// SetSNATRuleV6 writes a snat_rules_v6 entry.
+func (m *Manager) SetSNATRuleV6(fromZone, toZone uint16, val SNATValueV6) error {
+	zm, ok := m.maps["snat_rules_v6"]
+	if !ok {
+		return fmt.Errorf("snat_rules_v6 map not found")
+	}
+	key := SNATKey{FromZone: fromZone, ToZone: toZone}
+	return zm.Update(key, val, ebpf.UpdateAny)
+}
+
+// ClearSNATRulesV6 deletes all snat_rules_v6 entries.
+func (m *Manager) ClearSNATRulesV6() error {
+	zm, ok := m.maps["snat_rules_v6"]
+	if !ok {
+		return fmt.Errorf("snat_rules_v6 map not found")
+	}
+	var key SNATKey
+	iter := zm.Iterate()
+	var keys []SNATKey
+	for iter.Next(&key, nil) {
+		keys = append(keys, key)
+	}
+	for _, k := range keys {
+		zm.Delete(k)
+	}
+	return nil
+}
+
 // htons converts a uint16 from host to network byte order.
 func htons(v uint16) uint16 {
 	var b [2]byte
@@ -235,4 +339,11 @@ func ipToUint32BE(ip net.IP) uint32 {
 		return 0
 	}
 	return binary.BigEndian.Uint32(ip4)
+}
+
+// ipTo16Bytes converts a net.IP to a [16]byte array.
+func ipTo16Bytes(ip net.IP) [16]byte {
+	var b [16]byte
+	copy(b[:], ip.To16())
+	return b
 }

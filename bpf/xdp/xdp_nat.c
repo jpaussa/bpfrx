@@ -4,7 +4,8 @@
  *
  * Reconciles actual packet headers with the desired state in pkt_meta.
  * If meta->src_ip differs from the packet's saddr, rewrite saddr + fix
- * IP and L4 checksums. Same for dst_ip. Then tail-call to forward.
+ * checksums. Same for dst_ip. Then tail-call to forward.
+ * Supports both IPv4 and IPv6.
  */
 
 #include "../headers/bpfrx_common.h"
@@ -13,8 +14,6 @@
 
 /*
  * Update L4 (TCP/UDP) checksum for a 4-byte pseudo-header field change.
- * TCP checksum is mandatory; UDP checksum of 0 means "no checksum" and
- * should not be updated.
  */
 static __always_inline void
 nat_update_l4_csum(void *data, void *data_end, struct pkt_meta *meta,
@@ -31,9 +30,31 @@ nat_update_l4_csum(void *data, void *data_end, struct pkt_meta *meta,
 		struct udphdr *udp = l4;
 		if ((void *)(udp + 1) > data_end)
 			return;
-		/* UDP checksum of 0 means unused; don't update */
 		if (udp->check != 0)
 			csum_update_4(&udp->check, old_ip, new_ip);
+	}
+}
+
+/*
+ * Update L4 checksum for a 128-bit IPv6 address change.
+ */
+static __always_inline void
+nat_update_l4_csum_v6(void *data, void *data_end, struct pkt_meta *meta,
+		      const __u8 *old_addr, const __u8 *new_addr)
+{
+	void *l4 = data + meta->l4_offset;
+
+	if (meta->protocol == PROTO_TCP) {
+		struct tcphdr *tcp = l4;
+		if ((void *)(tcp + 1) > data_end)
+			return;
+		csum_update_16(&tcp->check, old_addr, new_addr);
+	} else if (meta->protocol == PROTO_UDP) {
+		struct udphdr *udp = l4;
+		if ((void *)(udp + 1) > data_end)
+			return;
+		/* IPv6 UDP checksum is mandatory -- always update */
+		csum_update_16(&udp->check, old_addr, new_addr);
 	}
 }
 
@@ -55,32 +76,27 @@ nat_update_l4_port_csum(void *data, void *data_end, struct pkt_meta *meta,
 		struct udphdr *udp = l4;
 		if ((void *)(udp + 1) > data_end)
 			return;
-		if (udp->check != 0)
+		if (meta->addr_family == AF_INET6 || udp->check != 0)
 			csum_update_2(&udp->check, old_port, new_port);
 	}
 }
 
-SEC("xdp")
-int xdp_nat_prog(struct xdp_md *ctx)
+/*
+ * IPv4 NAT rewrite.
+ */
+static __always_inline void
+nat_rewrite_v4(void *data, void *data_end, struct pkt_meta *meta)
 {
-	void *data     = (void *)(long)ctx->data;
-	void *data_end = (void *)(long)ctx->data_end;
-
-	__u32 zero = 0;
-	struct pkt_meta *meta = bpf_map_lookup_elem(&pkt_meta_scratch, &zero);
-	if (!meta)
-		return XDP_DROP;
-
 	struct iphdr *iph = data + meta->l3_offset;
 	if ((void *)(iph + 1) > data_end)
-		return XDP_DROP;
+		return;
 
 	/* Source IP rewrite */
-	if (meta->src_ip != iph->saddr) {
+	if (meta->src_ip.v4 != iph->saddr) {
 		__be32 old_src = iph->saddr;
-		csum_update_4(&iph->check, old_src, meta->src_ip);
-		nat_update_l4_csum(data, data_end, meta, old_src, meta->src_ip);
-		iph->saddr = meta->src_ip;
+		csum_update_4(&iph->check, old_src, meta->src_ip.v4);
+		nat_update_l4_csum(data, data_end, meta, old_src, meta->src_ip.v4);
+		iph->saddr = meta->src_ip.v4;
 	}
 
 	/* Source port rewrite */
@@ -104,11 +120,11 @@ int xdp_nat_prog(struct xdp_md *ctx)
 	}
 
 	/* Destination IP rewrite */
-	if (meta->dst_ip != iph->daddr) {
+	if (meta->dst_ip.v4 != iph->daddr) {
 		__be32 old_dst = iph->daddr;
-		csum_update_4(&iph->check, old_dst, meta->dst_ip);
-		nat_update_l4_csum(data, data_end, meta, old_dst, meta->dst_ip);
-		iph->daddr = meta->dst_ip;
+		csum_update_4(&iph->check, old_dst, meta->dst_ip.v4);
+		nat_update_l4_csum(data, data_end, meta, old_dst, meta->dst_ip.v4);
+		iph->daddr = meta->dst_ip.v4;
 	}
 
 	/* Destination port rewrite */
@@ -130,6 +146,91 @@ int xdp_nat_prog(struct xdp_md *ctx)
 			}
 		}
 	}
+}
+
+/*
+ * IPv6 NAT rewrite.
+ * IPv6 has no IP header checksum. Only L4 checksums need updating.
+ */
+static __always_inline void
+nat_rewrite_v6(void *data, void *data_end, struct pkt_meta *meta)
+{
+	struct ipv6hdr *ip6h = data + meta->l3_offset;
+	if ((void *)(ip6h + 1) > data_end)
+		return;
+
+	/* Source IP rewrite */
+	if (!ip_addr_eq_v6(meta->src_ip.v6, (__u8 *)&ip6h->saddr)) {
+		__u8 old_src[16];
+		__builtin_memcpy(old_src, &ip6h->saddr, 16);
+		nat_update_l4_csum_v6(data, data_end, meta, old_src, meta->src_ip.v6);
+		__builtin_memcpy(&ip6h->saddr, meta->src_ip.v6, 16);
+	}
+
+	/* Source port rewrite */
+	if (meta->src_port != 0) {
+		void *l4 = data + meta->l4_offset;
+		if (meta->protocol == PROTO_TCP) {
+			struct tcphdr *tcp = l4;
+			if ((void *)(tcp + 1) <= data_end && tcp->source != meta->src_port) {
+				nat_update_l4_port_csum(data, data_end, meta,
+							tcp->source, meta->src_port);
+				tcp->source = meta->src_port;
+			}
+		} else if (meta->protocol == PROTO_UDP) {
+			struct udphdr *udp = l4;
+			if ((void *)(udp + 1) <= data_end && udp->source != meta->src_port) {
+				nat_update_l4_port_csum(data, data_end, meta,
+							udp->source, meta->src_port);
+				udp->source = meta->src_port;
+			}
+		}
+	}
+
+	/* Destination IP rewrite */
+	if (!ip_addr_eq_v6(meta->dst_ip.v6, (__u8 *)&ip6h->daddr)) {
+		__u8 old_dst[16];
+		__builtin_memcpy(old_dst, &ip6h->daddr, 16);
+		nat_update_l4_csum_v6(data, data_end, meta, old_dst, meta->dst_ip.v6);
+		__builtin_memcpy(&ip6h->daddr, meta->dst_ip.v6, 16);
+	}
+
+	/* Destination port rewrite */
+	if (meta->dst_port != 0) {
+		void *l4 = data + meta->l4_offset;
+		if (meta->protocol == PROTO_TCP) {
+			struct tcphdr *tcp = l4;
+			if ((void *)(tcp + 1) <= data_end && tcp->dest != meta->dst_port) {
+				nat_update_l4_port_csum(data, data_end, meta,
+							tcp->dest, meta->dst_port);
+				tcp->dest = meta->dst_port;
+			}
+		} else if (meta->protocol == PROTO_UDP) {
+			struct udphdr *udp = l4;
+			if ((void *)(udp + 1) <= data_end && udp->dest != meta->dst_port) {
+				nat_update_l4_port_csum(data, data_end, meta,
+							udp->dest, meta->dst_port);
+				udp->dest = meta->dst_port;
+			}
+		}
+	}
+}
+
+SEC("xdp")
+int xdp_nat_prog(struct xdp_md *ctx)
+{
+	void *data     = (void *)(long)ctx->data;
+	void *data_end = (void *)(long)ctx->data_end;
+
+	__u32 zero = 0;
+	struct pkt_meta *meta = bpf_map_lookup_elem(&pkt_meta_scratch, &zero);
+	if (!meta)
+		return XDP_DROP;
+
+	if (meta->addr_family == AF_INET)
+		nat_rewrite_v4(data, data_end, meta);
+	else
+		nat_rewrite_v6(data, data_end, meta);
 
 	/* Continue to forwarding */
 	bpf_tail_call(ctx, &xdp_progs, XDP_PROG_FORWARD);

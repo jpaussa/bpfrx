@@ -327,6 +327,14 @@ func compileInterfaces(node *Node, ifaces *InterfacesConfig) error {
 						}
 					}
 				}
+				inet6Node := familyNode.FindChild("inet6")
+				if inet6Node != nil {
+					for _, addrNode := range inet6Node.FindChildren("address") {
+						if len(addrNode.Keys) >= 2 {
+							unit.Addresses = append(unit.Addresses, addrNode.Keys[1])
+						}
+					}
+				}
 			}
 
 			ifc.Units[unitNum] = unit

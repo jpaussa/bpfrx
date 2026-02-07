@@ -54,6 +54,57 @@ struct session_value {
 	__u8  pad[2];
 };
 
+/* IPv6 session key -- 5-tuple with 128-bit addresses. */
+struct session_key_v6 {
+	__u8   src_ip[16];
+	__u8   dst_ip[16];
+	__be16 src_port;
+	__be16 dst_port;
+	__u8   protocol;
+	__u8   pad[3];
+} __attribute__((packed));
+
+/* IPv6 session value -- full connection state with 128-bit addresses. */
+struct session_value_v6 {
+	/* Connection state */
+	__u8  state;           /* SESS_STATE_* */
+	__u8  flags;           /* SESS_FLAG_* */
+	__u8  tcp_state;       /* TCP-specific sub-state */
+	__u8  is_reverse;      /* 1 if this is the reverse direction entry */
+
+	/* Timestamps (seconds since boot) */
+	__u64 created;
+	__u64 last_seen;
+	__u32 timeout;         /* idle timeout in seconds */
+	__u32 policy_id;
+
+	/* Zone info */
+	__u16 ingress_zone;
+	__u16 egress_zone;
+
+	/* NAT translations (original -> translated) */
+	__u8  nat_src_ip[16];
+	__u8  nat_dst_ip[16];
+	__be16 nat_src_port;
+	__be16 nat_dst_port;
+
+	/* Counters -- forward direction */
+	__u64 fwd_packets;
+	__u64 fwd_bytes;
+
+	/* Counters -- reverse direction */
+	__u64 rev_packets;
+	__u64 rev_bytes;
+
+	/* Reverse key for paired entry deletion */
+	struct session_key_v6 reverse_key;
+
+	/* ALG tracking */
+	__u8  alg_type;    /* 0=none, 1=FTP, 2=SIP, 3=DNS */
+	__u8  log_flags;
+	__u8  pad[2];
+};
+
 /* TCP state machine transition. Returns new state. */
 static __always_inline __u8
 ct_tcp_update_state(__u8 current_state, __u8 tcp_flags, __u8 direction)
@@ -120,18 +171,31 @@ ct_get_timeout(__u8 protocol, __u8 state)
 	case PROTO_UDP:
 		return 60;
 	case PROTO_ICMP:
+	case PROTO_ICMPV6:
 		return 30;
 	default:
 		return 30;
 	}
 }
 
-/* Build reverse session key. */
+/* Build reverse session key (IPv4). */
 static __always_inline void
 ct_reverse_key(const struct session_key *fwd, struct session_key *rev)
 {
 	rev->src_ip   = fwd->dst_ip;
 	rev->dst_ip   = fwd->src_ip;
+	rev->src_port = fwd->dst_port;
+	rev->dst_port = fwd->src_port;
+	rev->protocol = fwd->protocol;
+	rev->pad[0] = rev->pad[1] = rev->pad[2] = 0;
+}
+
+/* Build reverse session key (IPv6). */
+static __always_inline void
+ct_reverse_key_v6(const struct session_key_v6 *fwd, struct session_key_v6 *rev)
+{
+	__builtin_memcpy(rev->src_ip, fwd->dst_ip, 16);
+	__builtin_memcpy(rev->dst_ip, fwd->src_ip, 16);
 	rev->src_port = fwd->dst_port;
 	rev->dst_port = fwd->src_port;
 	rev->protocol = fwd->protocol;

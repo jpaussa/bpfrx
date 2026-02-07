@@ -135,7 +135,11 @@ func (m *Manager) compileAddressBook(cfg *config.Config, result *CompileResult) 
 		cidr := addr.Value
 		// Ensure CIDR notation
 		if !strings.Contains(cidr, "/") {
-			cidr = cidr + "/32"
+			if strings.Contains(cidr, ":") {
+				cidr = cidr + "/128" // IPv6
+			} else {
+				cidr = cidr + "/32" // IPv4
+			}
 		}
 
 		if err := m.SetAddressBookEntry(cidr, addrID); err != nil {
@@ -337,12 +341,18 @@ func (m *Manager) compilePolicies(cfg *config.Config, result *CompileResult) err
 }
 
 func (m *Manager) compileNAT(cfg *config.Config, result *CompileResult) error {
-	// Clear previous NAT entries
+	// Clear previous NAT entries (v4 + v6)
 	if err := m.ClearSNATRules(); err != nil {
 		slog.Warn("failed to clear snat_rules", "err", err)
 	}
+	if err := m.ClearSNATRulesV6(); err != nil {
+		slog.Warn("failed to clear snat_rules_v6", "err", err)
+	}
 	if err := m.ClearDNATStatic(); err != nil {
 		slog.Warn("failed to clear static dnat entries", "err", err)
+	}
+	if err := m.ClearDNATStaticV6(); err != nil {
+		slog.Warn("failed to clear static dnat_v6 entries", "err", err)
 	}
 
 	natCfg := &cfg.Security.NAT
@@ -376,26 +386,46 @@ func (m *Manager) compileNAT(cfg *config.Config, result *CompileResult) error {
 			}
 
 			ifaceName := toZoneCfg.Interfaces[0]
+
+			// IPv4 SNAT
 			snatIP, err := getInterfaceIP(ifaceName)
 			if err != nil {
-				slog.Warn("cannot get interface IP for SNAT",
+				slog.Warn("cannot get interface IPv4 for SNAT",
 					"interface", ifaceName, "err", err)
-				continue
+			} else {
+				val := SNATValue{
+					SNATIP: ipToUint32BE(snatIP),
+					Mode:   0, // interface mode
+				}
+				if err := m.SetSNATRule(fromZone, toZone, val); err != nil {
+					return fmt.Errorf("set snat rule %s/%s: %w",
+						rs.Name, rule.Name, err)
+				}
+				slog.Info("source NAT rule compiled",
+					"rule-set", rs.Name, "rule", rule.Name,
+					"from", rs.FromZone, "to", rs.ToZone,
+					"snat_ip", snatIP)
 			}
 
-			val := SNATValue{
-				SNATIP: ipToUint32BE(snatIP),
-				Mode:   0, // interface mode
+			// IPv6 SNAT (if interface has a v6 address)
+			snatIPv6, err := getInterfaceIPv6(ifaceName)
+			if err != nil {
+				slog.Debug("no IPv6 address for SNAT",
+					"interface", ifaceName, "err", err)
+			} else {
+				val := SNATValueV6{
+					SNATIP: ipTo16Bytes(snatIPv6),
+					Mode:   0,
+				}
+				if err := m.SetSNATRuleV6(fromZone, toZone, val); err != nil {
+					return fmt.Errorf("set snat_v6 rule %s/%s: %w",
+						rs.Name, rule.Name, err)
+				}
+				slog.Info("source NAT v6 rule compiled",
+					"rule-set", rs.Name, "rule", rule.Name,
+					"from", rs.FromZone, "to", rs.ToZone,
+					"snat_ip", snatIPv6)
 			}
-			if err := m.SetSNATRule(fromZone, toZone, val); err != nil {
-				return fmt.Errorf("set snat rule %s/%s: %w",
-					rs.Name, rule.Name, err)
-			}
-
-			slog.Info("source NAT rule compiled",
-				"rule-set", rs.Name, "rule", rule.Name,
-				"from", rs.FromZone, "to", rs.ToZone,
-				"snat_ip", snatIP)
 		}
 	}
 
@@ -457,19 +487,37 @@ func (m *Manager) compileNAT(cfg *config.Config, result *CompileResult) error {
 					proto = 6 // TCP default for port-based DNAT
 				}
 
-				dk := DNATKey{
-					Protocol: proto,
-					DstIP:    ipToUint32BE(matchIP),
-					DstPort:  htons(dstPort),
-				}
-				dv := DNATValue{
-					NewDstIP:   ipToUint32BE(poolIP),
-					NewDstPort: htons(poolPort),
-					Flags:      DNATFlagStatic,
-				}
-				if err := m.SetDNATEntry(dk, dv); err != nil {
-					return fmt.Errorf("set dnat entry %s/%s: %w",
-						rs.Name, rule.Name, err)
+				// Route to v4 or v6 DNAT table based on match IP
+				if matchIP.To4() != nil {
+					dk := DNATKey{
+						Protocol: proto,
+						DstIP:    ipToUint32BE(matchIP),
+						DstPort:  htons(dstPort),
+					}
+					dv := DNATValue{
+						NewDstIP:   ipToUint32BE(poolIP),
+						NewDstPort: htons(poolPort),
+						Flags:      DNATFlagStatic,
+					}
+					if err := m.SetDNATEntry(dk, dv); err != nil {
+						return fmt.Errorf("set dnat entry %s/%s: %w",
+							rs.Name, rule.Name, err)
+					}
+				} else {
+					dk := DNATKeyV6{
+						Protocol: proto,
+						DstIP:    ipTo16Bytes(matchIP),
+						DstPort:  htons(dstPort),
+					}
+					dv := DNATValueV6{
+						NewDstIP:   ipTo16Bytes(poolIP),
+						NewDstPort: htons(poolPort),
+						Flags:      DNATFlagStatic,
+					}
+					if err := m.SetDNATEntryV6(dk, dv); err != nil {
+						return fmt.Errorf("set dnat_v6 entry %s/%s: %w",
+							rs.Name, rule.Name, err)
+					}
 				}
 
 				slog.Info("destination NAT rule compiled",
@@ -507,6 +555,31 @@ func getInterfaceIP(ifaceName string) (net.IP, error) {
 	return nil, fmt.Errorf("no IPv4 address on interface %s", ifaceName)
 }
 
+// getInterfaceIPv6 returns the first global unicast IPv6 address of a network interface.
+func getInterfaceIPv6(ifaceName string) (net.IP, error) {
+	iface, err := net.InterfaceByName(ifaceName)
+	if err != nil {
+		return nil, fmt.Errorf("interface %s: %w", ifaceName, err)
+	}
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return nil, fmt.Errorf("interface %s addrs: %w", ifaceName, err)
+	}
+	for _, addr := range addrs {
+		ipNet, ok := addr.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		if ipNet.IP.To4() != nil {
+			continue // skip IPv4
+		}
+		if ipNet.IP.IsGlobalUnicast() {
+			return ipNet.IP, nil
+		}
+	}
+	return nil, fmt.Errorf("no global unicast IPv6 address on interface %s", ifaceName)
+}
+
 // protocolNumber converts a protocol name to its IANA number.
 func protocolNumber(name string) uint8 {
 	switch strings.ToLower(name) {
@@ -516,6 +589,8 @@ func protocolNumber(name string) uint8 {
 		return 17
 	case "icmp":
 		return 1
+	case "icmpv6", "icmp6":
+		return 58
 	default:
 		return 0
 	}

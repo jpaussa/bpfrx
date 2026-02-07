@@ -46,6 +46,49 @@ type SessionValue struct {
 	Pad2     [4]byte // trailing padding
 }
 
+// SessionKeyV6 mirrors the C struct session_key_v6 (5-tuple with 128-bit IPs).
+type SessionKeyV6 struct {
+	SrcIP    [16]byte
+	DstIP    [16]byte
+	SrcPort  uint16
+	DstPort  uint16
+	Protocol uint8
+	Pad      [3]byte
+}
+
+// SessionValueV6 mirrors the C struct session_value_v6.
+type SessionValueV6 struct {
+	State     uint8
+	Flags     uint8
+	TCPState  uint8
+	IsReverse uint8
+	Pad0      [4]byte // alignment padding for Created (8-byte aligned)
+
+	Created  uint64
+	LastSeen uint64
+	Timeout  uint32
+	PolicyID uint32
+
+	IngressZone uint16
+	EgressZone  uint16
+
+	NATSrcIP   [16]byte
+	NATDstIP   [16]byte
+	NATSrcPort uint16
+	NATDstPort uint16
+
+	FwdPackets uint64
+	FwdBytes   uint64
+	RevPackets uint64
+	RevBytes   uint64
+
+	ReverseKey SessionKeyV6
+
+	ALGType  uint8
+	LogFlags uint8
+	Pad1     [2]byte
+}
+
 // ZoneConfig mirrors the C struct zone_config.
 type ZoneConfig struct {
 	ZoneID          uint16
@@ -92,11 +135,11 @@ type CounterValue struct {
 	Bytes   uint64
 }
 
-// Event mirrors the C struct event.
+// Event mirrors the C struct event (with 16-byte IPs).
 type Event struct {
 	Timestamp      uint64
-	SrcIP          [4]byte
-	DstIP          [4]byte
+	SrcIP          [16]byte
+	DstIP          [16]byte
 	SrcPort        uint16
 	DstPort        uint16
 	PolicyID       uint32
@@ -105,7 +148,7 @@ type Event struct {
 	EventType      uint8
 	Protocol       uint8
 	Action         uint8
-	Pad            uint8
+	AddrFamily     uint8
 	SessionPackets uint64
 	SessionBytes   uint64
 }
@@ -167,6 +210,12 @@ type LPMKeyV4 struct {
 	Addr      uint32 // network byte order
 }
 
+// LPMKeyV6 mirrors the C struct lpm_key_v6 for IPv6 address book LPM trie.
+type LPMKeyV6 struct {
+	PrefixLen uint32
+	Addr      [16]byte
+}
+
 // AddrValue mirrors the C struct addr_value.
 type AddrValue struct {
 	AddressID uint32
@@ -221,6 +270,23 @@ type DNATValue struct {
 	Pad        uint8
 }
 
+// DNATKeyV6 mirrors the C struct dnat_key_v6.
+type DNATKeyV6 struct {
+	Protocol uint8
+	Pad      [3]byte
+	DstIP    [16]byte
+	DstPort  uint16 // network byte order
+	Pad2     uint16
+}
+
+// DNATValueV6 mirrors the C struct dnat_value_v6.
+type DNATValueV6 struct {
+	NewDstIP   [16]byte
+	NewDstPort uint16 // network byte order
+	Flags      uint8
+	Pad        uint8
+}
+
 // SNATKey mirrors the C struct snat_key.
 type SNATKey struct {
 	FromZone uint16
@@ -234,10 +300,28 @@ type SNATValue struct {
 	Pad    [3]byte
 }
 
+// SNATValueV6 mirrors the C struct snat_value_v6.
+type SNATValueV6 struct {
+	SNATIP [16]byte
+	Mode   uint8
+	Pad    [3]byte
+}
+
 // Event type constants.
 const (
 	EventTypeSessionOpen  = 1
 	EventTypeSessionClose = 2
 	EventTypePolicyDeny   = 3
 	EventTypeScreenDrop   = 4
+)
+
+// Address family constants.
+const (
+	AFInet  = 2
+	AFInet6 = 10
+)
+
+// Protocol number constants.
+const (
+	ProtoICMPv6 = 58
 )

@@ -4,6 +4,7 @@
  *
  * Maps the ingress interface to a security zone and performs a FIB
  * lookup to determine the egress interface and egress zone.
+ * Supports both IPv4 and IPv6.
  */
 
 #include "../headers/bpfrx_common.h"
@@ -33,18 +34,33 @@ int xdp_zone_prog(struct xdp_md *ctx)
 	 * This handles both static DNAT entries (from config) and
 	 * dynamic SNAT return entries (from xdp_policy).
 	 */
-	struct dnat_key dk = {
-		.protocol = meta->protocol,
-		.dst_ip   = meta->dst_ip,
-		.dst_port = meta->dst_port,
-	};
-	struct dnat_value *dv = bpf_map_lookup_elem(&dnat_table, &dk);
-	if (dv) {
-		meta->nat_dst_ip   = meta->dst_ip;    /* save original for session */
-		meta->nat_dst_port = meta->dst_port;
-		meta->dst_ip       = dv->new_dst_ip;  /* translate for FIB + conntrack */
-		meta->dst_port     = dv->new_dst_port;
-		meta->nat_flags   |= SESS_FLAG_DNAT;  /* signal pre-routing NAT applied */
+	if (meta->addr_family == AF_INET) {
+		struct dnat_key dk = {
+			.protocol = meta->protocol,
+			.dst_ip   = meta->dst_ip.v4,
+			.dst_port = meta->dst_port,
+		};
+		struct dnat_value *dv = bpf_map_lookup_elem(&dnat_table, &dk);
+		if (dv) {
+			meta->nat_dst_ip.v4 = meta->dst_ip.v4;
+			meta->nat_dst_port  = meta->dst_port;
+			meta->dst_ip.v4     = dv->new_dst_ip;
+			meta->dst_port      = dv->new_dst_port;
+			meta->nat_flags    |= SESS_FLAG_DNAT;
+		}
+	} else {
+		struct dnat_key_v6 dk6 = { .protocol = meta->protocol };
+		__builtin_memcpy(dk6.dst_ip, meta->dst_ip.v6, 16);
+		dk6.dst_port = meta->dst_port;
+
+		struct dnat_value_v6 *dv6 = bpf_map_lookup_elem(&dnat_table_v6, &dk6);
+		if (dv6) {
+			__builtin_memcpy(meta->nat_dst_ip.v6, meta->dst_ip.v6, 16);
+			meta->nat_dst_port = meta->dst_port;
+			__builtin_memcpy(meta->dst_ip.v6, dv6->new_dst_ip, 16);
+			meta->dst_port     = dv6->new_dst_port;
+			meta->nat_flags   |= SESS_FLAG_DNAT;
+		}
 	}
 
 	/*
@@ -52,12 +68,19 @@ int xdp_zone_prog(struct xdp_md *ctx)
 	 * Uses the (possibly translated) dst_ip for routing.
 	 */
 	struct bpf_fib_lookup fib = {};
-	fib.family    = AF_INET;
 	fib.l4_protocol = meta->protocol;
-	fib.tot_len   = meta->pkt_len;
-	fib.ipv4_src  = meta->src_ip;
-	fib.ipv4_dst  = meta->dst_ip;
-	fib.ifindex   = meta->ingress_ifindex;
+	fib.tot_len     = meta->pkt_len;
+	fib.ifindex     = meta->ingress_ifindex;
+
+	if (meta->addr_family == AF_INET) {
+		fib.family   = AF_INET;
+		fib.ipv4_src = meta->src_ip.v4;
+		fib.ipv4_dst = meta->dst_ip.v4;
+	} else {
+		fib.family = AF_INET6;
+		__builtin_memcpy(fib.ipv6_src, meta->src_ip.v6, 16);
+		__builtin_memcpy(fib.ipv6_dst, meta->dst_ip.v6, 16);
+	}
 
 	int rc = bpf_fib_lookup(ctx, &fib, sizeof(fib), 0);
 
@@ -75,7 +98,7 @@ int xdp_zone_prog(struct xdp_md *ctx)
 
 	} else if (rc == BPF_FIB_LKUP_RET_NO_NEIGH) {
 		/*
-		 * Route exists but no neighbor entry (no ARP yet).
+		 * Route exists but no neighbor entry (no ARP/NDP yet).
 		 * Store the ifindex for zone lookup; pass to kernel
 		 * to trigger neighbor resolution.
 		 */

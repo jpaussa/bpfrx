@@ -44,6 +44,12 @@ type expiredSession struct {
 	val dataplane.SessionValue
 }
 
+// expiredSessionV6 holds IPv6 session data needed for cleanup.
+type expiredSessionV6 struct {
+	key dataplane.SessionKeyV6
+	val dataplane.SessionValueV6
+}
+
 func (gc *GC) sweep() {
 	now := monotonicSeconds()
 
@@ -51,6 +57,7 @@ func (gc *GC) sweep() {
 	var toDelete []dataplane.SessionKey
 	var snatExpired []expiredSession
 
+	// IPv4 sessions
 	err := gc.dp.IterateSessions(func(key dataplane.SessionKey, val dataplane.SessionValue) bool {
 		total++
 
@@ -100,12 +107,60 @@ func (gc *GC) sweep() {
 		}
 	}
 
+	// IPv6 sessions
+	var toDeleteV6 []dataplane.SessionKeyV6
+	var snatExpiredV6 []expiredSessionV6
+
+	err = gc.dp.IterateSessionsV6(func(key dataplane.SessionKeyV6, val dataplane.SessionValueV6) bool {
+		total++
+
+		if val.IsReverse != 0 {
+			return true
+		}
+
+		if val.State == dataplane.SessStateEstablished {
+			established++
+		}
+
+		if val.LastSeen+uint64(val.Timeout) < now {
+			expired++
+			toDeleteV6 = append(toDeleteV6, key)
+			toDeleteV6 = append(toDeleteV6, val.ReverseKey)
+
+			if val.Flags&dataplane.SessFlagSNAT != 0 {
+				snatExpiredV6 = append(snatExpiredV6, expiredSessionV6{key: key, val: val})
+			}
+		}
+		return true
+	})
+	if err != nil {
+		slog.Error("conntrack GC v6 iteration failed", "err", err)
+	}
+
+	for _, key := range toDeleteV6 {
+		if err := gc.dp.DeleteSessionV6(key); err != nil {
+			slog.Debug("conntrack GC v6 delete failed", "err", err)
+		}
+	}
+
+	for _, s := range snatExpiredV6 {
+		dk := dataplane.DNATKeyV6{
+			Protocol: s.key.Protocol,
+			DstIP:    s.val.NATSrcIP,
+			DstPort:  s.key.SrcPort,
+		}
+		if err := gc.dp.DeleteDNATEntryV6(dk); err != nil {
+			slog.Debug("conntrack GC dnat_v6 cleanup failed", "err", err)
+		}
+	}
+
+	totalSnatCleaned := len(snatExpired) + len(snatExpiredV6)
 	if expired > 0 {
 		slog.Info("conntrack GC sweep",
 			"total_entries", total,
 			"established", established,
 			"expired_deleted", expired,
-			"snat_dnat_cleaned", len(snatExpired))
+			"snat_dnat_cleaned", totalSnatCleaned)
 	}
 }
 

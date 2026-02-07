@@ -61,13 +61,17 @@ parse_iphdr(void *data, void *data_end, struct pkt_meta *meta)
 	if ((void *)iph + ihl > data_end)
 		return -1;
 
-	meta->src_ip    = iph->saddr;
-	meta->dst_ip    = iph->daddr;
+	/* Zero full ip_addr unions before writing v4 */
+	__builtin_memset(&meta->src_ip, 0, sizeof(meta->src_ip));
+	__builtin_memset(&meta->dst_ip, 0, sizeof(meta->dst_ip));
+
+	meta->src_ip.v4 = iph->saddr;
+	meta->dst_ip.v4 = iph->daddr;
 	meta->protocol  = iph->protocol;
 	meta->ip_ttl    = iph->ttl;
 	meta->l4_offset = meta->l3_offset + ihl;
 	meta->pkt_len   = bpf_ntohs(iph->tot_len);
-	meta->addr_family = 2; /* AF_INET */
+	meta->addr_family = AF_INET;
 
 	/* Fragmentation check */
 	__u16 frag_off = bpf_ntohs(iph->frag_off);
@@ -77,7 +81,85 @@ parse_iphdr(void *data, void *data_end, struct pkt_meta *meta)
 }
 
 /*
- * Parse L4 header (TCP, UDP, or ICMP).
+ * Parse IPv6 header with extension header chain walking.
+ * Returns 0 on success, populates meta fields.
+ */
+static __always_inline int
+parse_ipv6hdr(void *data, void *data_end, struct pkt_meta *meta)
+{
+	struct ipv6hdr *ip6h = data + meta->l3_offset;
+
+	if ((void *)(ip6h + 1) > data_end)
+		return -1;
+
+	if (ip6h->version != 6)
+		return -1;
+
+	/* Copy 128-bit addresses */
+	__builtin_memcpy(meta->src_ip.v6, &ip6h->saddr, 16);
+	__builtin_memcpy(meta->dst_ip.v6, &ip6h->daddr, 16);
+
+	meta->ip_ttl      = ip6h->hop_limit;
+	meta->pkt_len     = bpf_ntohs(ip6h->payload_len) + 40;
+	meta->addr_family = AF_INET6;
+	meta->is_fragment = 0;
+
+	/* Walk extension header chain to find the upper-layer protocol */
+	__u8 nexthdr = ip6h->nexthdr;
+	__u16 offset = meta->l3_offset + sizeof(struct ipv6hdr);
+
+	#pragma unroll
+	for (int i = 0; i < MAX_EXT_HDRS; i++) {
+		switch (nexthdr) {
+		case NEXTHDR_HOP:
+		case NEXTHDR_ROUTING:
+		case NEXTHDR_DEST: {
+			struct ipv6_opt_hdr *opt = data + offset;
+			if ((void *)(opt + 1) > data_end)
+				return -1;
+			nexthdr = opt->nexthdr;
+			offset += (opt->hdrlen + 1) * 8;
+			break;
+		}
+		case NEXTHDR_AUTH: {
+			struct ipv6_opt_hdr *opt = data + offset;
+			if ((void *)(opt + 1) > data_end)
+				return -1;
+			nexthdr = opt->nexthdr;
+			offset += (opt->hdrlen + 2) * 4;
+			break;
+		}
+		case NEXTHDR_FRAGMENT: {
+			struct frag_hdr *frag = data + offset;
+			if ((void *)(frag + 1) > data_end)
+				return -1;
+			nexthdr = frag->nexthdr;
+			offset += sizeof(struct frag_hdr);
+			/* Check MF bit or fragment offset */
+			__u16 frag_off = bpf_ntohs(frag->frag_off);
+			if ((frag_off & 0x1) || (frag_off & 0xFFF8))
+				meta->is_fragment = 1;
+			break;
+		}
+		case NEXTHDR_NONE:
+			/* No next header */
+			meta->protocol = nexthdr;
+			meta->l4_offset = offset;
+			return 0;
+		default:
+			/* Upper-layer protocol found */
+			goto done;
+		}
+	}
+
+done:
+	meta->protocol  = nexthdr;
+	meta->l4_offset = offset;
+	return 0;
+}
+
+/*
+ * Parse L4 header (TCP, UDP, ICMP, or ICMPv6).
  * Returns 0 on success.
  */
 static __always_inline int
@@ -115,6 +197,18 @@ parse_l4hdr(void *data, void *data_end, struct pkt_meta *meta)
 		meta->src_port  = icmp->un.echo.id; /* use as port for CT */
 		meta->dst_port  = 0;
 		meta->payload_offset = meta->l4_offset + sizeof(struct icmphdr);
+		break;
+	}
+	case PROTO_ICMPV6: {
+		struct icmp6hdr *icmp6 = l4;
+		if ((void *)(icmp6 + 1) > data_end)
+			return -1;
+		meta->icmp_type = icmp6->icmp6_type;
+		meta->icmp_code = icmp6->icmp6_code;
+		meta->icmp_id   = icmp6->un.echo.id;
+		meta->src_port  = icmp6->un.echo.id; /* use as port for CT */
+		meta->dst_port  = 0;
+		meta->payload_offset = meta->l4_offset + sizeof(struct icmp6hdr);
 		break;
 	}
 	default:
@@ -161,6 +255,37 @@ csum_update_2(__sum16 *csum, __be16 old_val, __be16 new_val)
 	sum = (sum & 0xFFFF) + (sum >> 16);
 	sum = (sum & 0xFFFF) + (sum >> 16);
 	*csum = bpf_htons(~sum & 0xFFFF);
+}
+
+/*
+ * Incremental checksum update for a 128-bit (IPv6) address change.
+ * Processes the address as four 32-bit words.
+ */
+static __always_inline void
+csum_update_16(__sum16 *csum, const __u8 *old_addr, const __u8 *new_addr)
+{
+	/* Process as four 32-bit words */
+	#pragma unroll
+	for (int i = 0; i < 4; i++) {
+		__be32 old_word, new_word;
+		__builtin_memcpy(&old_word, old_addr + i * 4, 4);
+		__builtin_memcpy(&new_word, new_addr + i * 4, 4);
+		if (old_word != new_word)
+			csum_update_4(csum, old_word, new_word);
+	}
+}
+
+/* ============================================================
+ * IPv6 address comparison helper
+ * ============================================================ */
+
+static __always_inline int
+ip_addr_eq_v6(const __u8 *a, const __u8 *b)
+{
+	const __u32 *a32 = (const __u32 *)a;
+	const __u32 *b32 = (const __u32 *)b;
+	return (a32[0] == b32[0]) && (a32[1] == b32[1]) &&
+	       (a32[2] == b32[2]) && (a32[3] == b32[3]);
 }
 
 /* ============================================================

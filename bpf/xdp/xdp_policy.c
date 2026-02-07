@@ -5,6 +5,7 @@
  * Evaluates zone-pair security policies for new connections. On permit,
  * creates dual session entries (forward + reverse) and proceeds to the
  * forward stage. On deny, drops the packet.
+ * Supports both IPv4 and IPv6.
  */
 
 #include "../headers/bpfrx_common.h"
@@ -12,7 +13,7 @@
 #include "../headers/bpfrx_helpers.h"
 
 /*
- * Check whether an IP address matches a policy rule's address_id.
+ * Check whether an IPv4 address matches a policy rule's address_id.
  * address_id == 0 means "any" (always matches).
  */
 static __always_inline int
@@ -21,7 +22,6 @@ addr_matches(__be32 ip, __u32 rule_addr_id)
 	if (rule_addr_id == 0)
 		return 1;
 
-	/* LPM trie lookup: find the most specific prefix matching this IP */
 	struct lpm_key_v4 lpm_key = {
 		.prefixlen = 32,
 		.addr = ip,
@@ -30,13 +30,11 @@ addr_matches(__be32 ip, __u32 rule_addr_id)
 	if (!av)
 		return 0;
 
-	/* Direct match */
 	if (av->address_id == rule_addr_id)
 		return 1;
 
-	/* Check address-set membership: (resolved_id, rule_addr_id) */
 	struct addr_membership_key mkey = {
-		.ip = av->address_id,  /* reuse ip field for resolved_id */
+		.ip = av->address_id,
 		.address_id = rule_addr_id,
 	};
 	if (bpf_map_lookup_elem(&address_membership, &mkey))
@@ -46,7 +44,36 @@ addr_matches(__be32 ip, __u32 rule_addr_id)
 }
 
 /*
- * Emit an event to the ring buffer.
+ * Check whether an IPv6 address matches a policy rule's address_id.
+ */
+static __always_inline int
+addr_matches_v6(const __u8 *ip, __u32 rule_addr_id)
+{
+	if (rule_addr_id == 0)
+		return 1;
+
+	struct lpm_key_v6 lpm_key = { .prefixlen = 128 };
+	__builtin_memcpy(lpm_key.addr, ip, 16);
+
+	struct addr_value *av = bpf_map_lookup_elem(&address_book_v6, &lpm_key);
+	if (!av)
+		return 0;
+
+	if (av->address_id == rule_addr_id)
+		return 1;
+
+	struct addr_membership_key mkey = {
+		.ip = av->address_id,
+		.address_id = rule_addr_id,
+	};
+	if (bpf_map_lookup_elem(&address_membership, &mkey))
+		return 1;
+
+	return 0;
+}
+
+/*
+ * Emit an event to the ring buffer (dual-stack).
  */
 static __always_inline void
 emit_event(struct pkt_meta *meta, __u8 event_type, __u8 action,
@@ -57,8 +84,19 @@ emit_event(struct pkt_meta *meta, __u8 event_type, __u8 action,
 		return;
 
 	evt->timestamp = bpf_ktime_get_ns();
-	evt->src_ip = meta->src_ip;
-	evt->dst_ip = meta->dst_ip;
+
+	/* Copy IP addresses based on address family */
+	__builtin_memset(evt->src_ip, 0, 16);
+	__builtin_memset(evt->dst_ip, 0, 16);
+
+	if (meta->addr_family == AF_INET) {
+		__builtin_memcpy(evt->src_ip, &meta->src_ip.v4, 4);
+		__builtin_memcpy(evt->dst_ip, &meta->dst_ip.v4, 4);
+	} else {
+		__builtin_memcpy(evt->src_ip, meta->src_ip.v6, 16);
+		__builtin_memcpy(evt->dst_ip, meta->dst_ip.v6, 16);
+	}
+
 	evt->src_port = meta->src_port;
 	evt->dst_port = meta->dst_port;
 	evt->policy_id = meta->policy_id;
@@ -67,7 +105,7 @@ emit_event(struct pkt_meta *meta, __u8 event_type, __u8 action,
 	evt->event_type = event_type;
 	evt->protocol = meta->protocol;
 	evt->action = action;
-	evt->pad = 0;
+	evt->addr_family = meta->addr_family;
 	evt->session_packets = packets;
 	evt->session_bytes = bytes;
 
@@ -75,9 +113,7 @@ emit_event(struct pkt_meta *meta, __u8 event_type, __u8 action,
 }
 
 /*
- * Create dual session entries for a permitted connection.
- * nat_flags, nat_src_ip/port, nat_dst_ip/port carry NAT state.
- * Returns 0 on success, -1 on failure.
+ * Create dual session entries for a permitted IPv4 connection.
  */
 static __always_inline int
 create_session(struct pkt_meta *meta, __u32 policy_id, __u8 log,
@@ -86,19 +122,16 @@ create_session(struct pkt_meta *meta, __u32 policy_id, __u8 log,
 {
 	__u64 now = bpf_ktime_get_ns() / 1000000000ULL;
 
-	/* Build forward key */
 	struct session_key fwd_key = {};
-	fwd_key.src_ip   = meta->src_ip;
-	fwd_key.dst_ip   = meta->dst_ip;
+	fwd_key.src_ip   = meta->src_ip.v4;
+	fwd_key.dst_ip   = meta->dst_ip.v4;
 	fwd_key.src_port = meta->src_port;
 	fwd_key.dst_port = meta->dst_port;
 	fwd_key.protocol = meta->protocol;
 
-	/* Build reverse key */
 	struct session_key rev_key;
 	ct_reverse_key(&fwd_key, &rev_key);
 
-	/* Initial state: TCP starts at SYN_SENT, others start ESTABLISHED */
 	__u8 initial_state;
 	if (meta->protocol == PROTO_TCP)
 		initial_state = SESS_STATE_SYN_SENT;
@@ -107,11 +140,9 @@ create_session(struct pkt_meta *meta, __u32 policy_id, __u8 log,
 
 	__u32 timeout = ct_get_timeout(meta->protocol, initial_state);
 
-	/* Forward entry */
 	struct session_value fwd_val = {};
 	fwd_val.state        = initial_state;
 	fwd_val.flags        = nat_flags;
-	fwd_val.tcp_state    = 0;
 	fwd_val.is_reverse   = 0;
 	fwd_val.created      = now;
 	fwd_val.last_seen    = now;
@@ -133,11 +164,9 @@ create_session(struct pkt_meta *meta, __u32 policy_id, __u8 log,
 	if (ret < 0)
 		return -1;
 
-	/* Reverse entry -- carries same NAT info */
 	struct session_value rev_val = {};
 	rev_val.state        = initial_state;
 	rev_val.flags        = nat_flags;
-	rev_val.tcp_state    = 0;
 	rev_val.is_reverse   = 1;
 	rev_val.created      = now;
 	rev_val.last_seen    = now;
@@ -155,8 +184,108 @@ create_session(struct pkt_meta *meta, __u32 policy_id, __u8 log,
 	ret = bpf_map_update_elem(&sessions, &rev_key, &rev_val,
 				  BPF_NOEXIST);
 	if (ret < 0) {
-		/* Clean up forward entry */
 		bpf_map_delete_elem(&sessions, &fwd_key);
+		return -1;
+	}
+
+	inc_counter(GLOBAL_CTR_SESSIONS_NEW);
+	return 0;
+}
+
+/*
+ * Create dual session entries for a permitted IPv6 connection.
+ * Uses session_v6_scratch per-CPU map to avoid stack overflow.
+ */
+static __always_inline int
+create_session_v6(struct pkt_meta *meta, __u32 policy_id, __u8 log,
+		  __u8 nat_flags, const __u8 *nat_src_ip, __be16 nat_src_port,
+		  const __u8 *nat_dst_ip, __be16 nat_dst_port)
+{
+	__u64 now = bpf_ktime_get_ns() / 1000000000ULL;
+
+	struct session_key_v6 fwd_key = {};
+	__builtin_memcpy(fwd_key.src_ip, meta->src_ip.v6, 16);
+	__builtin_memcpy(fwd_key.dst_ip, meta->dst_ip.v6, 16);
+	fwd_key.src_port = meta->src_port;
+	fwd_key.dst_port = meta->dst_port;
+	fwd_key.protocol = meta->protocol;
+
+	struct session_key_v6 rev_key;
+	ct_reverse_key_v6(&fwd_key, &rev_key);
+
+	__u8 initial_state;
+	if (meta->protocol == PROTO_TCP)
+		initial_state = SESS_STATE_SYN_SENT;
+	else
+		initial_state = SESS_STATE_ESTABLISHED;
+
+	__u32 timeout = ct_get_timeout(meta->protocol, initial_state);
+
+	/* Use per-CPU scratch map for fwd_val (index 0) */
+	__u32 idx0 = 0;
+	struct session_value_v6 *fwd_val = bpf_map_lookup_elem(
+		&session_v6_scratch, &idx0);
+	if (!fwd_val)
+		return -1;
+
+	__builtin_memset(fwd_val, 0, sizeof(*fwd_val));
+	fwd_val->state        = initial_state;
+	fwd_val->flags        = nat_flags;
+	fwd_val->is_reverse   = 0;
+	fwd_val->created      = now;
+	fwd_val->last_seen    = now;
+	fwd_val->timeout      = timeout;
+	fwd_val->policy_id    = policy_id;
+	fwd_val->ingress_zone = meta->ingress_zone;
+	fwd_val->egress_zone  = meta->egress_zone;
+	fwd_val->fwd_packets  = 1;
+	fwd_val->fwd_bytes    = meta->pkt_len;
+	fwd_val->log_flags    = log;
+	fwd_val->reverse_key  = rev_key;
+	fwd_val->nat_src_port = nat_src_port;
+	fwd_val->nat_dst_port = nat_dst_port;
+	if (nat_src_ip)
+		__builtin_memcpy(fwd_val->nat_src_ip, nat_src_ip, 16);
+	if (nat_dst_ip)
+		__builtin_memcpy(fwd_val->nat_dst_ip, nat_dst_ip, 16);
+
+	int ret = bpf_map_update_elem(&sessions_v6, &fwd_key, fwd_val,
+				      BPF_NOEXIST);
+	if (ret < 0)
+		return -1;
+
+	/* Use per-CPU scratch map for rev_val (index 1) */
+	__u32 idx1 = 1;
+	struct session_value_v6 *rev_val = bpf_map_lookup_elem(
+		&session_v6_scratch, &idx1);
+	if (!rev_val) {
+		bpf_map_delete_elem(&sessions_v6, &fwd_key);
+		return -1;
+	}
+
+	__builtin_memset(rev_val, 0, sizeof(*rev_val));
+	rev_val->state        = initial_state;
+	rev_val->flags        = nat_flags;
+	rev_val->is_reverse   = 1;
+	rev_val->created      = now;
+	rev_val->last_seen    = now;
+	rev_val->timeout      = timeout;
+	rev_val->policy_id    = policy_id;
+	rev_val->ingress_zone = meta->egress_zone;
+	rev_val->egress_zone  = meta->ingress_zone;
+	rev_val->log_flags    = log;
+	rev_val->reverse_key  = fwd_key;
+	rev_val->nat_src_port = nat_src_port;
+	rev_val->nat_dst_port = nat_dst_port;
+	if (nat_src_ip)
+		__builtin_memcpy(rev_val->nat_src_ip, nat_src_ip, 16);
+	if (nat_dst_ip)
+		__builtin_memcpy(rev_val->nat_dst_ip, nat_dst_ip, 16);
+
+	ret = bpf_map_update_elem(&sessions_v6, &rev_key, rev_val,
+				  BPF_NOEXIST);
+	if (ret < 0) {
+		bpf_map_delete_elem(&sessions_v6, &fwd_key);
 		return -1;
 	}
 
@@ -178,10 +307,8 @@ int xdp_policy_prog(struct xdp_md *ctx)
 		.to_zone   = meta->egress_zone,
 	};
 
-	/* Look up policy set for this zone pair */
 	struct policy_set *ps = bpf_map_lookup_elem(&zone_pair_policies, &zpk);
 	if (!ps) {
-		/* No policy set: implicit deny */
 		inc_counter(GLOBAL_CTR_POLICY_DENY);
 		return XDP_DROP;
 	}
@@ -212,13 +339,23 @@ int xdp_policy_prog(struct xdp_md *ctx)
 		if (!rule)
 			continue;
 
-		/* Check source address */
-		if (!addr_matches(meta->src_ip, rule->src_addr_id))
-			continue;
+		/* Check source address (AF-aware) */
+		if (meta->addr_family == AF_INET) {
+			if (!addr_matches(meta->src_ip.v4, rule->src_addr_id))
+				continue;
+		} else {
+			if (!addr_matches_v6(meta->src_ip.v6, rule->src_addr_id))
+				continue;
+		}
 
-		/* Check destination address */
-		if (!addr_matches(meta->dst_ip, rule->dst_addr_id))
-			continue;
+		/* Check destination address (AF-aware) */
+		if (meta->addr_family == AF_INET) {
+			if (!addr_matches(meta->dst_ip.v4, rule->dst_addr_id))
+				continue;
+		} else {
+			if (!addr_matches_v6(meta->dst_ip.v6, rule->dst_addr_id))
+				continue;
+		}
 
 		/* Check protocol */
 		if (rule->protocol != 0 && rule->protocol != meta->protocol)
@@ -240,71 +377,144 @@ int xdp_policy_prog(struct xdp_md *ctx)
 		meta->policy_id = rule->rule_id;
 
 		if (rule->action == ACTION_PERMIT) {
-			__u8 sess_nat_flags = 0;
-			__be32 sess_nat_src_ip = 0, sess_nat_dst_ip = 0;
-			__be16 sess_nat_src_port = 0, sess_nat_dst_port = 0;
-			__be32 orig_src_ip = meta->src_ip;
-			__be16 orig_src_port = meta->src_port;
+			if (meta->addr_family == AF_INET) {
+				/* IPv4 permit path */
+				__u8 sess_nat_flags = 0;
+				__be32 sess_nat_src_ip = 0, sess_nat_dst_ip = 0;
+				__be16 sess_nat_src_port = 0, sess_nat_dst_port = 0;
+				__be32 orig_src_ip = meta->src_ip.v4;
+				__be16 orig_src_port = meta->src_port;
 
-			/* Check for source NAT rule */
-			struct snat_key sk = {
-				.from_zone = meta->ingress_zone,
-				.to_zone   = meta->egress_zone,
-			};
-			struct snat_value *sv = bpf_map_lookup_elem(&snat_rules, &sk);
-			if (sv) {
-				/* Apply SNAT: translate source IP */
-				meta->src_ip = sv->snat_ip;
-				/* Port preserved (no port allocation) */
-				sess_nat_flags |= SESS_FLAG_SNAT;
-				sess_nat_src_ip = sv->snat_ip;
-				sess_nat_src_port = meta->src_port;
-			}
-
-			/* Check for pre-routing DNAT (set by xdp_zone) */
-			if (meta->nat_flags & SESS_FLAG_DNAT) {
-				sess_nat_flags |= SESS_FLAG_DNAT;
-				sess_nat_dst_ip = meta->nat_dst_ip;
-				sess_nat_dst_port = meta->nat_dst_port;
-			}
-
-			/* Create session entries */
-			if (create_session(meta, rule->rule_id, rule->log,
-					   sess_nat_flags,
-					   sess_nat_src_ip, sess_nat_src_port,
-					   sess_nat_dst_ip, sess_nat_dst_port) < 0) {
-				inc_counter(GLOBAL_CTR_DROPS);
-				return XDP_DROP;
-			}
-
-			/* For SNAT: insert dnat_table entry for return traffic */
-			if (sess_nat_flags & SESS_FLAG_SNAT) {
-				struct dnat_key dk = {
-					.protocol = meta->protocol,
-					.dst_ip   = sv->snat_ip,
-					.dst_port = orig_src_port,
+				/* Check for source NAT rule */
+				struct snat_key sk = {
+					.from_zone = meta->ingress_zone,
+					.to_zone   = meta->egress_zone,
 				};
-				struct dnat_value dv = {
-					.new_dst_ip   = orig_src_ip,
-					.new_dst_port = orig_src_port,
-					.flags        = 0, /* dynamic */
+				struct snat_value *sv = bpf_map_lookup_elem(&snat_rules, &sk);
+				if (sv) {
+					__builtin_memset(&meta->src_ip, 0, sizeof(meta->src_ip));
+					meta->src_ip.v4 = sv->snat_ip;
+					sess_nat_flags |= SESS_FLAG_SNAT;
+					sess_nat_src_ip = sv->snat_ip;
+					sess_nat_src_port = meta->src_port;
+				}
+
+				/* Check for pre-routing DNAT */
+				if (meta->nat_flags & SESS_FLAG_DNAT) {
+					sess_nat_flags |= SESS_FLAG_DNAT;
+					sess_nat_dst_ip = meta->nat_dst_ip.v4;
+					sess_nat_dst_port = meta->nat_dst_port;
+				}
+
+				if (create_session(meta, rule->rule_id, rule->log,
+						   sess_nat_flags,
+						   sess_nat_src_ip, sess_nat_src_port,
+						   sess_nat_dst_ip, sess_nat_dst_port) < 0) {
+					inc_counter(GLOBAL_CTR_DROPS);
+					return XDP_DROP;
+				}
+
+				/* For SNAT: insert dnat_table entry for return traffic */
+				if (sess_nat_flags & SESS_FLAG_SNAT) {
+					struct dnat_key dk = {
+						.protocol = meta->protocol,
+						.dst_ip   = sv->snat_ip,
+						.dst_port = orig_src_port,
+					};
+					struct dnat_value dv = {
+						.new_dst_ip   = orig_src_ip,
+						.new_dst_port = orig_src_port,
+						.flags        = 0,
+					};
+					bpf_map_update_elem(&dnat_table, &dk, &dv,
+							    BPF_NOEXIST);
+				}
+
+				if (rule->log)
+					emit_event(meta, EVENT_TYPE_SESSION_OPEN,
+						   ACTION_PERMIT, 0, 0);
+
+				if (sess_nat_flags)
+					bpf_tail_call(ctx, &xdp_progs, XDP_PROG_NAT);
+				else
+					bpf_tail_call(ctx, &xdp_progs, XDP_PROG_FORWARD);
+				return XDP_PASS;
+			} else {
+				/* IPv6 permit path -- use nat_* fields in meta
+				 * to pass NAT info, avoiding large stack buffers.
+				 * meta->nat_src_ip/nat_dst_ip already hold DNAT info.
+				 * We save orig src IP into nat_src_ip temporarily
+				 * for dnat_table insertion, then set it for session.
+				 */
+				__u8 sess_nat_flags = 0;
+				__be16 sess_nat_src_port = 0, sess_nat_dst_port = 0;
+				__be16 orig_src_port = meta->src_port;
+
+				/* Save original src IP in nat_dst for temp use
+				 * (will be overwritten below if needed) */
+				__u8 orig_src_ip_save[16];
+				__builtin_memcpy(orig_src_ip_save, meta->src_ip.v6, 16);
+
+				/* Check for source NAT rule (v6) */
+				struct snat_key sk = {
+					.from_zone = meta->ingress_zone,
+					.to_zone   = meta->egress_zone,
 				};
-				bpf_map_update_elem(&dnat_table, &dk, &dv,
-						    BPF_NOEXIST);
+				struct snat_value_v6 *sv6 = bpf_map_lookup_elem(&snat_rules_v6, &sk);
+				if (sv6) {
+					__builtin_memcpy(meta->src_ip.v6, sv6->snat_ip, 16);
+					sess_nat_flags |= SESS_FLAG_SNAT;
+					sess_nat_src_port = meta->src_port;
+				}
+
+				/* Check for pre-routing DNAT */
+				if (meta->nat_flags & SESS_FLAG_DNAT) {
+					sess_nat_flags |= SESS_FLAG_DNAT;
+					sess_nat_dst_port = meta->nat_dst_port;
+				}
+
+				/* Pass NAT IPs through meta fields */
+				const __u8 *nat_src_ptr = sv6 ? sv6->snat_ip : NULL;
+				const __u8 *nat_dst_ptr = (meta->nat_flags & SESS_FLAG_DNAT) ?
+					meta->nat_dst_ip.v6 : NULL;
+
+				if (create_session_v6(meta, rule->rule_id, rule->log,
+						      sess_nat_flags,
+						      nat_src_ptr, sess_nat_src_port,
+						      nat_dst_ptr, sess_nat_dst_port) < 0) {
+					inc_counter(GLOBAL_CTR_DROPS);
+					return XDP_DROP;
+				}
+
+				/* For SNAT: insert dnat_table_v6 entry for return traffic */
+				if ((sess_nat_flags & SESS_FLAG_SNAT) && sv6) {
+					struct dnat_key_v6 dk6 = {
+						.protocol = meta->protocol,
+						.dst_port = orig_src_port,
+					};
+					__builtin_memcpy(dk6.dst_ip, sv6->snat_ip, 16);
+					struct dnat_value_v6 dv6 = {
+						.new_dst_port = orig_src_port,
+						.flags        = 0,
+					};
+					__builtin_memcpy(dv6.new_dst_ip, orig_src_ip_save, 16);
+					bpf_map_update_elem(&dnat_table_v6, &dk6, &dv6,
+							    BPF_NOEXIST);
+				}
+
+				if (rule->log)
+					emit_event(meta, EVENT_TYPE_SESSION_OPEN,
+						   ACTION_PERMIT, 0, 0);
+
+				if (sess_nat_flags)
+					bpf_tail_call(ctx, &xdp_progs, XDP_PROG_NAT);
+				else
+					bpf_tail_call(ctx, &xdp_progs, XDP_PROG_FORWARD);
+				return XDP_PASS;
 			}
-
-			if (rule->log)
-				emit_event(meta, EVENT_TYPE_SESSION_OPEN,
-					   ACTION_PERMIT, 0, 0);
-
-			if (sess_nat_flags)
-				bpf_tail_call(ctx, &xdp_progs, XDP_PROG_NAT);
-			else
-				bpf_tail_call(ctx, &xdp_progs, XDP_PROG_FORWARD);
-			return XDP_PASS;
 		}
 
-		/* DENY or REJECT (REJECT treated as deny in Phase 2) */
+		/* DENY or REJECT */
 		inc_counter(GLOBAL_CTR_POLICY_DENY);
 		if (rule->log)
 			emit_event(meta, EVENT_TYPE_POLICY_DENY,
@@ -314,9 +524,17 @@ int xdp_policy_prog(struct xdp_md *ctx)
 
 	/* No rule matched: apply default action */
 	if (ps->default_action == ACTION_PERMIT) {
-		if (create_session(meta, 0, 0, 0, 0, 0, 0, 0) < 0) {
-			inc_counter(GLOBAL_CTR_DROPS);
-			return XDP_DROP;
+		if (meta->addr_family == AF_INET) {
+			if (create_session(meta, 0, 0, 0, 0, 0, 0, 0) < 0) {
+				inc_counter(GLOBAL_CTR_DROPS);
+				return XDP_DROP;
+			}
+		} else {
+			__u8 zero_ip[16] = {};
+			if (create_session_v6(meta, 0, 0, 0, zero_ip, 0, zero_ip, 0) < 0) {
+				inc_counter(GLOBAL_CTR_DROPS);
+				return XDP_DROP;
+			}
 		}
 		bpf_tail_call(ctx, &xdp_progs, XDP_PROG_FORWARD);
 		return XDP_PASS;

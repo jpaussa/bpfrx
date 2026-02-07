@@ -34,6 +34,18 @@ struct {
 } pkt_meta_scratch SEC(".maps");
 
 /* ============================================================
+ * Per-CPU scratch space for session_value_v6 staging
+ * (avoids 512-byte BPF stack limit in xdp_policy)
+ * ============================================================ */
+
+struct {
+	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+	__uint(max_entries, 2); /* index 0: fwd_val, index 1: rev_val */
+	__type(key, __u32);
+	__type(value, struct session_value_v6);
+} session_v6_scratch SEC(".maps");
+
+/* ============================================================
  * Session table (connection tracking)
  * ============================================================ */
 
@@ -44,6 +56,14 @@ struct {
 	__type(value, struct session_value);
 	__uint(map_flags, BPF_F_NO_PREALLOC);
 } sessions SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, MAX_SESSIONS);
+	__type(key, struct session_key_v6);
+	__type(value, struct session_value_v6);
+	__uint(map_flags, BPF_F_NO_PREALLOC);
+} sessions_v6 SEC(".maps");
 
 /* ============================================================
  * Zone configuration
@@ -127,6 +147,11 @@ struct lpm_key_v4 {
 	__be32 addr;
 };
 
+struct lpm_key_v6 {
+	__u32 prefixlen;
+	__u8  addr[16];
+};
+
 struct addr_value {
 	__u32 address_id;
 };
@@ -138,6 +163,14 @@ struct {
 	__type(value, struct addr_value);
 	__uint(map_flags, BPF_F_NO_PREALLOC);
 } address_book_v4 SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_LPM_TRIE);
+	__uint(max_entries, MAX_ADDRESSES);
+	__type(key, struct lpm_key_v6);
+	__type(value, struct addr_value);
+	__uint(map_flags, BPF_F_NO_PREALLOC);
+} address_book_v6 SEC(".maps");
 
 /* Address membership: (ip, address_id) -> exists */
 struct addr_membership_key {
@@ -221,7 +254,7 @@ struct {
 } events SEC(".maps");
 
 /* ============================================================
- * NAT tables
+ * NAT tables (IPv4)
  * ============================================================ */
 
 /* Pre-routing NAT table: (proto, dst_ip, dst_port) -> new destination.
@@ -269,5 +302,45 @@ struct {
 	__type(key, struct snat_key);
 	__type(value, struct snat_value);
 } snat_rules SEC(".maps");
+
+/* ============================================================
+ * NAT tables (IPv6)
+ * ============================================================ */
+
+struct dnat_key_v6 {
+	__u8   protocol;
+	__u8   pad[3];
+	__u8   dst_ip[16];
+	__be16 dst_port;
+	__be16 pad2;
+};
+
+struct dnat_value_v6 {
+	__u8   new_dst_ip[16];
+	__be16 new_dst_port;
+	__u8   flags;       /* 0=dynamic/SNAT-return, 1=static/DNAT-config */
+	__u8   pad;
+};
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, MAX_SESSIONS);
+	__type(key, struct dnat_key_v6);
+	__type(value, struct dnat_value_v6);
+	__uint(map_flags, BPF_F_NO_PREALLOC);
+} dnat_table_v6 SEC(".maps");
+
+struct snat_value_v6 {
+	__u8   snat_ip[16];
+	__u8   mode;        /* 0=interface */
+	__u8   pad[3];
+};
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, MAX_ZONES * MAX_ZONES);
+	__type(key, struct snat_key);
+	__type(value, struct snat_value_v6);
+} snat_rules_v6 SEC(".maps");
 
 #endif /* __BPFRX_MAPS_H__ */

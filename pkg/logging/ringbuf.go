@@ -68,21 +68,47 @@ func (er *EventReader) Run(ctx context.Context) {
 }
 
 func (er *EventReader) logEvent(data []byte) {
+	// Event struct layout (with 16-byte IPs):
+	// [0:8]   timestamp (u64)
+	// [8:24]  src_ip (16 bytes)
+	// [24:40] dst_ip (16 bytes)
+	// [40:42] src_port (u16 BE)
+	// [42:44] dst_port (u16 BE)
+	// [44:48] policy_id (u32)
+	// [48:50] ingress_zone (u16)
+	// [50:52] egress_zone (u16)
+	// [52]    event_type (u8)
+	// [53]    protocol (u8)
+	// [54]    action (u8)
+	// [55]    addr_family (u8)
+	// [56:64] session_packets (u64)
+	// [64:72] session_bytes (u64)
 	var evt dataplane.Event
 	evt.Timestamp = binary.LittleEndian.Uint64(data[0:8])
-	evt.SrcIP = [4]byte(data[8:12])
-	evt.DstIP = [4]byte(data[12:16])
-	evt.SrcPort = binary.BigEndian.Uint16(data[16:18])
-	evt.DstPort = binary.BigEndian.Uint16(data[18:20])
-	evt.PolicyID = binary.LittleEndian.Uint32(data[20:24])
-	evt.IngressZone = binary.LittleEndian.Uint16(data[24:26])
-	evt.EgressZone = binary.LittleEndian.Uint16(data[26:28])
-	evt.EventType = data[28]
-	evt.Protocol = data[29]
-	evt.Action = data[30]
+	copy(evt.SrcIP[:], data[8:24])
+	copy(evt.DstIP[:], data[24:40])
+	evt.SrcPort = binary.BigEndian.Uint16(data[40:42])
+	evt.DstPort = binary.BigEndian.Uint16(data[42:44])
+	evt.PolicyID = binary.LittleEndian.Uint32(data[44:48])
+	evt.IngressZone = binary.LittleEndian.Uint16(data[48:50])
+	evt.EgressZone = binary.LittleEndian.Uint16(data[50:52])
+	evt.EventType = data[52]
+	evt.Protocol = data[53]
+	evt.Action = data[54]
+	evt.AddrFamily = data[55]
 
-	srcIP := net.IP(evt.SrcIP[:])
-	dstIP := net.IP(evt.DstIP[:])
+	var srcStr, dstStr string
+	if evt.AddrFamily == dataplane.AFInet6 {
+		srcIP := net.IP(evt.SrcIP[:])
+		dstIP := net.IP(evt.DstIP[:])
+		srcStr = fmt.Sprintf("[%s]:%d", srcIP, evt.SrcPort)
+		dstStr = fmt.Sprintf("[%s]:%d", dstIP, evt.DstPort)
+	} else {
+		srcIP := net.IP(evt.SrcIP[:4])
+		dstIP := net.IP(evt.DstIP[:4])
+		srcStr = fmt.Sprintf("%s:%d", srcIP, evt.SrcPort)
+		dstStr = fmt.Sprintf("%s:%d", dstIP, evt.DstPort)
+	}
 
 	eventName := eventTypeName(evt.EventType)
 	actionName := actionName(evt.Action)
@@ -90,8 +116,8 @@ func (er *EventReader) logEvent(data []byte) {
 
 	slog.Info("firewall event",
 		"type", eventName,
-		"src", fmt.Sprintf("%s:%d", srcIP, evt.SrcPort),
-		"dst", fmt.Sprintf("%s:%d", dstIP, evt.DstPort),
+		"src", srcStr,
+		"dst", dstStr,
 		"proto", protoName,
 		"action", actionName,
 		"policy_id", evt.PolicyID,
@@ -135,6 +161,8 @@ func protoName(p uint8) string {
 		return "UDP"
 	case 1:
 		return "ICMP"
+	case dataplane.ProtoICMPv6:
+		return "ICMPv6"
 	default:
 		return fmt.Sprintf("%d", p)
 	}

@@ -2,7 +2,7 @@
 /*
  * bpfrx XDP main entry point.
  *
- * Parses Ethernet/IPv4/L4 headers, populates per-CPU packet metadata,
+ * Parses Ethernet/IPv4/IPv6/L4 headers, populates per-CPU packet metadata,
  * and dispatches to the first pipeline stage via tail call.
  */
 
@@ -21,10 +21,6 @@ int xdp_main_prog(struct xdp_md *ctx)
 	if (parse_ethhdr(data, data_end, &l3_offset, &eth_proto) < 0)
 		return XDP_DROP;
 
-	/* Only handle IPv4 for now */
-	if (eth_proto != ETH_P_IP)
-		return XDP_PASS;
-
 	/* Get per-CPU scratch space for packet metadata */
 	__u32 zero = 0;
 	struct pkt_meta *meta = bpf_map_lookup_elem(&pkt_meta_scratch, &zero);
@@ -36,9 +32,16 @@ int xdp_main_prog(struct xdp_md *ctx)
 	meta->direction = 0; /* ingress */
 	meta->ingress_ifindex = ctx->ingress_ifindex;
 
-	/* Parse IPv4 header */
-	if (parse_iphdr(data, data_end, meta) < 0)
-		return XDP_DROP;
+	/* Parse L3 header based on EtherType */
+	if (eth_proto == ETH_P_IP) {
+		if (parse_iphdr(data, data_end, meta) < 0)
+			return XDP_DROP;
+	} else if (eth_proto == 0x86DD) { /* ETH_P_IPV6 */
+		if (parse_ipv6hdr(data, data_end, meta) < 0)
+			return XDP_DROP;
+	} else {
+		return XDP_PASS;
+	}
 
 	/* Parse L4 header */
 	if (!meta->is_fragment) {

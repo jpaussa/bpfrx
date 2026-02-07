@@ -3,8 +3,9 @@
  * bpfrx XDP forwarding stage.
  *
  * Rewrites Ethernet MAC addresses based on FIB lookup results,
- * decrements TTL, and redirects the packet to the egress interface
- * via XDP_REDIRECT through the devmap.
+ * decrements TTL/hop_limit, and redirects the packet to the egress
+ * interface via XDP_REDIRECT through the devmap.
+ * Supports both IPv4 and IPv6.
  */
 
 #include "../headers/bpfrx_common.h"
@@ -37,22 +38,31 @@ int xdp_forward_prog(struct xdp_md *ctx)
 	__builtin_memcpy(eth->h_dest, meta->fwd_dmac, ETH_ALEN);
 	__builtin_memcpy(eth->h_source, meta->fwd_smac, ETH_ALEN);
 
-	/* Decrement TTL */
-	struct iphdr *iph = data + meta->l3_offset;
-	if ((void *)(iph + 1) > data_end)
-		return XDP_DROP;
+	if (meta->addr_family == AF_INET) {
+		/* IPv4: Decrement TTL + update IP checksum */
+		struct iphdr *iph = data + meta->l3_offset;
+		if ((void *)(iph + 1) > data_end)
+			return XDP_DROP;
 
-	if (iph->ttl <= 1) {
-		/* TTL expired -- let kernel send ICMP Time Exceeded */
-		return XDP_PASS;
+		if (iph->ttl <= 1)
+			return XDP_PASS; /* Let kernel send ICMP Time Exceeded */
+
+		__u16 old_ttl_proto = *(__u16 *)&iph->ttl;
+		iph->ttl--;
+		__u16 new_ttl_proto = *(__u16 *)&iph->ttl;
+
+		csum_update_2(&iph->check, old_ttl_proto, new_ttl_proto);
+	} else {
+		/* IPv6: Decrement hop_limit (no checksum update needed) */
+		struct ipv6hdr *ip6h = data + meta->l3_offset;
+		if ((void *)(ip6h + 1) > data_end)
+			return XDP_DROP;
+
+		if (ip6h->hop_limit <= 1)
+			return XDP_PASS; /* Let kernel send ICMPv6 Time Exceeded */
+
+		ip6h->hop_limit--;
 	}
-
-	/* Incremental IP checksum update for TTL change */
-	__u16 old_ttl_proto = *(__u16 *)&iph->ttl;
-	iph->ttl--;
-	__u16 new_ttl_proto = *(__u16 *)&iph->ttl;
-
-	csum_update_2(&iph->check, old_ttl_proto, new_ttl_proto);
 
 	/* Increment TX counter */
 	inc_counter(GLOBAL_CTR_TX_PACKETS);

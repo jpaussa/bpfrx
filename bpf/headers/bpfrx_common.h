@@ -18,9 +18,21 @@
 #define AF_INET 2
 #endif
 
+#define AF_INET6        10
+
 #ifndef ETH_ALEN
 #define ETH_ALEN 6
 #endif
+
+/* IPv6 extension header next-header values */
+#define PROTO_ICMPV6    58
+#define NEXTHDR_HOP     0
+#define NEXTHDR_ROUTING 43
+#define NEXTHDR_FRAGMENT 44
+#define NEXTHDR_AUTH    51
+#define NEXTHDR_DEST    60
+#define NEXTHDR_NONE    59
+#define MAX_EXT_HDRS    6
 
 struct iphdr {
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
@@ -75,6 +87,50 @@ struct icmphdr {
 			__be16 __unused;
 			__be16 mtu;
 		} frag;
+	} un;
+};
+
+/* IPv6 header structures */
+struct in6_addr {
+	union {
+		__u8   u6_addr8[16];
+		__be32 u6_addr32[4];
+	};
+};
+
+struct ipv6hdr {
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+	__u8 priority:4, version:4;
+#else
+	__u8 version:4, priority:4;
+#endif
+	__u8  flow_lbl[3];
+	__be16 payload_len;
+	__u8  nexthdr;
+	__u8  hop_limit;
+	struct in6_addr saddr;
+	struct in6_addr daddr;
+};
+
+struct ipv6_opt_hdr {
+	__u8 nexthdr;
+	__u8 hdrlen;
+};
+
+struct frag_hdr {
+	__u8   nexthdr;
+	__u8   reserved;
+	__be16 frag_off;
+	__be32 identification;
+};
+
+struct icmp6hdr {
+	__u8    icmp6_type;
+	__u8    icmp6_code;
+	__sum16 icmp6_cksum;
+	union {
+		struct { __be16 id; __be16 sequence; } echo;
+		__be32 data32[1];
 	} un;
 };
 
@@ -175,20 +231,33 @@ struct icmphdr {
 #define SCREEN_IP_SOURCE_ROUTE   (1 << 12)
 
 /* ============================================================
+ * Address family agnostic IP address.
+ * Used in pkt_meta to handle both v4 and v6.
+ * For v4: address stored in .v4, v6 bytes zeroed.
+ * ============================================================ */
+
+struct ip_addr {
+	union {
+		__be32 v4;
+		__u8   v6[16];
+	};
+};
+
+/* ============================================================
  * Packet metadata -- passed between tail call stages via
  * per-CPU scratch map at index 0.
  * ============================================================ */
 
 struct pkt_meta {
 	/* Parsed header fields (network byte order for IPs/ports) */
-	__be32 src_ip;
-	__be32 dst_ip;
+	struct ip_addr src_ip;     /* 16 bytes */
+	struct ip_addr dst_ip;     /* 16 bytes */
 	__be16 src_port;
 	__be16 dst_port;
 	__u8   protocol;
 	__u8   tcp_flags;
 	__u8   ip_ttl;
-	__u8   pad0;
+	__u8   addr_family;  /* AF_INET=2, AF_INET6=10 */
 
 	/* ICMP specific */
 	__be16 icmp_id;
@@ -208,17 +277,15 @@ struct pkt_meta {
 
 	/* Pipeline state */
 	__u8  direction;    /* 0=ingress, 1=egress */
-	__u8  addr_family;  /* AF_INET=2 */
 	__u8  is_fragment;
 	__u8  ct_state;     /* SESS_STATE_* */
 	__u8  ct_direction; /* 0=forward, 1=reverse */
-	__u8  pad1[3];
 
 	__u32 policy_id;
 
 	/* NAT translations to apply */
-	__be32 nat_src_ip;
-	__be32 nat_dst_ip;
+	struct ip_addr nat_src_ip;  /* 16 bytes */
+	struct ip_addr nat_dst_ip;  /* 16 bytes */
 	__be16 nat_src_port;
 	__be16 nat_dst_port;
 	__u32  nat_flags;
@@ -235,8 +302,8 @@ struct pkt_meta {
 
 struct event {
 	__u64  timestamp;
-	__be32 src_ip;
-	__be32 dst_ip;
+	__u8   src_ip[16];
+	__u8   dst_ip[16];
 	__be16 src_port;
 	__be16 dst_port;
 	__u32  policy_id;
@@ -245,7 +312,7 @@ struct event {
 	__u8   event_type;
 	__u8   protocol;
 	__u8   action;
-	__u8   pad;
+	__u8   addr_family;  /* AF_INET=2, AF_INET6=10 */
 	__u64  session_packets;
 	__u64  session_bytes;
 };

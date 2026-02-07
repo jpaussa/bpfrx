@@ -28,6 +28,7 @@ var PredefinedApplications = map[string]*Application{
 	"junos-radacct":     {Name: "junos-radacct", Protocol: "udp", DestinationPort: "1813"},
 	"junos-snmp":        {Name: "junos-snmp", Protocol: "udp", DestinationPort: "161"},
 	"junos-ping":        {Name: "junos-ping", Protocol: "icmp", DestinationPort: ""},
+	"junos-pingv6":      {Name: "junos-pingv6", Protocol: "icmpv6", DestinationPort: ""},
 	"junos-traceroute":  {Name: "junos-traceroute", Protocol: "udp", DestinationPort: "33434-33523"},
 }
 

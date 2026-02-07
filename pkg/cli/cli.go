@@ -323,8 +323,9 @@ func (c *CLI) showFlowSession() error {
 	}
 
 	count := 0
+
+	// IPv4 sessions
 	err := c.dp.IterateSessions(func(key dataplane.SessionKey, val dataplane.SessionValue) bool {
-		// Only display forward entries
 		if val.IsReverse != 0 {
 			return true
 		}
@@ -334,17 +335,7 @@ func (c *CLI) showFlowSession() error {
 		dstIP := net.IP(key.DstIP[:])
 		srcPort := ntohs(key.SrcPort)
 		dstPort := ntohs(key.DstPort)
-
-		protoName := "unknown"
-		switch key.Protocol {
-		case 6:
-			protoName = "TCP"
-		case 17:
-			protoName = "UDP"
-		case 1:
-			protoName = "ICMP"
-		}
-
+		protoName := protoNameFromNum(key.Protocol)
 		stateName := sessionStateName(val.State)
 
 		fmt.Printf("Session ID: %d, Policy: %d, State: %s, Timeout: %ds\n",
@@ -353,7 +344,6 @@ func (c *CLI) showFlowSession() error {
 			srcIP, srcPort, dstIP, dstPort, protoName)
 		fmt.Printf(" Zone: %d -> %d\n", val.IngressZone, val.EgressZone)
 
-		// Show NAT translations
 		if val.Flags&dataplane.SessFlagSNAT != 0 {
 			natIP := uint32ToIP(val.NATSrcIP)
 			natPort := ntohs(val.NATSrcPort)
@@ -374,6 +364,48 @@ func (c *CLI) showFlowSession() error {
 	if err != nil {
 		return fmt.Errorf("iterate sessions: %w", err)
 	}
+
+	// IPv6 sessions
+	err = c.dp.IterateSessionsV6(func(key dataplane.SessionKeyV6, val dataplane.SessionValueV6) bool {
+		if val.IsReverse != 0 {
+			return true
+		}
+		count++
+
+		srcIP := net.IP(key.SrcIP[:])
+		dstIP := net.IP(key.DstIP[:])
+		srcPort := ntohs(key.SrcPort)
+		dstPort := ntohs(key.DstPort)
+		protoName := protoNameFromNum(key.Protocol)
+		stateName := sessionStateName(val.State)
+
+		fmt.Printf("Session ID: %d, Policy: %d, State: %s, Timeout: %ds\n",
+			count, val.PolicyID, stateName, val.Timeout)
+		fmt.Printf("  In: [%s]:%d --> [%s]:%d;%s,",
+			srcIP, srcPort, dstIP, dstPort, protoName)
+		fmt.Printf(" Zone: %d -> %d\n", val.IngressZone, val.EgressZone)
+
+		if val.Flags&dataplane.SessFlagSNAT != 0 {
+			natIP := net.IP(val.NATSrcIP[:])
+			natPort := ntohs(val.NATSrcPort)
+			fmt.Printf("  NAT: src [%s]:%d -> [%s]:%d\n",
+				srcIP, srcPort, natIP, natPort)
+		}
+		if val.Flags&dataplane.SessFlagDNAT != 0 {
+			natIP := net.IP(val.NATDstIP[:])
+			natPort := ntohs(val.NATDstPort)
+			fmt.Printf("  NAT: dst [%s]:%d -> [%s]:%d\n",
+				natIP, natPort, dstIP, dstPort)
+		}
+
+		fmt.Printf("  Packets: %d/%d, Bytes: %d/%d\n",
+			val.FwdPackets, val.RevPackets, val.FwdBytes, val.RevBytes)
+		return true
+	})
+	if err != nil {
+		return fmt.Errorf("iterate sessions_v6: %w", err)
+	}
+
 	fmt.Printf("Total sessions: %d\n", count)
 	return nil
 }
@@ -430,8 +462,32 @@ func (c *CLI) showNATSource(cfg *config.Config, args []string) error {
 		}
 		return true
 	})
+	_ = c.dp.IterateSessionsV6(func(key dataplane.SessionKeyV6, val dataplane.SessionValueV6) bool {
+		if val.IsReverse != 0 {
+			return true
+		}
+		if val.Flags&dataplane.SessFlagSNAT != 0 {
+			snatCount++
+		}
+		return true
+	})
 	fmt.Printf("Active SNAT sessions: %d\n", snatCount)
 	return nil
+}
+
+func protoNameFromNum(p uint8) string {
+	switch p {
+	case 6:
+		return "TCP"
+	case 17:
+		return "UDP"
+	case 1:
+		return "ICMP"
+	case dataplane.ProtoICMPv6:
+		return "ICMPv6"
+	default:
+		return fmt.Sprintf("%d", p)
+	}
 }
 
 // uint32ToIP converts a network byte order uint32 to net.IP.

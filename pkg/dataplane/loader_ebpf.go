@@ -34,6 +34,11 @@ func (m *Manager) loadAllObjects() error {
 	m.maps["pkt_meta_scratch"] = mainObjs.PktMetaScratch
 	m.maps["dnat_table"] = mainObjs.DnatTable
 	m.maps["snat_rules"] = mainObjs.SnatRules
+	m.maps["sessions_v6"] = mainObjs.SessionsV6
+	m.maps["address_book_v6"] = mainObjs.AddressBookV6
+	m.maps["dnat_table_v6"] = mainObjs.DnatTableV6
+	m.maps["snat_rules_v6"] = mainObjs.SnatRulesV6
+	m.maps["session_v6_scratch"] = mainObjs.SessionV6Scratch
 
 	// Store main program.
 	m.programs["xdp_main_prog"] = mainObjs.XdpMainProg
@@ -59,6 +64,11 @@ func (m *Manager) loadAllObjects() error {
 			"events":            mainObjs.Events,
 			"dnat_table":        mainObjs.DnatTable,
 			"snat_rules":        mainObjs.SnatRules,
+			"sessions_v6":       mainObjs.SessionsV6,
+			"address_book_v6":   mainObjs.AddressBookV6,
+			"dnat_table_v6":     mainObjs.DnatTableV6,
+			"snat_rules_v6":     mainObjs.SnatRulesV6,
+			"session_v6_scratch": mainObjs.SessionV6Scratch,
 		},
 	}
 
