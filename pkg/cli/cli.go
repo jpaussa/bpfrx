@@ -2,8 +2,10 @@
 package cli
 
 import (
+	"encoding/binary"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strings"
 
@@ -253,8 +255,7 @@ func (c *CLI) handleShowSecurity(args []string) error {
 
 	case "flow":
 		if len(args) >= 2 && args[1] == "session" {
-			fmt.Println("Session table: (not yet implemented)")
-			return nil
+			return c.showFlowSession()
 		}
 		return fmt.Errorf("unknown show security flow target")
 
@@ -303,20 +304,91 @@ func (c *CLI) handleCommit(args []string) error {
 }
 
 func (c *CLI) applyToDataplane(cfg *config.Config) error {
-	if c.dp == nil {
+	if c.dp == nil || !c.dp.IsLoaded() {
 		return nil
 	}
 
-	// Apply zone configuration
-	for _, zone := range cfg.Security.Zones {
-		for _, ifaceName := range zone.Interfaces {
-			// Resolve interface name to ifindex via netlink
-			// For now, this is a placeholder.
-			_ = ifaceName
-		}
+	_, err := c.dp.Compile(cfg)
+	return err
+}
+
+func (c *CLI) showFlowSession() error {
+	if c.dp == nil || !c.dp.IsLoaded() {
+		fmt.Println("Session table: dataplane not loaded")
+		return nil
 	}
 
+	count := 0
+	err := c.dp.IterateSessions(func(key dataplane.SessionKey, val dataplane.SessionValue) bool {
+		// Only display forward entries
+		if val.IsReverse != 0 {
+			return true
+		}
+		count++
+
+		srcIP := net.IP(key.SrcIP[:])
+		dstIP := net.IP(key.DstIP[:])
+		srcPort := ntohs(key.SrcPort)
+		dstPort := ntohs(key.DstPort)
+
+		protoName := "unknown"
+		switch key.Protocol {
+		case 6:
+			protoName = "TCP"
+		case 17:
+			protoName = "UDP"
+		case 1:
+			protoName = "ICMP"
+		}
+
+		stateName := sessionStateName(val.State)
+
+		fmt.Printf("Session ID: %d, Policy: %d, State: %s, Timeout: %ds\n",
+			count, val.PolicyID, stateName, val.Timeout)
+		fmt.Printf("  In: %s:%d --> %s:%d;%s,",
+			srcIP, srcPort, dstIP, dstPort, protoName)
+		fmt.Printf(" Zone: %d -> %d\n", val.IngressZone, val.EgressZone)
+		fmt.Printf("  Packets: %d/%d, Bytes: %d/%d\n",
+			val.FwdPackets, val.RevPackets, val.FwdBytes, val.RevBytes)
+		return true
+	})
+	if err != nil {
+		return fmt.Errorf("iterate sessions: %w", err)
+	}
+	fmt.Printf("Total sessions: %d\n", count)
 	return nil
+}
+
+func sessionStateName(state uint8) string {
+	switch state {
+	case dataplane.SessStateNone:
+		return "None"
+	case dataplane.SessStateNew:
+		return "New"
+	case dataplane.SessStateSynSent:
+		return "SYN_SENT"
+	case dataplane.SessStateSynRecv:
+		return "SYN_RECV"
+	case dataplane.SessStateEstablished:
+		return "Established"
+	case dataplane.SessStateFINWait:
+		return "FIN_WAIT"
+	case dataplane.SessStateCloseWait:
+		return "CLOSE_WAIT"
+	case dataplane.SessStateTimeWait:
+		return "TIME_WAIT"
+	case dataplane.SessStateClosed:
+		return "Closed"
+	default:
+		return fmt.Sprintf("Unknown(%d)", state)
+	}
+}
+
+// ntohs converts a uint16 from network to host byte order.
+func ntohs(v uint16) uint16 {
+	var b [2]byte
+	binary.BigEndian.PutUint16(b[:], v)
+	return binary.NativeEndian.Uint16(b[:])
 }
 
 func (c *CLI) operationalPrompt() string {

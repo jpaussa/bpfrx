@@ -18,6 +18,7 @@ type SessionValue struct {
 	Flags     uint8
 	TCPState  uint8
 	IsReverse uint8
+	Pad0      [4]byte // alignment padding for Created (8-byte aligned)
 
 	Created  uint64
 	LastSeen uint64
@@ -27,8 +28,8 @@ type SessionValue struct {
 	IngressZone uint16
 	EgressZone  uint16
 
-	NATSrcIP   [4]byte
-	NATDstIP   [4]byte
+	NATSrcIP   uint32
+	NATDstIP   uint32
 	NATSrcPort uint16
 	NATDstPort uint16
 
@@ -41,7 +42,8 @@ type SessionValue struct {
 
 	ALGType  uint8
 	LogFlags uint8
-	Pad      [2]byte
+	Pad1     [2]byte
+	Pad2     [4]byte // trailing padding
 }
 
 // ZoneConfig mirrors the C struct zone_config.
@@ -154,4 +156,46 @@ const (
 	ActionDeny   = 0
 	ActionPermit = 1
 	ActionReject = 2
+)
+
+// MaxRulesPerPolicy is the maximum number of rules in a single policy set.
+const MaxRulesPerPolicy = 256
+
+// LPMKeyV4 mirrors the C struct lpm_key_v4 for address book LPM trie.
+type LPMKeyV4 struct {
+	PrefixLen uint32
+	Addr      uint32 // network byte order
+}
+
+// AddrValue mirrors the C struct addr_value.
+type AddrValue struct {
+	AddressID uint32
+}
+
+// AddrMembershipKey mirrors the C struct addr_membership_key.
+type AddrMembershipKey struct {
+	IP        uint32 // stores resolved address_id (reused field)
+	AddressID uint32
+}
+
+// AppKey mirrors the C struct app_key.
+type AppKey struct {
+	Protocol uint8
+	Pad      uint8
+	DstPort  uint16 // network byte order
+}
+
+// AppValue mirrors the C struct app_value.
+type AppValue struct {
+	AppID   uint32
+	ALGType uint8
+	Pad     [3]byte
+}
+
+// Event type constants.
+const (
+	EventTypeSessionOpen  = 1
+	EventTypeSessionClose = 2
+	EventTypePolicyDeny   = 3
+	EventTypeScreenDrop   = 4
 )

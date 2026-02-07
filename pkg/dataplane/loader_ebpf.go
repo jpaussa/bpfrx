@@ -65,6 +65,20 @@ func (m *Manager) loadAllObjects() error {
 	}
 	m.programs["xdp_zone_prog"] = zoneObjs.XdpZoneProg
 
+	// Load XDP conntrack program.
+	var ctObjs bpfrxXdpConntrackObjects
+	if err := loadBpfrxXdpConntrackObjects(&ctObjs, replaceOpts); err != nil {
+		return fmt.Errorf("load xdp_conntrack: %w", err)
+	}
+	m.programs["xdp_conntrack_prog"] = ctObjs.XdpConntrackProg
+
+	// Load XDP policy program.
+	var polObjs bpfrxXdpPolicyObjects
+	if err := loadBpfrxXdpPolicyObjects(&polObjs, replaceOpts); err != nil {
+		return fmt.Errorf("load xdp_policy: %w", err)
+	}
+	m.programs["xdp_policy_prog"] = polObjs.XdpPolicyProg
+
 	// Load XDP forward program.
 	var fwdObjs bpfrxXdpForwardObjects
 	if err := loadBpfrxXdpForwardObjects(&fwdObjs, replaceOpts); err != nil {
@@ -75,8 +89,10 @@ func (m *Manager) loadAllObjects() error {
 	// Populate tail call program array.
 	xdpProgs := mainObjs.XdpProgs
 	tailCalls := map[uint32]*ebpf.Program{
-		XDPProgZone:    zoneObjs.XdpZoneProg,
-		XDPProgForward: fwdObjs.XdpForwardProg,
+		XDPProgZone:      zoneObjs.XdpZoneProg,
+		XDPProgConntrack: ctObjs.XdpConntrackProg,
+		XDPProgPolicy:    polObjs.XdpPolicyProg,
+		XDPProgForward:   fwdObjs.XdpForwardProg,
 	}
 	for idx, prog := range tailCalls {
 		fd := uint32(prog.FD())

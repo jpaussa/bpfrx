@@ -77,11 +77,8 @@ int xdp_zone_prog(struct xdp_md *ctx)
 		return XDP_PASS;
 	}
 
-	/*
-	 * Phase 1: skip conntrack and policy, go directly to forward.
-	 * Later phases insert conntrack (XDP_PROG_CONNTRACK) here.
-	 */
-	bpf_tail_call(ctx, &xdp_progs, XDP_PROG_FORWARD);
+	/* Tail call to conntrack for session lookup and policy evaluation */
+	bpf_tail_call(ctx, &xdp_progs, XDP_PROG_CONNTRACK);
 
 	return XDP_PASS;
 }

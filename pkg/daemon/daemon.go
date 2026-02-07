@@ -8,10 +8,13 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/psviderski/bpfrx/pkg/cli"
 	"github.com/psviderski/bpfrx/pkg/configstore"
+	"github.com/psviderski/bpfrx/pkg/conntrack"
 	"github.com/psviderski/bpfrx/pkg/dataplane"
+	"github.com/psviderski/bpfrx/pkg/logging"
 )
 
 // Options configures the daemon.
@@ -65,6 +68,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 			// Apply current config to dataplane
 			if cfg := d.store.ActiveConfig(); cfg != nil {
 				slog.Info("applying active configuration to dataplane")
+				if _, err := d.dp.Compile(cfg); err != nil {
+					slog.Warn("failed to apply active config", "err", err)
+				}
 			}
 		}
 	}
@@ -72,6 +78,18 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// Handle signals for clean shutdown
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
+
+	// Start background services if dataplane is loaded
+	if d.dp != nil {
+		gc := conntrack.NewGC(d.dp, 10*time.Second)
+		go gc.Run(ctx)
+
+		eventsMap := d.dp.Map("events")
+		if eventsMap != nil {
+			er := logging.NewEventReader(eventsMap)
+			go er.Run(ctx)
+		}
+	}
 
 	// Start CLI shell
 	shell := cli.New(d.store, d.dp)
