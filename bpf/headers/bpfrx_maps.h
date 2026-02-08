@@ -221,10 +221,17 @@ struct {
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
-	__uint(max_entries, MAX_ZONES);
+	__uint(max_entries, MAX_ZONES * 2);
 	__type(key, __u32);
 	__type(value, struct counter_value);
 } zone_counters SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+	__uint(max_entries, MAX_INTERFACES);
+	__type(key, __u32);
+	__type(value, struct iface_counter_value);
+} interface_counters SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);

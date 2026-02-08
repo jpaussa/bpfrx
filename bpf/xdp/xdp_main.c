@@ -50,8 +50,9 @@ int xdp_main_prog(struct xdp_md *ctx)
 			return XDP_DROP;
 	}
 
-	/* Increment global RX counter */
+	/* Increment global RX counter and per-interface RX counter */
 	inc_counter(GLOBAL_CTR_RX_PACKETS);
+	inc_iface_rx(meta->ingress_ifindex, meta->pkt_len);
 
 	/* Dispatch to pipeline: screen -> zone -> conntrack -> policy -> nat -> forward */
 	bpf_tail_call(ctx, &xdp_progs, XDP_PROG_SCREEN);

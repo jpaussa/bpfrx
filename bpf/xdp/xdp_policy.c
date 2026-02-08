@@ -406,6 +406,7 @@ int xdp_policy_prog(struct xdp_md *ctx)
 
 		/* Rule matches! */
 		meta->policy_id = rule->rule_id;
+		inc_policy_counter(rule->rule_id, meta->pkt_len);
 
 		if (rule->action == ACTION_PERMIT) {
 			if (meta->addr_family == AF_INET) {

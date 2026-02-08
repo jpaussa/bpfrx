@@ -358,6 +358,13 @@ struct counter_value {
 	__u64 bytes;
 };
 
+struct iface_counter_value {
+	__u64 rx_packets;
+	__u64 rx_bytes;
+	__u64 tx_packets;
+	__u64 tx_bytes;
+};
+
 /* ============================================================
  * Screen/IDS configuration
  * ============================================================ */

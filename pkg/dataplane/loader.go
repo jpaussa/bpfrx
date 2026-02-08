@@ -25,12 +25,13 @@ import (
 
 // Manager manages the eBPF dataplane: programs, maps, and attachments.
 type Manager struct {
-	loaded   bool
-	programs map[string]*ebpf.Program
-	maps     map[string]*ebpf.Map
-	colls    []*ebpf.Collection
-	xdpLinks map[int]link.Link
-	tcLinks  map[int]link.Link
+	loaded      bool
+	programs    map[string]*ebpf.Program
+	maps        map[string]*ebpf.Map
+	colls       []*ebpf.Collection
+	xdpLinks    map[int]link.Link
+	tcLinks     map[int]link.Link
+	lastCompile *CompileResult
 }
 
 // New creates a new dataplane Manager.
@@ -171,6 +172,11 @@ func (m *Manager) DetachTC(ifindex int) error {
 // Map returns a named eBPF map, or nil if not found.
 func (m *Manager) Map(name string) *ebpf.Map {
 	return m.maps[name]
+}
+
+// LastCompileResult returns the result from the most recent Compile call.
+func (m *Manager) LastCompileResult() *CompileResult {
+	return m.lastCompile
 }
 
 // Close releases all eBPF resources.

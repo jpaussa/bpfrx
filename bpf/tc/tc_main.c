@@ -59,8 +59,9 @@ int tc_main_prog(struct __sk_buff *skb)
 			return TC_ACT_SHOT;
 	}
 
-	/* Increment egress counter */
+	/* Increment egress counter and per-interface TX counter */
 	inc_counter(GLOBAL_CTR_TC_EGRESS_PACKETS);
+	inc_iface_tx(skb->ifindex, meta->pkt_len);
 
 	/* Tail call to conntrack */
 	bpf_tail_call(skb, &tc_progs, TC_PROG_CONNTRACK);

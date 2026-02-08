@@ -199,6 +199,9 @@ func (c *CLI) handleShow(args []string) error {
 	case "security":
 		return c.handleShowSecurity(args[1:])
 
+	case "interfaces":
+		return c.showInterfaces(args[1:])
+
 	default:
 		return fmt.Errorf("unknown show target: %s", args[0])
 	}
@@ -225,7 +228,19 @@ func (c *CLI) handleShowSecurity(args []string) error {
 	switch args[0] {
 	case "zones":
 		for name, zone := range cfg.Security.Zones {
-			fmt.Printf("Zone: %s\n", name)
+			// Resolve zone ID for counter lookup
+			var zoneID uint16
+			if c.dp != nil {
+				if cr := c.dp.LastCompileResult(); cr != nil {
+					zoneID = cr.ZoneIDs[name]
+				}
+			}
+
+			if zoneID > 0 {
+				fmt.Printf("Zone: %s (id: %d)\n", name, zoneID)
+			} else {
+				fmt.Printf("Zone: %s\n", name)
+			}
 			fmt.Printf("  Interfaces: %s\n", strings.Join(zone.Interfaces, ", "))
 			if zone.ScreenProfile != "" {
 				fmt.Printf("  Screen: %s\n", zone.ScreenProfile)
@@ -240,14 +255,29 @@ func (c *CLI) handleShowSecurity(args []string) error {
 						strings.Join(zone.HostInboundTraffic.Protocols, ", "))
 				}
 			}
+
+			// Per-zone traffic counters
+			if c.dp != nil && c.dp.IsLoaded() && zoneID > 0 {
+				ingress, errIn := c.dp.ReadZoneCounters(zoneID, 0)
+				egress, errOut := c.dp.ReadZoneCounters(zoneID, 1)
+				if errIn == nil && errOut == nil {
+					fmt.Println("  Traffic statistics:")
+					fmt.Printf("    Input:  %d packets, %d bytes\n",
+						ingress.Packets, ingress.Bytes)
+					fmt.Printf("    Output: %d packets, %d bytes\n",
+						egress.Packets, egress.Bytes)
+				}
+			}
+
 			fmt.Println()
 		}
 		return nil
 
 	case "policies":
+		policySetID := uint32(0)
 		for _, zpp := range cfg.Security.Policies {
 			fmt.Printf("From zone: %s, To zone: %s\n", zpp.FromZone, zpp.ToZone)
-			for _, pol := range zpp.Policies {
+			for i, pol := range zpp.Policies {
 				action := "permit"
 				switch pol.Action {
 				case 1:
@@ -255,13 +285,24 @@ func (c *CLI) handleShowSecurity(args []string) error {
 				case 2:
 					action = "reject"
 				}
-				fmt.Printf("  Policy: %s\n", pol.Name)
+				ruleID := policySetID*dataplane.MaxRulesPerPolicy + uint32(i)
+				fmt.Printf("  Rule: %s (id: %d)\n", pol.Name, ruleID)
 				fmt.Printf("    Match: src=%v dst=%v app=%v\n",
 					pol.Match.SourceAddresses,
 					pol.Match.DestinationAddresses,
 					pol.Match.Applications)
 				fmt.Printf("    Action: %s\n", action)
+
+				// Per-rule hit counts from BPF
+				if c.dp != nil && c.dp.IsLoaded() {
+					counters, err := c.dp.ReadPolicyCounters(ruleID)
+					if err == nil {
+						fmt.Printf("    Hit count: %d packets, %d bytes\n",
+							counters.Packets, counters.Bytes)
+					}
+				}
 			}
+			policySetID++
 			fmt.Println()
 		}
 		return nil
@@ -653,6 +694,104 @@ func (c *CLI) showNATSource(cfg *config.Config, args []string) error {
 			}
 			fmt.Printf("NAT allocation failures: %d\n", total)
 		}
+	}
+
+	return nil
+}
+
+func (c *CLI) showInterfaces(args []string) error {
+	cfg := c.store.ActiveConfig()
+	if cfg == nil {
+		fmt.Println("no active configuration")
+		return nil
+	}
+
+	// Optional filter by interface name
+	var filterName string
+	if len(args) > 0 {
+		filterName = args[0]
+	}
+
+	// Build interface -> zone name mapping from config
+	ifaceZone := make(map[string]string)
+	for name, zone := range cfg.Security.Zones {
+		for _, ifaceName := range zone.Interfaces {
+			ifaceZone[ifaceName] = name
+		}
+	}
+
+	// Collect unique interface names from all zones
+	var ifaceNames []string
+	for ifaceName := range ifaceZone {
+		if filterName != "" && ifaceName != filterName {
+			continue
+		}
+		ifaceNames = append(ifaceNames, ifaceName)
+	}
+
+	if len(ifaceNames) == 0 && filterName != "" {
+		return fmt.Errorf("interface %s not found in configuration", filterName)
+	}
+
+	for _, ifaceName := range ifaceNames {
+		zoneName := ifaceZone[ifaceName]
+
+		// Query live system for link info
+		iface, err := net.InterfaceByName(ifaceName)
+		if err != nil {
+			fmt.Printf("Physical interface: %s, Not present\n", ifaceName)
+			fmt.Printf("  Security zone: %s\n", zoneName)
+			fmt.Println()
+			continue
+		}
+
+		upDown := "Down"
+		if iface.Flags&net.FlagUp != 0 {
+			upDown = "Up"
+		}
+		enabled := "Enabled"
+		if iface.Flags&net.FlagUp == 0 {
+			enabled = "Disabled"
+		}
+
+		fmt.Printf("Physical interface: %s, %s, Physical link is %s\n",
+			ifaceName, enabled, upDown)
+		fmt.Printf("  Link-level type: Ethernet, MTU: %d, MAC: %s\n",
+			iface.MTU, iface.HardwareAddr)
+		fmt.Printf("  Security zone: %s\n", zoneName)
+
+		// Traffic counters from BPF map
+		if c.dp != nil && c.dp.IsLoaded() {
+			counters, err := c.dp.ReadInterfaceCounters(iface.Index)
+			if err == nil {
+				fmt.Println("  Traffic statistics:")
+				fmt.Printf("    Input:  %d packets, %d bytes\n",
+					counters.RxPackets, counters.RxBytes)
+				fmt.Printf("    Output: %d packets, %d bytes\n",
+					counters.TxPackets, counters.TxBytes)
+			}
+		}
+
+		// Addresses
+		addrs, err := iface.Addrs()
+		if err == nil && len(addrs) > 0 {
+			fmt.Printf("\n  Logical interface %s.0\n", ifaceName)
+			fmt.Println("    Addresses:")
+			for _, addr := range addrs {
+				ipNet, ok := addr.(*net.IPNet)
+				if !ok {
+					continue
+				}
+				ones, _ := ipNet.Mask.Size()
+				if ipNet.IP.To4() != nil {
+					fmt.Printf("      inet  %s/%d\n", ipNet.IP, ones)
+				} else {
+					fmt.Printf("      inet6 %s/%d\n", ipNet.IP, ones)
+				}
+			}
+		}
+
+		fmt.Println()
 	}
 
 	return nil

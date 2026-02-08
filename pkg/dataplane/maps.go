@@ -410,6 +410,64 @@ func (m *Manager) ClearScreenConfigs() error {
 	return nil
 }
 
+// ReadInterfaceCounters reads the per-CPU interface counter values and sums them.
+func (m *Manager) ReadInterfaceCounters(ifindex int) (InterfaceCounterValue, error) {
+	zm, ok := m.maps["interface_counters"]
+	if !ok {
+		return InterfaceCounterValue{}, fmt.Errorf("interface_counters map not found")
+	}
+	var perCPU []InterfaceCounterValue
+	if err := zm.Lookup(uint32(ifindex), &perCPU); err != nil {
+		return InterfaceCounterValue{}, err
+	}
+	var total InterfaceCounterValue
+	for _, v := range perCPU {
+		total.RxPackets += v.RxPackets
+		total.RxBytes += v.RxBytes
+		total.TxPackets += v.TxPackets
+		total.TxBytes += v.TxBytes
+	}
+	return total, nil
+}
+
+// ReadZoneCounters reads the per-CPU zone counter values and sums them.
+// direction: 0 = ingress, 1 = egress.
+func (m *Manager) ReadZoneCounters(zoneID uint16, direction int) (CounterValue, error) {
+	zm, ok := m.maps["zone_counters"]
+	if !ok {
+		return CounterValue{}, fmt.Errorf("zone_counters map not found")
+	}
+	idx := uint32(zoneID)*2 + uint32(direction)
+	var perCPU []CounterValue
+	if err := zm.Lookup(idx, &perCPU); err != nil {
+		return CounterValue{}, err
+	}
+	var total CounterValue
+	for _, v := range perCPU {
+		total.Packets += v.Packets
+		total.Bytes += v.Bytes
+	}
+	return total, nil
+}
+
+// ReadPolicyCounters reads the per-CPU policy counter values and sums them.
+func (m *Manager) ReadPolicyCounters(policyID uint32) (CounterValue, error) {
+	zm, ok := m.maps["policy_counters"]
+	if !ok {
+		return CounterValue{}, fmt.Errorf("policy_counters map not found")
+	}
+	var perCPU []CounterValue
+	if err := zm.Lookup(policyID, &perCPU); err != nil {
+		return CounterValue{}, err
+	}
+	var total CounterValue
+	for _, v := range perCPU {
+		total.Packets += v.Packets
+		total.Bytes += v.Bytes
+	}
+	return total, nil
+}
+
 // htons converts a uint16 from host to network byte order.
 func htons(v uint16) uint16 {
 	var b [2]byte

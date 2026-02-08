@@ -28,6 +28,7 @@ int xdp_zone_prog(struct xdp_md *ctx)
 		return XDP_DROP;
 	}
 	meta->ingress_zone = *zone_id;
+	inc_zone_ingress((__u32)*zone_id, meta->pkt_len);
 
 	/*
 	 * Pre-routing NAT: check dnat_table before FIB lookup.

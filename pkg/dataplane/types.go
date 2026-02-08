@@ -135,6 +135,14 @@ type CounterValue struct {
 	Bytes   uint64
 }
 
+// InterfaceCounterValue mirrors the C struct iface_counter_value.
+type InterfaceCounterValue struct {
+	RxPackets uint64
+	RxBytes   uint64
+	TxPackets uint64
+	TxBytes   uint64
+}
+
 // Event mirrors the C struct event (with 16-byte IPs).
 type Event struct {
 	Timestamp      uint64

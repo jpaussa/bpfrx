@@ -305,6 +305,43 @@ inc_counter(__u32 ctr_idx)
 		__sync_fetch_and_add(ctr, 1);
 }
 
+static __always_inline void
+inc_iface_rx(__u32 ifindex, __u32 pkt_len)
+{
+	struct iface_counter_value *ic = bpf_map_lookup_elem(&interface_counters, &ifindex);
+	if (ic) { ic->rx_packets++; ic->rx_bytes += pkt_len; }
+}
+
+static __always_inline void
+inc_iface_tx(__u32 ifindex, __u32 pkt_len)
+{
+	struct iface_counter_value *ic = bpf_map_lookup_elem(&interface_counters, &ifindex);
+	if (ic) { ic->tx_packets++; ic->tx_bytes += pkt_len; }
+}
+
+static __always_inline void
+inc_zone_ingress(__u32 zone_id, __u32 pkt_len)
+{
+	__u32 idx = zone_id * 2;
+	struct counter_value *zc = bpf_map_lookup_elem(&zone_counters, &idx);
+	if (zc) { zc->packets++; zc->bytes += pkt_len; }
+}
+
+static __always_inline void
+inc_zone_egress(__u32 zone_id, __u32 pkt_len)
+{
+	__u32 idx = zone_id * 2 + 1;
+	struct counter_value *zc = bpf_map_lookup_elem(&zone_counters, &idx);
+	if (zc) { zc->packets++; zc->bytes += pkt_len; }
+}
+
+static __always_inline void
+inc_policy_counter(__u32 policy_id, __u32 pkt_len)
+{
+	struct counter_value *pc = bpf_map_lookup_elem(&policy_counters, &policy_id);
+	if (pc) { pc->packets++; pc->bytes += pkt_len; }
+}
+
 /* ============================================================
  * Ring buffer event emission helper (shared by policy + screen)
  * ============================================================ */

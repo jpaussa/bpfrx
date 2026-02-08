@@ -127,8 +127,10 @@ int xdp_forward_prog(struct xdp_md *ctx)
 		ip6h->hop_limit--;
 	}
 
-	/* Increment TX counter */
+	/* Increment TX counter and per-interface/zone egress counters */
 	inc_counter(GLOBAL_CTR_TX_PACKETS);
+	inc_iface_tx(meta->fwd_ifindex, meta->pkt_len);
+	inc_zone_egress((__u32)meta->egress_zone, meta->pkt_len);
 
 	/* Redirect via devmap to egress interface */
 	return bpf_redirect_map(&tx_ports, meta->fwd_ifindex, 0);

@@ -87,6 +87,7 @@ func (m *Manager) Compile(cfg *config.Config) (*CompileResult, error) {
 		"applications", len(result.AppIDs),
 		"policy_sets", result.PolicySets)
 
+	m.lastCompile = result
 	return result, nil
 }
 
