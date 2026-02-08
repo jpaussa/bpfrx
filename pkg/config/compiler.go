@@ -231,6 +231,12 @@ func compileScreen(node *Node, sec *SecurityConfig) error {
 					profile.TCP.WinNuke = true
 				case "syn-frag":
 					profile.TCP.SynFrag = true
+				case "syn-fin":
+					profile.TCP.SynFin = true
+				case "no-flag":
+					profile.TCP.NoFlag = true
+				case "fin-no-ack":
+					profile.TCP.FinNoAck = true
 				case "syn-flood":
 					sf := &SynFloodConfig{}
 					for _, sfOpt := range opt.Children {
@@ -249,6 +255,20 @@ func compileScreen(node *Node, sec *SecurityConfig) error {
 						}
 					}
 					profile.TCP.SynFlood = sf
+				}
+			}
+		}
+
+		udpNode := child.FindChild("udp")
+		if udpNode != nil {
+			for _, opt := range udpNode.Children {
+				switch opt.Name() {
+				case "flood":
+					if len(opt.Keys) >= 3 {
+						if v, err := strconv.Atoi(opt.Keys[2]); err == nil {
+							profile.UDP.FloodThreshold = v
+						}
+					}
 				}
 			}
 		}

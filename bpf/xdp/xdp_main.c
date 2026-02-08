@@ -52,13 +52,8 @@ int xdp_main_prog(struct xdp_md *ctx)
 	/* Increment global RX counter */
 	inc_counter(GLOBAL_CTR_RX_PACKETS);
 
-	/*
-	 * Dispatch to pipeline.
-	 *
-	 * Phase 1: skip screen and conntrack, go directly to zone
-	 * classification. Later phases will use XDP_PROG_SCREEN.
-	 */
-	bpf_tail_call(ctx, &xdp_progs, XDP_PROG_ZONE);
+	/* Dispatch to pipeline: screen -> zone -> conntrack -> policy -> nat -> forward */
+	bpf_tail_call(ctx, &xdp_progs, XDP_PROG_SCREEN);
 
 	/* Tail call failed -- pass to kernel stack as fallback */
 	return XDP_PASS;

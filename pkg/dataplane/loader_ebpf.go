@@ -39,6 +39,8 @@ func (m *Manager) loadAllObjects() error {
 	m.maps["dnat_table_v6"] = mainObjs.DnatTableV6
 	m.maps["snat_rules_v6"] = mainObjs.SnatRulesV6
 	m.maps["session_v6_scratch"] = mainObjs.SessionV6Scratch
+	m.maps["screen_configs"] = mainObjs.ScreenConfigs
+	m.maps["flood_counters"] = mainObjs.FloodCounters
 
 	// Store main program.
 	m.programs["xdp_main_prog"] = mainObjs.XdpMainProg
@@ -69,8 +71,17 @@ func (m *Manager) loadAllObjects() error {
 			"dnat_table_v6":     mainObjs.DnatTableV6,
 			"snat_rules_v6":     mainObjs.SnatRulesV6,
 			"session_v6_scratch": mainObjs.SessionV6Scratch,
+			"screen_configs":     mainObjs.ScreenConfigs,
+			"flood_counters":     mainObjs.FloodCounters,
 		},
 	}
+
+	// Load XDP screen program.
+	var screenObjs bpfrxXdpScreenObjects
+	if err := loadBpfrxXdpScreenObjects(&screenObjs, replaceOpts); err != nil {
+		return fmt.Errorf("load xdp_screen: %w", err)
+	}
+	m.programs["xdp_screen_prog"] = screenObjs.XdpScreenProg
 
 	// Load XDP zone program.
 	var zoneObjs bpfrxXdpZoneObjects
@@ -110,6 +121,7 @@ func (m *Manager) loadAllObjects() error {
 	// Populate XDP tail call program array.
 	xdpProgs := mainObjs.XdpProgs
 	tailCalls := map[uint32]*ebpf.Program{
+		XDPProgScreen:    screenObjs.XdpScreenProg,
 		XDPProgZone:      zoneObjs.XdpZoneProg,
 		XDPProgConntrack: ctObjs.XdpConntrackProg,
 		XDPProgPolicy:    polObjs.XdpPolicyProg,

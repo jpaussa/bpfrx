@@ -325,6 +325,28 @@ func (m *Manager) ClearSNATRulesV6() error {
 	return nil
 }
 
+// SetScreenConfig writes a screen profile configuration entry.
+func (m *Manager) SetScreenConfig(profileID uint32, cfg ScreenConfig) error {
+	zm, ok := m.maps["screen_configs"]
+	if !ok {
+		return fmt.Errorf("screen_configs map not found")
+	}
+	return zm.Update(profileID, cfg, ebpf.UpdateAny)
+}
+
+// ClearScreenConfigs zeroes all screen_configs entries.
+func (m *Manager) ClearScreenConfigs() error {
+	zm, ok := m.maps["screen_configs"]
+	if !ok {
+		return fmt.Errorf("screen_configs map not found")
+	}
+	empty := ScreenConfig{}
+	for i := uint32(0); i < 64; i++ {
+		zm.Update(i, empty, ebpf.UpdateAny)
+	}
+	return nil
+}
+
 // htons converts a uint16 from host to network byte order.
 func htons(v uint16) uint16 {
 	var b [2]byte

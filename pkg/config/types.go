@@ -139,6 +139,7 @@ type ScreenProfile struct {
 	ICMP ICMPScreen
 	IP   IPScreen
 	TCP  TCPScreen
+	UDP  UDPScreen
 }
 
 // ICMPScreen configures ICMP screening.
@@ -159,6 +160,14 @@ type TCPScreen struct {
 	Land     bool
 	WinNuke  bool
 	SynFrag  bool
+	SynFin   bool
+	NoFlag   bool
+	FinNoAck bool
+}
+
+// UDPScreen configures UDP screening.
+type UDPScreen struct {
+	FloodThreshold int
 }
 
 // SynFloodConfig configures SYN flood protection thresholds.

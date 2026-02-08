@@ -12,6 +12,7 @@ import (
 // These produce the *_bpfel.go files with embedded ELF objects.
 //
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -strip llvm-strip-21 -cflags "-O2 -g -Wall" -target amd64 bpfrxXdpMain ../../bpf/xdp/xdp_main.c -- -I../../bpf/headers -I/usr/include/x86_64-linux-gnu
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -strip llvm-strip-21 -cflags "-O2 -g -Wall" -target amd64 bpfrxXdpScreen ../../bpf/xdp/xdp_screen.c -- -I../../bpf/headers -I/usr/include/x86_64-linux-gnu
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -strip llvm-strip-21 -cflags "-O2 -g -Wall" -target amd64 bpfrxXdpZone ../../bpf/xdp/xdp_zone.c -- -I../../bpf/headers -I/usr/include/x86_64-linux-gnu
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -strip llvm-strip-21 -cflags "-O2 -g -Wall" -target amd64 bpfrxXdpConntrack ../../bpf/xdp/xdp_conntrack.c -- -I../../bpf/headers -I/usr/include/x86_64-linux-gnu
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -strip llvm-strip-21 -cflags "-O2 -g -Wall" -target amd64 bpfrxXdpPolicy ../../bpf/xdp/xdp_policy.c -- -I../../bpf/headers -I/usr/include/x86_64-linux-gnu

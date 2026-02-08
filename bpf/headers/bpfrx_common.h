@@ -358,4 +358,22 @@ struct counter_value {
 	__u64 bytes;
 };
 
+/* ============================================================
+ * Screen/IDS configuration
+ * ============================================================ */
+
+struct screen_config {
+	__u32 flags;              /* SCREEN_* bitmask */
+	__u32 syn_flood_thresh;   /* SYN pkts/sec/zone, 0=disabled */
+	__u32 icmp_flood_thresh;
+	__u32 udp_flood_thresh;
+};
+
+struct flood_state {
+	__u64 syn_count;
+	__u64 icmp_count;
+	__u64 udp_count;
+	__u64 window_start;       /* ktime_ns / 1e9 (seconds) */
+};
+
 #endif /* __BPFRX_COMMON_H__ */

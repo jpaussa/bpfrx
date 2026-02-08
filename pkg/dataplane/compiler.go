@@ -13,6 +13,7 @@ import (
 // CompileResult holds the result of a config compilation for reference.
 type CompileResult struct {
 	ZoneIDs    map[string]uint16 // zone name -> zone ID
+	ScreenIDs  map[string]uint16 // screen profile name -> profile ID (1-based)
 	AddrIDs    map[string]uint32 // address name -> address ID
 	AppIDs     map[string]uint32 // application name -> app ID
 	PolicySets int               // number of policy sets created
@@ -28,9 +29,10 @@ func (m *Manager) Compile(cfg *config.Config) (*CompileResult, error) {
 	}
 
 	result := &CompileResult{
-		ZoneIDs: make(map[string]uint16),
-		AddrIDs: make(map[string]uint32),
-		AppIDs:  make(map[string]uint32),
+		ZoneIDs:   make(map[string]uint16),
+		ScreenIDs: make(map[string]uint16),
+		AddrIDs:   make(map[string]uint32),
+		AppIDs:    make(map[string]uint32),
 	}
 
 	// Phase 1: Assign zone IDs (1-based; 0 = unassigned)
@@ -38,6 +40,13 @@ func (m *Manager) Compile(cfg *config.Config) (*CompileResult, error) {
 	for name := range cfg.Security.Zones {
 		result.ZoneIDs[name] = zoneID
 		zoneID++
+	}
+
+	// Phase 1.5: Assign screen profile IDs (1-based; 0 = no profile)
+	screenID := uint16(1)
+	for name := range cfg.Security.Screen {
+		result.ScreenIDs[name] = screenID
+		screenID++
 	}
 
 	// Phase 2: Compile zones
@@ -65,6 +74,11 @@ func (m *Manager) Compile(cfg *config.Config) (*CompileResult, error) {
 		return nil, fmt.Errorf("compile nat: %w", err)
 	}
 
+	// Phase 7: Compile screen profiles
+	if err := m.compileScreenProfiles(cfg, result); err != nil {
+		return nil, fmt.Errorf("compile screen profiles: %w", err)
+	}
+
 	slog.Info("config compiled to dataplane",
 		"zones", len(result.ZoneIDs),
 		"addresses", len(result.AddrIDs),
@@ -81,6 +95,18 @@ func (m *Manager) compileZones(cfg *config.Config, result *CompileResult) error 
 		// Write zone_config
 		zc := ZoneConfig{
 			ZoneID: zid,
+		}
+
+		// Look up screen profile ID for this zone
+		if zone.ScreenProfile != "" {
+			if sid, ok := result.ScreenIDs[zone.ScreenProfile]; ok {
+				zc.ScreenProfileID = sid
+				slog.Info("zone screen profile assigned",
+					"zone", name, "screen", zone.ScreenProfile, "id", sid)
+			} else {
+				slog.Warn("screen profile not found for zone",
+					"zone", name, "screen", zone.ScreenProfile)
+			}
 		}
 
 		// Compile host-inbound-traffic flags
@@ -559,6 +585,78 @@ func (m *Manager) compileNAT(cfg *config.Config, result *CompileResult) error {
 					"pool_port", poolPort)
 			}
 		}
+	}
+
+	return nil
+}
+
+func (m *Manager) compileScreenProfiles(cfg *config.Config, result *CompileResult) error {
+	if err := m.ClearScreenConfigs(); err != nil {
+		slog.Warn("failed to clear screen_configs", "err", err)
+	}
+
+	for name, profile := range cfg.Security.Screen {
+		sid, ok := result.ScreenIDs[name]
+		if !ok {
+			continue
+		}
+
+		var flags uint32
+		var sc ScreenConfig
+
+		// TCP flags
+		if profile.TCP.Land {
+			flags |= ScreenLandAttack
+		}
+		if profile.TCP.SynFin {
+			flags |= ScreenTCPSynFin
+		}
+		if profile.TCP.NoFlag {
+			flags |= ScreenTCPNoFlag
+		}
+		if profile.TCP.FinNoAck {
+			flags |= ScreenTCPFinNoAck
+		}
+		if profile.TCP.WinNuke {
+			flags |= ScreenWinNuke
+		}
+		if profile.TCP.SynFlood != nil && profile.TCP.SynFlood.AttackThreshold > 0 {
+			flags |= ScreenSynFlood
+			sc.SynFloodThresh = uint32(profile.TCP.SynFlood.AttackThreshold)
+		}
+
+		// ICMP flags
+		if profile.ICMP.PingDeath {
+			flags |= ScreenPingOfDeath
+		}
+		if profile.ICMP.FloodThreshold > 0 {
+			flags |= ScreenICMPFlood
+			sc.ICMPFloodThresh = uint32(profile.ICMP.FloodThreshold)
+		}
+
+		// IP flags
+		if profile.IP.SourceRouteOption {
+			flags |= ScreenIPSourceRoute
+		}
+
+		// UDP flags
+		if profile.UDP.FloodThreshold > 0 {
+			flags |= ScreenUDPFlood
+			sc.UDPFloodThresh = uint32(profile.UDP.FloodThreshold)
+		}
+
+		sc.Flags = flags
+
+		if err := m.SetScreenConfig(uint32(sid), sc); err != nil {
+			return fmt.Errorf("set screen config %s (id=%d): %w", name, sid, err)
+		}
+
+		slog.Info("screen profile compiled",
+			"name", name, "id", sid,
+			"flags", fmt.Sprintf("0x%x", flags),
+			"syn_thresh", sc.SynFloodThresh,
+			"icmp_thresh", sc.ICMPFloodThresh,
+			"udp_thresh", sc.UDPFloodThresh)
 	}
 
 	return nil

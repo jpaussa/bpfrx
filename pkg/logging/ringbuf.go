@@ -114,15 +114,27 @@ func (er *EventReader) logEvent(data []byte) {
 	actionName := actionName(evt.Action)
 	protoName := protoName(evt.Protocol)
 
-	slog.Info("firewall event",
-		"type", eventName,
-		"src", srcStr,
-		"dst", dstStr,
-		"proto", protoName,
-		"action", actionName,
-		"policy_id", evt.PolicyID,
-		"ingress_zone", evt.IngressZone,
-		"egress_zone", evt.EgressZone)
+	if evt.EventType == dataplane.EventTypeScreenDrop {
+		screenName := screenFlagName(evt.PolicyID)
+		slog.Info("firewall event",
+			"type", eventName,
+			"screen_check", screenName,
+			"src", srcStr,
+			"dst", dstStr,
+			"proto", protoName,
+			"action", actionName,
+			"ingress_zone", evt.IngressZone)
+	} else {
+		slog.Info("firewall event",
+			"type", eventName,
+			"src", srcStr,
+			"dst", dstStr,
+			"proto", protoName,
+			"action", actionName,
+			"policy_id", evt.PolicyID,
+			"ingress_zone", evt.IngressZone,
+			"egress_zone", evt.EgressZone)
+	}
 }
 
 func eventTypeName(t uint8) string {
@@ -166,4 +178,11 @@ func protoName(p uint8) string {
 	default:
 		return fmt.Sprintf("%d", p)
 	}
+}
+
+func screenFlagName(flag uint32) string {
+	if name, ok := dataplane.ScreenFlagNames[flag]; ok {
+		return name
+	}
+	return fmt.Sprintf("screen(0x%x)", flag)
 }

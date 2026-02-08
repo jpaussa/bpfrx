@@ -209,6 +209,7 @@ func (c *CLI) handleShowSecurity(args []string) error {
 		fmt.Println("show security:")
 		fmt.Println("  zones            Show security zones")
 		fmt.Println("  policies         Show security policies")
+		fmt.Println("  screen           Show screen/IDS profiles")
 		fmt.Println("  flow session     Show active sessions")
 		fmt.Println("  nat source       Show source NAT information")
 		fmt.Println("  statistics       Show global statistics")
@@ -271,6 +272,9 @@ func (c *CLI) handleShowSecurity(args []string) error {
 		}
 		return fmt.Errorf("unknown show security flow target")
 
+	case "screen":
+		return c.showScreen()
+
 	case "nat":
 		return c.handleShowNAT(args[1:])
 
@@ -280,6 +284,99 @@ func (c *CLI) handleShowSecurity(args []string) error {
 	default:
 		return fmt.Errorf("unknown show security target: %s", args[0])
 	}
+}
+
+func (c *CLI) showScreen() error {
+	cfg := c.store.ActiveConfig()
+	if cfg == nil {
+		fmt.Println("no active configuration")
+		return nil
+	}
+
+	if len(cfg.Security.Screen) == 0 {
+		fmt.Println("No screen profiles configured")
+		return nil
+	}
+
+	// Build reverse map: profile name -> zones using it
+	zonesByProfile := make(map[string][]string)
+	for name, zone := range cfg.Security.Zones {
+		if zone.ScreenProfile != "" {
+			zonesByProfile[zone.ScreenProfile] = append(
+				zonesByProfile[zone.ScreenProfile], name)
+		}
+	}
+
+	for name, profile := range cfg.Security.Screen {
+		fmt.Printf("Screen profile: %s\n", name)
+
+		// TCP checks
+		if profile.TCP.Land {
+			fmt.Println("  TCP LAND attack detection: enabled")
+		}
+		if profile.TCP.SynFin {
+			fmt.Println("  TCP SYN+FIN detection: enabled")
+		}
+		if profile.TCP.NoFlag {
+			fmt.Println("  TCP no-flag detection: enabled")
+		}
+		if profile.TCP.FinNoAck {
+			fmt.Println("  TCP FIN-no-ACK detection: enabled")
+		}
+		if profile.TCP.WinNuke {
+			fmt.Println("  TCP WinNuke detection: enabled")
+		}
+		if profile.TCP.SynFlood != nil {
+			fmt.Printf("  TCP SYN flood protection: attack-threshold %d\n",
+				profile.TCP.SynFlood.AttackThreshold)
+		}
+
+		// ICMP checks
+		if profile.ICMP.PingDeath {
+			fmt.Println("  ICMP ping-of-death detection: enabled")
+		}
+		if profile.ICMP.FloodThreshold > 0 {
+			fmt.Printf("  ICMP flood protection: threshold %d\n",
+				profile.ICMP.FloodThreshold)
+		}
+
+		// IP checks
+		if profile.IP.SourceRouteOption {
+			fmt.Println("  IP source-route option detection: enabled")
+		}
+
+		// UDP checks
+		if profile.UDP.FloodThreshold > 0 {
+			fmt.Printf("  UDP flood protection: threshold %d\n",
+				profile.UDP.FloodThreshold)
+		}
+
+		// Zones using this profile
+		if zones, ok := zonesByProfile[name]; ok {
+			fmt.Printf("  Applied to zones: %s\n", strings.Join(zones, ", "))
+		} else {
+			fmt.Println("  Applied to zones: (none)")
+		}
+
+		fmt.Println()
+	}
+
+	// Show screen drop counter
+	if c.dp != nil && c.dp.IsLoaded() {
+		ctrMap := c.dp.Map("global_counters")
+		if ctrMap != nil {
+			var perCPU []uint64
+			if err := ctrMap.Lookup(uint32(dataplane.GlobalCtrScreenDrops), &perCPU); err == nil {
+				var total uint64
+				for _, v := range perCPU {
+					total += v
+				}
+				fmt.Printf("Total screen drops: %d\n", total)
+			}
+		}
+	}
+
+	return nil
 }
 
 func (c *CLI) showStatistics() error {

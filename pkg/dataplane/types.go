@@ -358,6 +358,56 @@ type SNATValueV6 struct {
 	Pad    [3]byte
 }
 
+// ScreenConfig mirrors the C struct screen_config.
+type ScreenConfig struct {
+	Flags          uint32
+	SynFloodThresh uint32
+	ICMPFloodThresh uint32
+	UDPFloodThresh uint32
+}
+
+// FloodState mirrors the C struct flood_state.
+type FloodState struct {
+	SynCount    uint64
+	ICMPCount   uint64
+	UDPCount    uint64
+	WindowStart uint64
+}
+
+// Screen flag constants -- must match C SCREEN_* defines.
+const (
+	ScreenSynFlood      = 1 << 0
+	ScreenICMPFlood     = 1 << 1
+	ScreenUDPFlood      = 1 << 2
+	ScreenPortScan      = 1 << 3
+	ScreenIPSweep       = 1 << 4
+	ScreenLandAttack    = 1 << 5
+	ScreenPingOfDeath   = 1 << 6
+	ScreenTearDrop      = 1 << 7
+	ScreenTCPSynFin     = 1 << 8
+	ScreenTCPNoFlag     = 1 << 9
+	ScreenTCPFinNoAck   = 1 << 10
+	ScreenWinNuke       = 1 << 11
+	ScreenIPSourceRoute = 1 << 12
+)
+
+// ScreenFlagNames maps screen flag values to human-readable names.
+var ScreenFlagNames = map[uint32]string{
+	ScreenSynFlood:      "SYN flood",
+	ScreenICMPFlood:     "ICMP flood",
+	ScreenUDPFlood:      "UDP flood",
+	ScreenPortScan:      "port scan",
+	ScreenIPSweep:       "IP sweep",
+	ScreenLandAttack:    "LAND attack",
+	ScreenPingOfDeath:   "ping of death",
+	ScreenTearDrop:      "tear drop",
+	ScreenTCPSynFin:     "TCP SYN+FIN",
+	ScreenTCPNoFlag:     "TCP no-flag",
+	ScreenTCPFinNoAck:   "TCP FIN-no-ACK",
+	ScreenWinNuke:       "WinNuke",
+	ScreenIPSourceRoute: "IP source-route",
+}
+
 // Event type constants.
 const (
 	EventTypeSessionOpen  = 1

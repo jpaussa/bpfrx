@@ -254,6 +254,24 @@ struct {
 } events SEC(".maps");
 
 /* ============================================================
+ * Screen/IDS configuration & flood rate state
+ * ============================================================ */
+
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, MAX_SCREEN_PROFILES);
+	__type(key, __u32);
+	__type(value, struct screen_config);
+} screen_configs SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+	__uint(max_entries, MAX_ZONES);
+	__type(key, __u32);
+	__type(value, struct flood_state);
+} flood_counters SEC(".maps");
+
+/* ============================================================
  * NAT tables (IPv4)
  * ============================================================ */
 

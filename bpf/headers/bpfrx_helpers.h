@@ -300,4 +300,45 @@ inc_counter(__u32 ctr_idx)
 		__sync_fetch_and_add(ctr, 1);
 }
 
+/* ============================================================
+ * Ring buffer event emission helper (shared by policy + screen)
+ * ============================================================ */
+
+static __always_inline void
+emit_event(struct pkt_meta *meta, __u8 event_type, __u8 action,
+	   __u64 packets, __u64 bytes)
+{
+	struct event *evt = bpf_ringbuf_reserve(&events, sizeof(*evt), 0);
+	if (!evt)
+		return;
+
+	evt->timestamp = bpf_ktime_get_ns();
+
+	/* Copy IP addresses based on address family */
+	__builtin_memset(evt->src_ip, 0, 16);
+	__builtin_memset(evt->dst_ip, 0, 16);
+
+	if (meta->addr_family == AF_INET) {
+		__builtin_memcpy(evt->src_ip, &meta->src_ip.v4, 4);
+		__builtin_memcpy(evt->dst_ip, &meta->dst_ip.v4, 4);
+	} else {
+		__builtin_memcpy(evt->src_ip, meta->src_ip.v6, 16);
+		__builtin_memcpy(evt->dst_ip, meta->dst_ip.v6, 16);
+	}
+
+	evt->src_port = meta->src_port;
+	evt->dst_port = meta->dst_port;
+	evt->policy_id = meta->policy_id;
+	evt->ingress_zone = meta->ingress_zone;
+	evt->egress_zone = meta->egress_zone;
+	evt->event_type = event_type;
+	evt->protocol = meta->protocol;
+	evt->action = action;
+	evt->addr_family = meta->addr_family;
+	evt->session_packets = packets;
+	evt->session_bytes = bytes;
+
+	bpf_ringbuf_submit(evt, 0);
+}
+
 #endif /* __BPFRX_HELPERS_H__ */
