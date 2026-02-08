@@ -7,6 +7,7 @@
  */
 
 #include "../headers/bpfrx_common.h"
+#define BPFRX_NAT_POOLS
 #include "../headers/bpfrx_maps.h"
 #include "../headers/bpfrx_helpers.h"
 

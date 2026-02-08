@@ -163,7 +163,8 @@ int xdp_screen_prog(struct xdp_md *ctx)
 
 	/* IP source-route option (IPv4 only) */
 	if ((sc->flags & SCREEN_IP_SOURCE_ROUTE) &&
-	    meta->addr_family == AF_INET) {
+	    meta->addr_family == AF_INET &&
+	    meta->l3_offset < 64) {
 		struct iphdr *iph = data + meta->l3_offset;
 		if ((void *)(iph + 1) <= data_end && iph->ihl > 5)
 			return screen_drop(meta, SCREEN_IP_SOURCE_ROUTE);

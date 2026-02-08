@@ -77,12 +77,20 @@ func (m *Manager) loadAllObjects() error {
 			"session_v6_scratch": mainObjs.SessionV6Scratch,
 			"screen_configs":     mainObjs.ScreenConfigs,
 			"flood_counters":     mainObjs.FloodCounters,
-			"nat_pool_configs":   mainObjs.NatPoolConfigs,
-			"nat_pool_ips_v4":    mainObjs.NatPoolIpsV4,
-			"nat_pool_ips_v6":    mainObjs.NatPoolIpsV6,
-			"nat_port_counters":  mainObjs.NatPortCounters,
 		},
 	}
+
+	// Extended replacements for xdp_policy which also includes NAT pool maps.
+	policyReplaceOpts := &ebpf.CollectionOptions{
+		MapReplacements: map[string]*ebpf.Map{},
+	}
+	for k, v := range replaceOpts.MapReplacements {
+		policyReplaceOpts.MapReplacements[k] = v
+	}
+	policyReplaceOpts.MapReplacements["nat_pool_configs"] = mainObjs.NatPoolConfigs
+	policyReplaceOpts.MapReplacements["nat_pool_ips_v4"] = mainObjs.NatPoolIpsV4
+	policyReplaceOpts.MapReplacements["nat_pool_ips_v6"] = mainObjs.NatPoolIpsV6
+	policyReplaceOpts.MapReplacements["nat_port_counters"] = mainObjs.NatPortCounters
 
 	// Load XDP screen program.
 	var screenObjs bpfrxXdpScreenObjects
@@ -105,9 +113,9 @@ func (m *Manager) loadAllObjects() error {
 	}
 	m.programs["xdp_conntrack_prog"] = ctObjs.XdpConntrackProg
 
-	// Load XDP policy program.
+	// Load XDP policy program (uses NAT pool maps).
 	var polObjs bpfrxXdpPolicyObjects
-	if err := loadBpfrxXdpPolicyObjects(&polObjs, replaceOpts); err != nil {
+	if err := loadBpfrxXdpPolicyObjects(&polObjs, policyReplaceOpts); err != nil {
 		return fmt.Errorf("load xdp_policy: %w", err)
 	}
 	m.programs["xdp_policy_prog"] = polObjs.XdpPolicyProg

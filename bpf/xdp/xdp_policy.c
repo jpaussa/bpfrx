@@ -9,6 +9,7 @@
  */
 
 #include "../headers/bpfrx_common.h"
+#define BPFRX_NAT_POOLS
 #include "../headers/bpfrx_maps.h"
 #include "../headers/bpfrx_helpers.h"
 
@@ -16,7 +17,7 @@
  * Check whether an IPv4 address matches a policy rule's address_id.
  * address_id == 0 means "any" (always matches).
  */
-static __always_inline int
+static __noinline int
 addr_matches(__be32 ip, __u32 rule_addr_id)
 {
 	if (rule_addr_id == 0)
@@ -46,7 +47,7 @@ addr_matches(__be32 ip, __u32 rule_addr_id)
 /*
  * Check whether an IPv6 address matches a policy rule's address_id.
  */
-static __always_inline int
+static __noinline int
 addr_matches_v6(const __u8 *ip, __u32 rule_addr_id)
 {
 	if (rule_addr_id == 0)
@@ -257,7 +258,7 @@ create_session_v6(struct pkt_meta *meta, __u32 policy_id, __u8 log,
  * Allocate a NAT IP and port from a pool (IPv4).
  * Returns 0 on success, -1 on failure.
  */
-static __always_inline int
+static __noinline int
 nat_pool_alloc_v4(__u8 pool_id, __be32 *out_ip, __be16 *out_port)
 {
 	__u32 pid = pool_id;
@@ -292,7 +293,7 @@ nat_pool_alloc_v4(__u8 pool_id, __be32 *out_ip, __be16 *out_port)
  * Allocate a NAT IP and port from a pool (IPv6).
  * Returns 0 on success, -1 on failure.
  */
-static __always_inline int
+static __noinline int
 nat_pool_alloc_v6(__u8 pool_id, __u8 *out_ip, __be16 *out_port)
 {
 	__u32 pid = pool_id;

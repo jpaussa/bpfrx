@@ -97,6 +97,10 @@ int xdp_forward_prog(struct xdp_md *ctx)
 	__builtin_memcpy(eth->h_dest, meta->fwd_dmac, ETH_ALEN);
 	__builtin_memcpy(eth->h_source, meta->fwd_smac, ETH_ALEN);
 
+	/* Bound l3_offset for verifier */
+	if (meta->l3_offset >= 64)
+		return XDP_DROP;
+
 	if (meta->addr_family == AF_INET) {
 		/* IPv4: Decrement TTL + update IP checksum */
 		struct iphdr *iph = data + meta->l3_offset;

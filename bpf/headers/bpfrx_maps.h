@@ -273,7 +273,11 @@ struct {
 
 /* ============================================================
  * NAT pool configuration & port allocation
+ * Only included in programs that define BPFRX_NAT_POOLS
+ * (xdp_main owns the maps, xdp_policy uses alloc helpers)
  * ============================================================ */
+
+#ifdef BPFRX_NAT_POOLS
 
 struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
@@ -302,6 +306,8 @@ struct {
 	__type(key, __u32);
 	__type(value, struct nat_port_counter);
 } nat_port_counters SEC(".maps");
+
+#endif /* BPFRX_NAT_POOLS */
 
 /* ============================================================
  * NAT tables (IPv4)
