@@ -71,6 +71,7 @@ type PolicyLog struct {
 // NATConfig holds NAT configuration.
 type NATConfig struct {
 	Source      []*NATRuleSet
+	SourcePools map[string]*NATPool    // named source NAT pools
 	Destination *DestinationNATConfig
 	Static      []*StaticNATRule
 }
@@ -121,9 +122,12 @@ const (
 
 // NATPool is a pool of addresses for NAT.
 type NATPool struct {
-	Name    string
-	Address string // CIDR
-	Port    int    // optional port mapping
+	Name      string
+	Address   string   // single address (DNAT compat)
+	Addresses []string // multiple addresses (source NAT pools)
+	Port      int      // optional port mapping (DNAT)
+	PortLow   int      // source pool port range low (default 1024)
+	PortHigh  int      // source pool port range high (default 65535)
 }
 
 // StaticNATRule is a 1:1 bidirectional NAT rule.

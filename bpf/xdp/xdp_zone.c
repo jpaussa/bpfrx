@@ -47,6 +47,11 @@ int xdp_zone_prog(struct xdp_md *ctx)
 			meta->dst_ip.v4     = dv->new_dst_ip;
 			meta->dst_port      = dv->new_dst_port;
 			meta->nat_flags    |= SESS_FLAG_DNAT;
+			/* ICMP: echo ID is symmetric, set src_port so
+			 * conntrack finds session using original echo ID */
+			if (meta->protocol == PROTO_ICMP ||
+			    meta->protocol == PROTO_ICMPV6)
+				meta->src_port = meta->dst_port;
 		}
 	} else {
 		struct dnat_key_v6 dk6 = { .protocol = meta->protocol };
@@ -60,6 +65,10 @@ int xdp_zone_prog(struct xdp_md *ctx)
 			__builtin_memcpy(meta->dst_ip.v6, dv6->new_dst_ip, 16);
 			meta->dst_port     = dv6->new_dst_port;
 			meta->nat_flags   |= SESS_FLAG_DNAT;
+			/* ICMP: echo ID symmetry for conntrack */
+			if (meta->protocol == PROTO_ICMP ||
+			    meta->protocol == PROTO_ICMPV6)
+				meta->src_port = meta->dst_port;
 		}
 	}
 

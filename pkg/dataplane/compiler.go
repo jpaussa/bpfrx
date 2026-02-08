@@ -16,6 +16,7 @@ type CompileResult struct {
 	ScreenIDs  map[string]uint16 // screen profile name -> profile ID (1-based)
 	AddrIDs    map[string]uint32 // address name -> address ID
 	AppIDs     map[string]uint32 // application name -> app ID
+	PoolIDs    map[string]uint8  // NAT pool name -> pool ID (0-based)
 	PolicySets int               // number of policy sets created
 }
 
@@ -33,6 +34,7 @@ func (m *Manager) Compile(cfg *config.Config) (*CompileResult, error) {
 		ScreenIDs: make(map[string]uint16),
 		AddrIDs:   make(map[string]uint32),
 		AppIDs:    make(map[string]uint32),
+		PoolIDs:   make(map[string]uint8),
 	}
 
 	// Phase 1: Assign zone IDs (1-based; 0 = unassigned)
@@ -412,10 +414,18 @@ func (m *Manager) compileNAT(cfg *config.Config, result *CompileResult) error {
 	if err := m.ClearDNATStaticV6(); err != nil {
 		slog.Warn("failed to clear static dnat_v6 entries", "err", err)
 	}
+	if err := m.ClearNATPoolConfigs(); err != nil {
+		slog.Warn("failed to clear nat_pool_configs", "err", err)
+	}
+	if err := m.ClearNATPoolIPs(); err != nil {
+		slog.Warn("failed to clear nat_pool_ips", "err", err)
+	}
 
 	natCfg := &cfg.Security.NAT
 
-	// Source NAT
+	// Source NAT: allocate pool IDs and compile pools + rules
+	poolID := uint8(0)
+
 	for _, rs := range natCfg.Source {
 		fromZone, ok := result.ZoneIDs[rs.FromZone]
 		if !ok {
@@ -429,31 +439,132 @@ func (m *Manager) compileNAT(cfg *config.Config, result *CompileResult) error {
 		}
 
 		for _, rule := range rs.Rules {
-			if !rule.Then.Interface {
-				slog.Warn("only interface mode SNAT supported",
+			if !rule.Then.Interface && rule.Then.PoolName == "" {
+				slog.Warn("SNAT rule has no action",
 					"rule", rule.Name, "rule-set", rs.Name)
 				continue
 			}
 
-			// Find the to-zone's interface and get its primary IPv4 address
-			toZoneCfg, ok := cfg.Security.Zones[rs.ToZone]
-			if !ok || len(toZoneCfg.Interfaces) == 0 {
-				slog.Warn("to-zone has no interfaces",
-					"zone", rs.ToZone, "rule-set", rs.Name)
-				continue
+			var curPoolID uint8
+			var poolCfg NATPoolConfig
+			var v4IPs []net.IP
+			var v6IPs []net.IP
+
+			if rule.Then.Interface {
+				// Interface mode: create implicit pool from egress interface IP(s)
+				toZoneCfg, ok := cfg.Security.Zones[rs.ToZone]
+				if !ok || len(toZoneCfg.Interfaces) == 0 {
+					slog.Warn("to-zone has no interfaces",
+						"zone", rs.ToZone, "rule-set", rs.Name)
+					continue
+				}
+				ifaceName := toZoneCfg.Interfaces[0]
+
+				snatIP, err := getInterfaceIP(ifaceName)
+				if err != nil {
+					slog.Warn("cannot get interface IPv4 for SNAT",
+						"interface", ifaceName, "err", err)
+				} else {
+					v4IPs = append(v4IPs, snatIP)
+				}
+
+				snatIPv6, err := getInterfaceIPv6(ifaceName)
+				if err != nil {
+					slog.Debug("no IPv6 address for SNAT",
+						"interface", ifaceName, "err", err)
+				} else {
+					v6IPs = append(v6IPs, snatIPv6)
+				}
+
+				if len(v4IPs) == 0 && len(v6IPs) == 0 {
+					slog.Warn("no IP addresses for interface SNAT",
+						"interface", ifaceName)
+					continue
+				}
+
+				poolCfg.PortLow = 1024
+				poolCfg.PortHigh = 65535
+				curPoolID = poolID
+				poolID++
+			} else {
+				// Pool mode: look up named pool
+				pool, ok := natCfg.SourcePools[rule.Then.PoolName]
+				if !ok {
+					slog.Warn("source NAT pool not found",
+						"pool", rule.Then.PoolName, "rule", rule.Name)
+					continue
+				}
+
+				// Check if pool already has an ID assigned
+				if existingID, exists := result.PoolIDs[pool.Name]; exists {
+					curPoolID = existingID
+				} else {
+					curPoolID = poolID
+					result.PoolIDs[pool.Name] = curPoolID
+					poolID++
+				}
+
+				// Parse pool addresses
+				for _, addr := range pool.Addresses {
+					cidr := addr
+					if !strings.Contains(cidr, "/") {
+						if strings.Contains(cidr, ":") {
+							cidr += "/128"
+						} else {
+							cidr += "/32"
+						}
+					}
+					ip, _, err := net.ParseCIDR(cidr)
+					if err != nil {
+						slog.Warn("invalid pool address", "addr", addr, "err", err)
+						continue
+					}
+					if ip.To4() != nil {
+						v4IPs = append(v4IPs, ip.To4())
+					} else {
+						v6IPs = append(v6IPs, ip)
+					}
+				}
+
+				poolCfg.PortLow = uint16(pool.PortLow)
+				poolCfg.PortHigh = uint16(pool.PortHigh)
+				if poolCfg.PortLow == 0 {
+					poolCfg.PortLow = 1024
+				}
+				if poolCfg.PortHigh == 0 {
+					poolCfg.PortHigh = 65535
+				}
 			}
 
-			ifaceName := toZoneCfg.Interfaces[0]
+			// Write pool IPs to maps
+			poolCfg.NumIPs = uint16(len(v4IPs))
+			poolCfg.NumIPsV6 = uint16(len(v6IPs))
 
-			// IPv4 SNAT
-			snatIP, err := getInterfaceIP(ifaceName)
-			if err != nil {
-				slog.Warn("cannot get interface IPv4 for SNAT",
-					"interface", ifaceName, "err", err)
-			} else {
+			for i, ip := range v4IPs {
+				if i >= int(MaxNATPoolIPsPerPool) {
+					break
+				}
+				if err := m.SetNATPoolIPV4(uint32(curPoolID), uint32(i), ipToUint32BE(ip)); err != nil {
+					return fmt.Errorf("set pool ip v4 %d/%d: %w", curPoolID, i, err)
+				}
+			}
+			for i, ip := range v6IPs {
+				if i >= int(MaxNATPoolIPsPerPool) {
+					break
+				}
+				if err := m.SetNATPoolIPV6(uint32(curPoolID), uint32(i), ipTo16Bytes(ip)); err != nil {
+					return fmt.Errorf("set pool ip v6 %d/%d: %w", curPoolID, i, err)
+				}
+			}
+
+			if err := m.SetNATPoolConfig(uint32(curPoolID), poolCfg); err != nil {
+				return fmt.Errorf("set pool config %d: %w", curPoolID, err)
+			}
+
+			// Write SNAT rule (v4)
+			if len(v4IPs) > 0 {
 				val := SNATValue{
-					SNATIP: ipToUint32BE(snatIP),
-					Mode:   0, // interface mode
+					Mode: curPoolID,
 				}
 				if err := m.SetSNATRule(fromZone, toZone, val); err != nil {
 					return fmt.Errorf("set snat rule %s/%s: %w",
@@ -462,18 +573,14 @@ func (m *Manager) compileNAT(cfg *config.Config, result *CompileResult) error {
 				slog.Info("source NAT rule compiled",
 					"rule-set", rs.Name, "rule", rule.Name,
 					"from", rs.FromZone, "to", rs.ToZone,
-					"snat_ip", snatIP)
+					"pool_id", curPoolID, "v4_ips", len(v4IPs),
+					"ports", fmt.Sprintf("%d-%d", poolCfg.PortLow, poolCfg.PortHigh))
 			}
 
-			// IPv6 SNAT (if interface has a v6 address)
-			snatIPv6, err := getInterfaceIPv6(ifaceName)
-			if err != nil {
-				slog.Debug("no IPv6 address for SNAT",
-					"interface", ifaceName, "err", err)
-			} else {
+			// Write SNAT rule (v6)
+			if len(v6IPs) > 0 {
 				val := SNATValueV6{
-					SNATIP: ipTo16Bytes(snatIPv6),
-					Mode:   0,
+					Mode: curPoolID,
 				}
 				if err := m.SetSNATRuleV6(fromZone, toZone, val); err != nil {
 					return fmt.Errorf("set snat_v6 rule %s/%s: %w",
@@ -482,7 +589,7 @@ func (m *Manager) compileNAT(cfg *config.Config, result *CompileResult) error {
 				slog.Info("source NAT v6 rule compiled",
 					"rule-set", rs.Name, "rule", rule.Name,
 					"from", rs.FromZone, "to", rs.ToZone,
-					"snat_ip", snatIPv6)
+					"pool_id", curPoolID, "v6_ips", len(v6IPs))
 			}
 		}
 	}

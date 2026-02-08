@@ -292,6 +292,24 @@ type AppValue struct {
 	Pad     [3]byte
 }
 
+// NAT pool types.
+type NATPoolConfig struct {
+	NumIPs   uint16
+	NumIPsV6 uint16
+	PortLow  uint16
+	PortHigh uint16
+}
+
+type NATPoolIPV6 struct {
+	IP [16]byte
+}
+
+type NATPortCounter struct {
+	Counter uint64
+}
+
+const MaxNATPoolIPsPerPool = 8
+
 // Session flag constants.
 const (
 	SessFlagSNAT = 1 << 0

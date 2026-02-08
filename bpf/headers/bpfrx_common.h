@@ -376,4 +376,25 @@ struct flood_state {
 	__u64 window_start;       /* ktime_ns / 1e9 (seconds) */
 };
 
+/* ============================================================
+ * NAT pool configuration
+ * ============================================================ */
+
+#define MAX_NAT_POOL_IPS_PER_POOL  8  /* max IPs per individual pool */
+
+struct nat_pool_config {
+	__u16 num_ips;        /* number of v4 IPs in this pool */
+	__u16 num_ips_v6;     /* number of v6 IPs in this pool */
+	__u16 port_low;       /* default 1024 */
+	__u16 port_high;      /* default 65535 */
+};
+
+struct nat_pool_ip_v6 {
+	__u8 ip[16];
+};
+
+struct nat_port_counter {
+	__u64 counter;
+};
+
 #endif /* __BPFRX_COMMON_H__ */

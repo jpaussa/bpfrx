@@ -151,6 +151,7 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 		}},
 		"nat": {children: map[string]*schemaNode{
 			"source": {children: map[string]*schemaNode{
+				"pool": {args: 1, children: nil},
 				"rule-set": {args: 1, children: map[string]*schemaNode{
 					"rule": {args: 1, children: map[string]*schemaNode{
 						"match": {children: nil},

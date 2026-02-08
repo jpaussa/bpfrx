@@ -325,6 +325,69 @@ func (m *Manager) ClearSNATRulesV6() error {
 	return nil
 }
 
+// SetNATPoolConfig writes a NAT pool configuration entry.
+func (m *Manager) SetNATPoolConfig(poolID uint32, cfg NATPoolConfig) error {
+	zm, ok := m.maps["nat_pool_configs"]
+	if !ok {
+		return fmt.Errorf("nat_pool_configs map not found")
+	}
+	return zm.Update(poolID, cfg, ebpf.UpdateAny)
+}
+
+// SetNATPoolIPV4 writes an IPv4 address to a NAT pool IP slot.
+func (m *Manager) SetNATPoolIPV4(poolID, index uint32, ip uint32) error {
+	zm, ok := m.maps["nat_pool_ips_v4"]
+	if !ok {
+		return fmt.Errorf("nat_pool_ips_v4 map not found")
+	}
+	mapIdx := poolID*MaxNATPoolIPsPerPool + index
+	return zm.Update(mapIdx, ip, ebpf.UpdateAny)
+}
+
+// SetNATPoolIPV6 writes an IPv6 address to a NAT pool IP slot.
+func (m *Manager) SetNATPoolIPV6(poolID, index uint32, ip [16]byte) error {
+	zm, ok := m.maps["nat_pool_ips_v6"]
+	if !ok {
+		return fmt.Errorf("nat_pool_ips_v6 map not found")
+	}
+	mapIdx := poolID*MaxNATPoolIPsPerPool + index
+	val := NATPoolIPV6{IP: ip}
+	return zm.Update(mapIdx, val, ebpf.UpdateAny)
+}
+
+// ClearNATPoolConfigs zeroes all nat_pool_configs entries.
+func (m *Manager) ClearNATPoolConfigs() error {
+	zm, ok := m.maps["nat_pool_configs"]
+	if !ok {
+		return fmt.Errorf("nat_pool_configs map not found")
+	}
+	empty := NATPoolConfig{}
+	for i := uint32(0); i < 32; i++ {
+		zm.Update(i, empty, ebpf.UpdateAny)
+	}
+	return nil
+}
+
+// ClearNATPoolIPs zeroes all nat_pool_ips_v4 and nat_pool_ips_v6 entries.
+func (m *Manager) ClearNATPoolIPs() error {
+	v4Map, ok := m.maps["nat_pool_ips_v4"]
+	if !ok {
+		return fmt.Errorf("nat_pool_ips_v4 map not found")
+	}
+	v6Map, ok := m.maps["nat_pool_ips_v6"]
+	if !ok {
+		return fmt.Errorf("nat_pool_ips_v6 map not found")
+	}
+	maxEntries := uint32(32 * MaxNATPoolIPsPerPool)
+	var zeroV4 uint32
+	zeroV6 := NATPoolIPV6{}
+	for i := uint32(0); i < maxEntries; i++ {
+		v4Map.Update(i, zeroV4, ebpf.UpdateAny)
+		v6Map.Update(i, zeroV6, ebpf.UpdateAny)
+	}
+	return nil
+}
+
 // SetScreenConfig writes a screen profile configuration entry.
 func (m *Manager) SetScreenConfig(profileID uint32, cfg ScreenConfig) error {
 	zm, ok := m.maps["screen_configs"]

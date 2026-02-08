@@ -100,7 +100,7 @@ func (gc *GC) sweep() {
 		dk := dataplane.DNATKey{
 			Protocol: s.key.Protocol,
 			DstIP:    s.val.NATSrcIP,
-			DstPort:  s.key.SrcPort,
+			DstPort:  s.val.NATSrcPort,
 		}
 		if err := gc.dp.DeleteDNATEntry(dk); err != nil {
 			slog.Debug("conntrack GC dnat cleanup failed", "err", err)
@@ -147,7 +147,7 @@ func (gc *GC) sweep() {
 		dk := dataplane.DNATKeyV6{
 			Protocol: s.key.Protocol,
 			DstIP:    s.val.NATSrcIP,
-			DstPort:  s.key.SrcPort,
+			DstPort:  s.val.NATSrcPort,
 		}
 		if err := gc.dp.DeleteDNATEntryV6(dk); err != nil {
 			slog.Debug("conntrack GC dnat_v6 cleanup failed", "err", err)

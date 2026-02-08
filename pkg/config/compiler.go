@@ -366,6 +366,11 @@ func compileInterfaces(node *Node, ifaces *InterfacesConfig) error {
 }
 
 func compileNAT(node *Node, sec *SecurityConfig) error {
+	// Initialize SourcePools map
+	if sec.NAT.SourcePools == nil {
+		sec.NAT.SourcePools = make(map[string]*NATPool)
+	}
+
 	srcNode := node.FindChild("source")
 	if srcNode != nil {
 		if err := compileNATSource(srcNode, sec); err != nil {
@@ -384,6 +389,39 @@ func compileNAT(node *Node, sec *SecurityConfig) error {
 }
 
 func compileNATSource(node *Node, sec *SecurityConfig) error {
+	// Parse source NAT pools
+	for _, poolNode := range node.FindChildren("pool") {
+		if len(poolNode.Keys) < 2 {
+			continue
+		}
+		pool := &NATPool{Name: poolNode.Keys[1]}
+
+		for _, prop := range poolNode.Children {
+			switch prop.Name() {
+			case "address":
+				if len(prop.Keys) >= 2 {
+					pool.Addresses = append(pool.Addresses, prop.Keys[1])
+				}
+			case "port":
+				// parse "range low N high M" or individual port
+				if len(prop.Keys) >= 2 {
+					if v, err := strconv.Atoi(prop.Keys[1]); err == nil {
+						pool.PortLow = v
+						pool.PortHigh = v
+					}
+				}
+			}
+		}
+		if pool.PortLow == 0 {
+			pool.PortLow = 1024
+		}
+		if pool.PortHigh == 0 {
+			pool.PortHigh = 65535
+		}
+		sec.NAT.SourcePools[pool.Name] = pool
+	}
+
+	// Parse source NAT rule-sets
 	for _, rsNode := range node.FindChildren("rule-set") {
 		if len(rsNode.Keys) < 2 {
 			continue

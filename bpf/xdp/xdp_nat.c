@@ -55,6 +55,12 @@ nat_update_l4_csum_v6(void *data, void *data_end, struct pkt_meta *meta,
 			return;
 		/* IPv6 UDP checksum is mandatory -- always update */
 		csum_update_16(&udp->check, old_addr, new_addr);
+	} else if (meta->protocol == PROTO_ICMPV6) {
+		/* ICMPv6 checksum covers pseudo-header with addresses */
+		struct icmp6hdr *icmp6 = l4;
+		if ((void *)(icmp6 + 1) > data_end)
+			return;
+		csum_update_16(&icmp6->icmp6_cksum, old_addr, new_addr);
 	}
 }
 
@@ -146,6 +152,24 @@ nat_rewrite_v4(void *data, void *data_end, struct pkt_meta *meta)
 			}
 		}
 	}
+
+	/* ICMP echo ID rewrite */
+	if (meta->protocol == PROTO_ICMP) {
+		struct icmphdr *icmp = data + meta->l4_offset;
+		if ((void *)(icmp + 1) <= data_end &&
+		    (icmp->type == 8 || icmp->type == 0)) {
+			/* Forward: use allocated port as new echo ID.
+			 * Return (DNAT): dst_port holds the original echo ID. */
+			__be16 desired_id = meta->src_port;
+			if (meta->nat_flags & SESS_FLAG_DNAT)
+				desired_id = meta->dst_port;
+			if (icmp->un.echo.id != desired_id) {
+				csum_update_2(&icmp->checksum,
+					      icmp->un.echo.id, desired_id);
+				icmp->un.echo.id = desired_id;
+			}
+		}
+	}
 }
 
 /*
@@ -211,6 +235,22 @@ nat_rewrite_v6(void *data, void *data_end, struct pkt_meta *meta)
 				nat_update_l4_port_csum(data, data_end, meta,
 							udp->dest, meta->dst_port);
 				udp->dest = meta->dst_port;
+			}
+		}
+	}
+
+	/* ICMPv6 echo ID rewrite */
+	if (meta->protocol == PROTO_ICMPV6) {
+		struct icmp6hdr *icmp6 = data + meta->l4_offset;
+		if ((void *)(icmp6 + 1) <= data_end &&
+		    (icmp6->icmp6_type == 128 || icmp6->icmp6_type == 129)) {
+			__be16 desired_id = meta->src_port;
+			if (meta->nat_flags & SESS_FLAG_DNAT)
+				desired_id = meta->dst_port;
+			if (icmp6->un.echo.id != desired_id) {
+				csum_update_2(&icmp6->icmp6_cksum,
+					      icmp6->un.echo.id, desired_id);
+				icmp6->un.echo.id = desired_id;
 			}
 		}
 	}

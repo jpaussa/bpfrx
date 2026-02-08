@@ -272,6 +272,38 @@ struct {
 } flood_counters SEC(".maps");
 
 /* ============================================================
+ * NAT pool configuration & port allocation
+ * ============================================================ */
+
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, MAX_NAT_POOLS);
+	__type(key, __u32);
+	__type(value, struct nat_pool_config);
+} nat_pool_configs SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, MAX_NAT_POOLS * MAX_NAT_POOL_IPS_PER_POOL);
+	__type(key, __u32);
+	__type(value, __be32);
+} nat_pool_ips_v4 SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, MAX_NAT_POOLS * MAX_NAT_POOL_IPS_PER_POOL);
+	__type(key, __u32);
+	__type(value, struct nat_pool_ip_v6);
+} nat_pool_ips_v6 SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+	__uint(max_entries, MAX_NAT_POOLS);
+	__type(key, __u32);
+	__type(value, struct nat_port_counter);
+} nat_port_counters SEC(".maps");
+
+/* ============================================================
  * NAT tables (IPv4)
  * ============================================================ */
 

@@ -195,7 +195,10 @@ parse_l4hdr(void *data, void *data_end, struct pkt_meta *meta)
 		meta->icmp_code = icmp->code;
 		meta->icmp_id   = icmp->un.echo.id;
 		meta->src_port  = icmp->un.echo.id; /* use as port for CT */
-		meta->dst_port  = 0;
+		/* For echo req/reply, set dst_port = echo_id so pre-routing
+		 * DNAT lookup works for return traffic */
+		meta->dst_port  = (icmp->type == 8 || icmp->type == 0) ?
+				  icmp->un.echo.id : 0;
 		meta->payload_offset = meta->l4_offset + sizeof(struct icmphdr);
 		break;
 	}
@@ -207,7 +210,9 @@ parse_l4hdr(void *data, void *data_end, struct pkt_meta *meta)
 		meta->icmp_code = icmp6->icmp6_code;
 		meta->icmp_id   = icmp6->un.echo.id;
 		meta->src_port  = icmp6->un.echo.id; /* use as port for CT */
-		meta->dst_port  = 0;
+		/* For echo req/reply, set dst_port = echo_id */
+		meta->dst_port  = (icmp6->icmp6_type == 128 || icmp6->icmp6_type == 129) ?
+				  icmp6->un.echo.id : 0;
 		meta->payload_offset = meta->l4_offset + sizeof(struct icmp6hdr);
 		break;
 	}

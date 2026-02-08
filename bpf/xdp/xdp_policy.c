@@ -253,6 +253,76 @@ create_session_v6(struct pkt_meta *meta, __u32 policy_id, __u8 log,
 	return 0;
 }
 
+/*
+ * Allocate a NAT IP and port from a pool (IPv4).
+ * Returns 0 on success, -1 on failure.
+ */
+static __always_inline int
+nat_pool_alloc_v4(__u8 pool_id, __be32 *out_ip, __be16 *out_port)
+{
+	__u32 pid = pool_id;
+	struct nat_pool_config *cfg = bpf_map_lookup_elem(&nat_pool_configs, &pid);
+	if (!cfg || cfg->num_ips == 0)
+		return -1;
+
+	struct nat_port_counter *ctr = bpf_map_lookup_elem(&nat_port_counters, &pid);
+	if (!ctr)
+		return -1;
+
+	__u64 val = ctr->counter++;
+	__u32 port_range = cfg->port_high - cfg->port_low + 1;
+	if (port_range == 0)
+		port_range = 1;
+	__u16 port = cfg->port_low + (__u16)(val % port_range);
+	__u32 ip_idx = (__u32)((val / port_range) % cfg->num_ips);
+
+	__u32 map_idx = pid * MAX_NAT_POOL_IPS_PER_POOL + ip_idx;
+	if (map_idx >= MAX_NAT_POOLS * MAX_NAT_POOL_IPS_PER_POOL)
+		return -1;
+	__be32 *ip = bpf_map_lookup_elem(&nat_pool_ips_v4, &map_idx);
+	if (!ip || *ip == 0)
+		return -1;
+
+	*out_ip = *ip;
+	*out_port = bpf_htons(port);
+	return 0;
+}
+
+/*
+ * Allocate a NAT IP and port from a pool (IPv6).
+ * Returns 0 on success, -1 on failure.
+ */
+static __always_inline int
+nat_pool_alloc_v6(__u8 pool_id, __u8 *out_ip, __be16 *out_port)
+{
+	__u32 pid = pool_id;
+	struct nat_pool_config *cfg = bpf_map_lookup_elem(&nat_pool_configs, &pid);
+	if (!cfg || cfg->num_ips_v6 == 0)
+		return -1;
+
+	struct nat_port_counter *ctr = bpf_map_lookup_elem(&nat_port_counters, &pid);
+	if (!ctr)
+		return -1;
+
+	__u64 val = ctr->counter++;
+	__u32 port_range = cfg->port_high - cfg->port_low + 1;
+	if (port_range == 0)
+		port_range = 1;
+	__u16 port = cfg->port_low + (__u16)(val % port_range);
+	__u32 ip_idx = (__u32)((val / port_range) % cfg->num_ips_v6);
+
+	__u32 map_idx = pid * MAX_NAT_POOL_IPS_PER_POOL + ip_idx;
+	if (map_idx >= MAX_NAT_POOLS * MAX_NAT_POOL_IPS_PER_POOL)
+		return -1;
+	struct nat_pool_ip_v6 *ip = bpf_map_lookup_elem(&nat_pool_ips_v6, &map_idx);
+	if (!ip)
+		return -1;
+
+	__builtin_memcpy(out_ip, ip->ip, 16);
+	*out_port = bpf_htons(port);
+	return 0;
+}
+
 SEC("xdp")
 int xdp_policy_prog(struct xdp_md *ctx)
 {
@@ -352,11 +422,19 @@ int xdp_policy_prog(struct xdp_md *ctx)
 				};
 				struct snat_value *sv = bpf_map_lookup_elem(&snat_rules, &sk);
 				if (sv) {
+					/* Allocate IP + port from NAT pool */
+					__be32 alloc_ip;
+					__be16 alloc_port;
+					if (nat_pool_alloc_v4(sv->mode, &alloc_ip, &alloc_port) < 0) {
+						inc_counter(GLOBAL_CTR_NAT_ALLOC_FAIL);
+						return XDP_DROP;
+					}
 					__builtin_memset(&meta->src_ip, 0, sizeof(meta->src_ip));
-					meta->src_ip.v4 = sv->snat_ip;
+					meta->src_ip.v4 = alloc_ip;
+					meta->src_port = alloc_port;
 					sess_nat_flags |= SESS_FLAG_SNAT;
-					sess_nat_src_ip = sv->snat_ip;
-					sess_nat_src_port = meta->src_port;
+					sess_nat_src_ip = alloc_ip;
+					sess_nat_src_port = alloc_port;
 				}
 
 				/* Check for pre-routing DNAT */
@@ -378,8 +456,8 @@ int xdp_policy_prog(struct xdp_md *ctx)
 				if (sess_nat_flags & SESS_FLAG_SNAT) {
 					struct dnat_key dk = {
 						.protocol = meta->protocol,
-						.dst_ip   = sv->snat_ip,
-						.dst_port = orig_src_port,
+						.dst_ip   = sess_nat_src_ip,
+						.dst_port = sess_nat_src_port,
 					};
 					struct dnat_value dv = {
 						.new_dst_ip   = orig_src_ip,
@@ -402,18 +480,17 @@ int xdp_policy_prog(struct xdp_md *ctx)
 			} else {
 				/* IPv6 permit path -- use nat_* fields in meta
 				 * to pass NAT info, avoiding large stack buffers.
-				 * meta->nat_src_ip/nat_dst_ip already hold DNAT info.
-				 * We save orig src IP into nat_src_ip temporarily
-				 * for dnat_table insertion, then set it for session.
 				 */
 				__u8 sess_nat_flags = 0;
 				__be16 sess_nat_src_port = 0, sess_nat_dst_port = 0;
 				__be16 orig_src_port = meta->src_port;
 
-				/* Save original src IP in nat_dst for temp use
-				 * (will be overwritten below if needed) */
+				/* Save original src IP */
 				__u8 orig_src_ip_save[16];
 				__builtin_memcpy(orig_src_ip_save, meta->src_ip.v6, 16);
+
+				/* Allocated SNAT IP for session + dnat_table */
+				__u8 alloc_ip_v6[16] = {};
 
 				/* Check for source NAT rule (v6) */
 				struct snat_key sk = {
@@ -422,9 +499,16 @@ int xdp_policy_prog(struct xdp_md *ctx)
 				};
 				struct snat_value_v6 *sv6 = bpf_map_lookup_elem(&snat_rules_v6, &sk);
 				if (sv6) {
-					__builtin_memcpy(meta->src_ip.v6, sv6->snat_ip, 16);
+					/* Allocate IP + port from NAT pool */
+					__be16 alloc_port;
+					if (nat_pool_alloc_v6(sv6->mode, alloc_ip_v6, &alloc_port) < 0) {
+						inc_counter(GLOBAL_CTR_NAT_ALLOC_FAIL);
+						return XDP_DROP;
+					}
+					__builtin_memcpy(meta->src_ip.v6, alloc_ip_v6, 16);
+					meta->src_port = alloc_port;
 					sess_nat_flags |= SESS_FLAG_SNAT;
-					sess_nat_src_port = meta->src_port;
+					sess_nat_src_port = alloc_port;
 				}
 
 				/* Check for pre-routing DNAT */
@@ -434,7 +518,7 @@ int xdp_policy_prog(struct xdp_md *ctx)
 				}
 
 				/* Pass NAT IPs through meta fields */
-				const __u8 *nat_src_ptr = sv6 ? sv6->snat_ip : NULL;
+				const __u8 *nat_src_ptr = sv6 ? alloc_ip_v6 : NULL;
 				const __u8 *nat_dst_ptr = (meta->nat_flags & SESS_FLAG_DNAT) ?
 					meta->nat_dst_ip.v6 : NULL;
 
@@ -450,9 +534,9 @@ int xdp_policy_prog(struct xdp_md *ctx)
 				if ((sess_nat_flags & SESS_FLAG_SNAT) && sv6) {
 					struct dnat_key_v6 dk6 = {
 						.protocol = meta->protocol,
-						.dst_port = orig_src_port,
+						.dst_port = sess_nat_src_port,
 					};
-					__builtin_memcpy(dk6.dst_ip, sv6->snat_ip, 16);
+					__builtin_memcpy(dk6.dst_ip, alloc_ip_v6, 16);
 					struct dnat_value_v6 dv6 = {
 						.new_dst_port = orig_src_port,
 						.flags        = 0,

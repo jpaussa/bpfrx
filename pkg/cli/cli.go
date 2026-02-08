@@ -584,6 +584,19 @@ func (c *CLI) handleShowNAT(args []string) error {
 }
 
 func (c *CLI) showNATSource(cfg *config.Config, args []string) error {
+	// Show configured source NAT pools
+	if cfg != nil && len(cfg.Security.NAT.SourcePools) > 0 {
+		fmt.Println("Source NAT pools:")
+		for name, pool := range cfg.Security.NAT.SourcePools {
+			fmt.Printf("  Pool: %s\n", name)
+			for _, addr := range pool.Addresses {
+				fmt.Printf("    Address: %s\n", addr)
+			}
+			fmt.Printf("    Port range: %d-%d\n", pool.PortLow, pool.PortHigh)
+		}
+		fmt.Println()
+	}
+
 	// Show configured source NAT rules
 	if cfg != nil {
 		for _, rs := range cfg.Security.NAT.Source {
@@ -628,6 +641,20 @@ func (c *CLI) showNATSource(cfg *config.Config, args []string) error {
 		return true
 	})
 	fmt.Printf("Active SNAT sessions: %d\n", snatCount)
+
+	// Show NAT alloc fail counter
+	ctrMap := c.dp.Map("global_counters")
+	if ctrMap != nil {
+		var perCPU []uint64
+		if err := ctrMap.Lookup(uint32(dataplane.GlobalCtrNATAllocFail), &perCPU); err == nil {
+			var total uint64
+			for _, v := range perCPU {
+				total += v
+			}
+			fmt.Printf("NAT allocation failures: %d\n", total)
+		}
+	}
+
 	return nil
 }
 
