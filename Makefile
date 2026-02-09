@@ -28,3 +28,27 @@ clean:
 	rm -f $(BINARY)
 	rm -f pkg/dataplane/*_bpfel.go pkg/dataplane/*_bpfeb.go
 	rm -f pkg/dataplane/*_bpfel.o pkg/dataplane/*_bpfeb.o
+
+# Test environment management (Incus VM/container)
+.PHONY: test-env-init test-vm test-ct test-deploy test-ssh test-destroy test-status
+
+test-env-init:
+	./test/incus/setup.sh init
+
+test-vm:
+	./test/incus/setup.sh create-vm
+
+test-ct:
+	./test/incus/setup.sh create-ct
+
+test-deploy: build
+	./test/incus/setup.sh deploy
+
+test-ssh:
+	./test/incus/setup.sh ssh
+
+test-destroy:
+	./test/incus/setup.sh destroy
+
+test-status:
+	./test/incus/setup.sh status
