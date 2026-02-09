@@ -135,13 +135,19 @@ func compileZones(node *Node, sec *SecurityConfig) error {
 func compilePolicies(node *Node, sec *SecurityConfig) error {
 	for _, child := range node.Children {
 		if child.Name() == "default-policy" {
+			var policyStr string
 			if len(child.Keys) >= 2 {
-				switch child.Keys[1] {
-				case "permit-all":
-					sec.DefaultPolicy = PolicyPermit
-				case "deny-all":
-					sec.DefaultPolicy = PolicyDeny
-				}
+				// Flat form: default-policy deny-all;
+				policyStr = child.Keys[1]
+			} else if len(child.Children) > 0 {
+				// Hierarchical form: default-policy { deny-all; }
+				policyStr = child.Children[0].Name()
+			}
+			switch policyStr {
+			case "permit-all":
+				sec.DefaultPolicy = PolicyPermit
+			case "deny-all":
+				sec.DefaultPolicy = PolicyDeny
 			}
 			continue
 		}
