@@ -77,8 +77,10 @@ func (gc *GC) sweep() {
 			toDelete = append(toDelete, key)
 			toDelete = append(toDelete, val.ReverseKey)
 
-			// Track SNAT sessions for dnat_table cleanup
-			if val.Flags&dataplane.SessFlagSNAT != 0 {
+			// Track dynamic SNAT sessions for dnat_table cleanup
+			// (skip static NAT -- no dynamic dnat_table entry exists)
+			if val.Flags&dataplane.SessFlagSNAT != 0 &&
+				val.Flags&dataplane.SessFlagStaticNAT == 0 {
 				snatExpired = append(snatExpired, expiredSession{key: key, val: val})
 			}
 		}
@@ -127,7 +129,8 @@ func (gc *GC) sweep() {
 			toDeleteV6 = append(toDeleteV6, key)
 			toDeleteV6 = append(toDeleteV6, val.ReverseKey)
 
-			if val.Flags&dataplane.SessFlagSNAT != 0 {
+			if val.Flags&dataplane.SessFlagSNAT != 0 &&
+				val.Flags&dataplane.SessFlagStaticNAT == 0 {
 				snatExpiredV6 = append(snatExpiredV6, expiredSessionV6{key: key, val: val})
 			}
 		}

@@ -53,6 +53,19 @@ int xdp_zone_prog(struct xdp_md *ctx)
 			if (meta->protocol == PROTO_ICMP ||
 			    meta->protocol == PROTO_ICMPV6)
 				meta->src_port = meta->dst_port;
+		} else {
+			/* Static 1:1 NAT DNAT lookup */
+			struct static_nat_key_v4 snk = {
+				.ip = meta->dst_ip.v4,
+				.direction = STATIC_NAT_DNAT,
+			};
+			__be32 *sn_dst = bpf_map_lookup_elem(&static_nat_v4, &snk);
+			if (sn_dst) {
+				meta->nat_dst_ip.v4 = meta->dst_ip.v4;
+				meta->nat_dst_port  = meta->dst_port;
+				meta->dst_ip.v4     = *sn_dst;
+				meta->nat_flags    |= SESS_FLAG_DNAT;
+			}
 		}
 	} else {
 		struct dnat_key_v6 dk6 = { .protocol = meta->protocol };
@@ -70,6 +83,17 @@ int xdp_zone_prog(struct xdp_md *ctx)
 			if (meta->protocol == PROTO_ICMP ||
 			    meta->protocol == PROTO_ICMPV6)
 				meta->src_port = meta->dst_port;
+		} else {
+			/* Static 1:1 NAT DNAT lookup (v6) */
+			struct static_nat_key_v6 snk6 = { .direction = STATIC_NAT_DNAT };
+			__builtin_memcpy(snk6.ip, meta->dst_ip.v6, 16);
+			struct static_nat_value_v6 *sn_dst6 = bpf_map_lookup_elem(&static_nat_v6, &snk6);
+			if (sn_dst6) {
+				__builtin_memcpy(meta->nat_dst_ip.v6, meta->dst_ip.v6, 16);
+				meta->nat_dst_port = meta->dst_port;
+				__builtin_memcpy(meta->dst_ip.v6, sn_dst6->ip, 16);
+				meta->nat_flags |= SESS_FLAG_DNAT;
+			}
 		}
 	}
 

@@ -407,6 +407,46 @@ struct {
 } snat_rules_v6 SEC(".maps");
 
 /* ============================================================
+ * Static 1:1 NAT tables
+ * ============================================================ */
+
+#define MAX_STATIC_NAT_ENTRIES 2048
+#define STATIC_NAT_DNAT 0  /* key.ip is external addr */
+#define STATIC_NAT_SNAT 1  /* key.ip is internal addr */
+
+struct static_nat_key_v4 {
+	__be32 ip;
+	__u8   direction;
+	__u8   pad[3];
+};
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, MAX_STATIC_NAT_ENTRIES);
+	__type(key, struct static_nat_key_v4);
+	__type(value, __be32);
+	__uint(map_flags, BPF_F_NO_PREALLOC);
+} static_nat_v4 SEC(".maps");
+
+struct static_nat_key_v6 {
+	__u8 ip[16];
+	__u8 direction;
+	__u8 pad[3];
+};
+
+struct static_nat_value_v6 {
+	__u8 ip[16];
+};
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, MAX_STATIC_NAT_ENTRIES);
+	__type(key, struct static_nat_key_v6);
+	__type(value, struct static_nat_value_v6);
+	__uint(map_flags, BPF_F_NO_PREALLOC);
+} static_nat_v6 SEC(".maps");
+
+/* ============================================================
  * Default policy (global fallback when no zone-pair policy exists)
  * ============================================================ */
 

@@ -477,6 +477,56 @@ func (m *Manager) SetDefaultPolicy(action uint8) error {
 	return zm.Update(uint32(0), action, ebpf.UpdateAny)
 }
 
+// SetStaticNATEntryV4 writes a static NAT v4 entry.
+func (m *Manager) SetStaticNATEntryV4(ip uint32, direction uint8, translated uint32) error {
+	zm, ok := m.maps["static_nat_v4"]
+	if !ok {
+		return fmt.Errorf("static_nat_v4 map not found")
+	}
+	key := StaticNATKeyV4{IP: ip, Direction: direction}
+	return zm.Update(key, translated, ebpf.UpdateAny)
+}
+
+// SetStaticNATEntryV6 writes a static NAT v6 entry.
+func (m *Manager) SetStaticNATEntryV6(ip [16]byte, direction uint8, translated [16]byte) error {
+	zm, ok := m.maps["static_nat_v6"]
+	if !ok {
+		return fmt.Errorf("static_nat_v6 map not found")
+	}
+	key := StaticNATKeyV6{IP: ip, Direction: direction}
+	val := StaticNATValueV6{IP: translated}
+	return zm.Update(key, val, ebpf.UpdateAny)
+}
+
+// ClearStaticNATEntries deletes all static_nat_v4 and static_nat_v6 entries.
+func (m *Manager) ClearStaticNATEntries() error {
+	// Clear v4
+	if zm, ok := m.maps["static_nat_v4"]; ok {
+		var key StaticNATKeyV4
+		iter := zm.Iterate()
+		var keys []StaticNATKeyV4
+		for iter.Next(&key, nil) {
+			keys = append(keys, key)
+		}
+		for _, k := range keys {
+			zm.Delete(k)
+		}
+	}
+	// Clear v6
+	if zm, ok := m.maps["static_nat_v6"]; ok {
+		var key StaticNATKeyV6
+		iter := zm.Iterate()
+		var keys []StaticNATKeyV6
+		for iter.Next(&key, nil) {
+			keys = append(keys, key)
+		}
+		for _, k := range keys {
+			zm.Delete(k)
+		}
+	}
+	return nil
+}
+
 // htons converts a uint16 from host to network byte order.
 func htons(v uint16) uint16 {
 	var b [2]byte

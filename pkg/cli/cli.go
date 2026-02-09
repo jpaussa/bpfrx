@@ -621,12 +621,15 @@ func (c *CLI) handleShowNAT(args []string) error {
 	if len(args) == 0 {
 		fmt.Println("show security nat:")
 		fmt.Println("  source           Show source NAT rules and sessions")
+		fmt.Println("  static           Show static 1:1 NAT rules")
 		return nil
 	}
 
 	switch args[0] {
 	case "source":
 		return c.showNATSource(cfg, args[1:])
+	case "static":
+		return c.showNATStatic(cfg)
 	default:
 		return fmt.Errorf("unknown show security nat target: %s", args[0])
 	}
@@ -702,6 +705,26 @@ func (c *CLI) showNATSource(cfg *config.Config, args []string) error {
 			}
 			fmt.Printf("NAT allocation failures: %d\n", total)
 		}
+	}
+
+	return nil
+}
+
+func (c *CLI) showNATStatic(cfg *config.Config) error {
+	if cfg == nil || len(cfg.Security.NAT.Static) == 0 {
+		fmt.Println("No static NAT rules configured.")
+		return nil
+	}
+
+	for _, rs := range cfg.Security.NAT.Static {
+		fmt.Printf("Static NAT rule-set: %s\n", rs.Name)
+		fmt.Printf("  From zone: %s\n", rs.FromZone)
+		for _, rule := range rs.Rules {
+			fmt.Printf("  Rule: %s\n", rule.Name)
+			fmt.Printf("    Match destination-address: %s\n", rule.Match)
+			fmt.Printf("    Then static-nat prefix:    %s\n", rule.Then)
+		}
+		fmt.Println()
 	}
 
 	return nil

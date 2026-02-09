@@ -47,6 +47,8 @@ func (m *Manager) loadAllObjects() error {
 	m.maps["nat_port_counters"] = mainObjs.NatPortCounters
 	m.maps["interface_counters"] = mainObjs.InterfaceCounters
 	m.maps["default_policy"] = mainObjs.DefaultPolicy
+	m.maps["static_nat_v4"] = mainObjs.StaticNatV4
+	m.maps["static_nat_v6"] = mainObjs.StaticNatV6
 
 	// Store main program.
 	m.programs["xdp_main_prog"] = mainObjs.XdpMainProg
@@ -81,6 +83,8 @@ func (m *Manager) loadAllObjects() error {
 			"flood_counters":     mainObjs.FloodCounters,
 			"interface_counters": mainObjs.InterfaceCounters,
 			"default_policy":     mainObjs.DefaultPolicy,
+			"static_nat_v4":      mainObjs.StaticNatV4,
+			"static_nat_v6":      mainObjs.StaticNatV6,
 		},
 	}
 

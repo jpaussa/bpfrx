@@ -320,8 +320,34 @@ const MaxNATPoolIPsPerPool = 8
 
 // Session flag constants.
 const (
-	SessFlagSNAT = 1 << 0
-	SessFlagDNAT = 1 << 1
+	SessFlagSNAT      = 1 << 0
+	SessFlagDNAT      = 1 << 1
+	SessFlagStaticNAT = 1 << 6
+)
+
+// StaticNATKeyV4 mirrors the C struct static_nat_key_v4.
+type StaticNATKeyV4 struct {
+	IP        uint32 // network byte order
+	Direction uint8
+	Pad       [3]byte
+}
+
+// StaticNATKeyV6 mirrors the C struct static_nat_key_v6.
+type StaticNATKeyV6 struct {
+	IP        [16]byte
+	Direction uint8
+	Pad       [3]byte
+}
+
+// StaticNATValueV6 mirrors the C struct static_nat_value_v6.
+type StaticNATValueV6 struct {
+	IP [16]byte
+}
+
+// Static NAT direction constants.
+const (
+	StaticNATDNAT = 0
+	StaticNATSNAT = 1
 )
 
 // DNAT table flags.

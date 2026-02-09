@@ -74,7 +74,14 @@ type NATConfig struct {
 	Source      []*NATRuleSet
 	SourcePools map[string]*NATPool    // named source NAT pools
 	Destination *DestinationNATConfig
-	Static      []*StaticNATRule
+	Static      []*StaticNATRuleSet
+}
+
+// StaticNATRuleSet is a set of static 1:1 NAT rules bound to a zone.
+type StaticNATRuleSet struct {
+	Name     string
+	FromZone string
+	Rules    []*StaticNATRule
 }
 
 // DestinationNATConfig holds destination NAT pools and rule sets.
@@ -134,8 +141,8 @@ type NATPool struct {
 // StaticNATRule is a 1:1 bidirectional NAT rule.
 type StaticNATRule struct {
 	Name    string
-	Match   string // internal prefix
-	Then    string // external prefix
+	Match   string // destination-address (external/public IP)
+	Then    string // static-nat prefix (internal/private IP)
 }
 
 // ScreenProfile defines IDS screening options.

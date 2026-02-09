@@ -393,6 +393,13 @@ func compileNAT(node *Node, sec *SecurityConfig) error {
 		}
 	}
 
+	staticNode := node.FindChild("static")
+	if staticNode != nil {
+		if err := compileNATStatic(staticNode, sec); err != nil {
+			return fmt.Errorf("static: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -590,6 +597,53 @@ func compileNATDestination(node *Node, sec *SecurityConfig) error {
 		}
 
 		sec.NAT.Destination.RuleSets = append(sec.NAT.Destination.RuleSets, rs)
+	}
+	return nil
+}
+
+func compileNATStatic(node *Node, sec *SecurityConfig) error {
+	for _, rsNode := range node.FindChildren("rule-set") {
+		if len(rsNode.Keys) < 2 {
+			continue
+		}
+		rs := &StaticNATRuleSet{Name: rsNode.Keys[1]}
+
+		// Parse from zone
+		for _, child := range rsNode.Children {
+			if child.Name() == "from" && len(child.Keys) >= 3 && child.Keys[1] == "zone" {
+				rs.FromZone = child.Keys[2]
+			}
+		}
+
+		// Parse rules
+		for _, ruleNode := range rsNode.FindChildren("rule") {
+			if len(ruleNode.Keys) < 2 {
+				continue
+			}
+			rule := &StaticNATRule{Name: ruleNode.Keys[1]}
+
+			matchNode := ruleNode.FindChild("match")
+			if matchNode != nil {
+				for _, m := range matchNode.Children {
+					if m.Name() == "destination-address" && len(m.Keys) >= 2 {
+						rule.Match = m.Keys[1]
+					}
+				}
+			}
+
+			thenNode := ruleNode.FindChild("then")
+			if thenNode != nil {
+				for _, t := range thenNode.Children {
+					if t.Name() == "static-nat" && len(t.Keys) >= 3 && t.Keys[1] == "prefix" {
+						rule.Then = t.Keys[2]
+					}
+				}
+			}
+
+			rs.Rules = append(rs.Rules, rule)
+		}
+
+		sec.NAT.Static = append(sec.NAT.Static, rs)
 	}
 	return nil
 }

@@ -76,6 +76,11 @@ func (m *Manager) Compile(cfg *config.Config) (*CompileResult, error) {
 		return nil, fmt.Errorf("compile nat: %w", err)
 	}
 
+	// Phase 6.5: Compile static NAT
+	if err := m.compileStaticNAT(cfg, result); err != nil {
+		return nil, fmt.Errorf("compile static nat: %w", err)
+	}
+
 	// Phase 7: Compile screen profiles
 	if err := m.compileScreenProfiles(cfg, result); err != nil {
 		return nil, fmt.Errorf("compile screen profiles: %w", err)
@@ -700,6 +705,88 @@ func (m *Manager) compileNAT(cfg *config.Config, result *CompileResult) error {
 		}
 	}
 
+	return nil
+}
+
+func (m *Manager) compileStaticNAT(cfg *config.Config, result *CompileResult) error {
+	if err := m.ClearStaticNATEntries(); err != nil {
+		slog.Warn("failed to clear static_nat entries", "err", err)
+	}
+
+	count := 0
+	for _, rs := range cfg.Security.NAT.Static {
+		for _, rule := range rs.Rules {
+			if rule.Match == "" || rule.Then == "" {
+				slog.Warn("static NAT rule missing match or then",
+					"rule-set", rs.Name, "rule", rule.Name)
+				continue
+			}
+
+			// Parse external (match) address
+			matchCIDR := rule.Match
+			if !strings.Contains(matchCIDR, "/") {
+				if strings.Contains(matchCIDR, ":") {
+					matchCIDR += "/128"
+				} else {
+					matchCIDR += "/32"
+				}
+			}
+			extIP, _, err := net.ParseCIDR(matchCIDR)
+			if err != nil {
+				slog.Warn("invalid static NAT match address",
+					"addr", rule.Match, "err", err)
+				continue
+			}
+
+			// Parse internal (then) address
+			thenCIDR := rule.Then
+			if !strings.Contains(thenCIDR, "/") {
+				if strings.Contains(thenCIDR, ":") {
+					thenCIDR += "/128"
+				} else {
+					thenCIDR += "/32"
+				}
+			}
+			intIP, _, err := net.ParseCIDR(thenCIDR)
+			if err != nil {
+				slog.Warn("invalid static NAT then address",
+					"addr", rule.Then, "err", err)
+				continue
+			}
+
+			// Insert DNAT entry (external -> internal) and SNAT entry (internal -> external)
+			if extIP.To4() != nil && intIP.To4() != nil {
+				extU32 := ipToUint32BE(extIP)
+				intU32 := ipToUint32BE(intIP)
+
+				if err := m.SetStaticNATEntryV4(extU32, StaticNATDNAT, intU32); err != nil {
+					return fmt.Errorf("set static nat dnat v4 %s: %w", rule.Name, err)
+				}
+				if err := m.SetStaticNATEntryV4(intU32, StaticNATSNAT, extU32); err != nil {
+					return fmt.Errorf("set static nat snat v4 %s: %w", rule.Name, err)
+				}
+			} else {
+				extBytes := ipTo16Bytes(extIP)
+				intBytes := ipTo16Bytes(intIP)
+
+				if err := m.SetStaticNATEntryV6(extBytes, StaticNATDNAT, intBytes); err != nil {
+					return fmt.Errorf("set static nat dnat v6 %s: %w", rule.Name, err)
+				}
+				if err := m.SetStaticNATEntryV6(intBytes, StaticNATSNAT, extBytes); err != nil {
+					return fmt.Errorf("set static nat snat v6 %s: %w", rule.Name, err)
+				}
+			}
+
+			count++
+			slog.Info("static NAT rule compiled",
+				"rule-set", rs.Name, "rule", rule.Name,
+				"external", rule.Match, "internal", rule.Then)
+		}
+	}
+
+	if count > 0 {
+		slog.Info("static NAT compilation complete", "entries", count)
+	}
 	return nil
 }
 

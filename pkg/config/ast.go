@@ -169,7 +169,16 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 					}},
 				}},
 			}},
-			"static": {children: nil},
+			"static": {children: map[string]*schemaNode{
+				"rule-set": {args: 1, children: map[string]*schemaNode{
+					"rule": {args: 1, children: map[string]*schemaNode{
+						"match": {children: nil},
+						"then":  {children: map[string]*schemaNode{
+							"static-nat": {children: nil},
+						}},
+					}},
+				}},
+			}},
 		}},
 		"address-book": {children: map[string]*schemaNode{
 			"global": {children: map[string]*schemaNode{
