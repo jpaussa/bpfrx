@@ -123,7 +123,10 @@ func (m *Manager) AddTxPort(ifindex int) error {
 	if !ok {
 		return fmt.Errorf("tx_ports not found")
 	}
-	val := struct{ Ifindex uint32 }{Ifindex: uint32(ifindex)}
+	val := struct {
+		Ifindex uint32
+		ProgFD  uint32
+	}{Ifindex: uint32(ifindex)}
 	return tm.Update(uint32(ifindex), val, ebpf.UpdateAny)
 }
 
