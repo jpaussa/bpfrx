@@ -286,6 +286,10 @@ struct pkt_meta {
 	__u8   icmp_type;
 	__u8   icmp_code;
 
+	/* TCP sequence numbers (for RST generation) */
+	__be32 tcp_seq;
+	__be32 tcp_ack_seq;
+
 	/* Header offsets from packet start */
 	__u16 l3_offset;
 	__u16 l4_offset;

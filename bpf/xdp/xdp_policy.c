@@ -335,155 +335,118 @@ send_tcp_rst_v4(struct xdp_md *ctx, struct pkt_meta *meta)
 	void *data = (void *)(long)ctx->data;
 	void *data_end = (void *)(long)ctx->data_end;
 
-	/* Parse original packet headers to extract seq/ack/flags/payload info */
-	struct ethhdr *orig_eth = data;
-	if ((void *)(orig_eth + 1) > data_end)
+	/* Read only MACs from packet (fixed offset, trivial bounds check) */
+	if (data + ETH_HLEN > data_end)
 		return XDP_DROP;
-	struct iphdr *orig_ip = (void *)(orig_eth + 1);
-	if ((void *)(orig_ip + 1) > data_end)
-		return XDP_DROP;
-	struct tcphdr *orig_tcp = (void *)orig_ip + (orig_ip->ihl * 4);
-	if ((void *)(orig_tcp + 1) > data_end)
-		return XDP_DROP;
-
-	/* Save original values before packet modification */
 	__u8 orig_smac[ETH_ALEN], orig_dmac[ETH_ALEN];
-	__builtin_memcpy(orig_smac, orig_eth->h_source, ETH_ALEN);
-	__builtin_memcpy(orig_dmac, orig_eth->h_dest, ETH_ALEN);
-	__be32 orig_saddr = orig_ip->saddr;
-	__be32 orig_daddr = orig_ip->daddr;
-	__be16 orig_sport = orig_tcp->source;
-	__be16 orig_dport = orig_tcp->dest;
-	__be32 orig_seq = orig_tcp->seq;
-	__be32 orig_ack = orig_tcp->ack_seq;
-	int orig_has_ack = orig_tcp->ack;
-	int orig_has_syn = orig_tcp->syn;
-	int orig_has_fin = orig_tcp->fin;
+	__builtin_memcpy(orig_smac, ((struct ethhdr *)data)->h_source, ETH_ALEN);
+	__builtin_memcpy(orig_dmac, ((struct ethhdr *)data)->h_dest, ETH_ALEN);
 
-	/* Calculate original TCP payload length */
-	__u16 orig_ip_tot = bpf_ntohs(orig_ip->tot_len);
-	__u16 orig_tcp_hdr = orig_tcp->doff * 4;
-	__u16 orig_ip_hdr = orig_ip->ihl * 4;
+	/*
+	 * Get everything else from meta (map value, no packet access).
+	 * For DNAT: use nat_dst_ip (pre-DNAT original) as the RST source.
+	 */
+	__be32 orig_saddr = meta->src_ip.v4;
+	__be32 orig_daddr = (meta->nat_flags & SESS_FLAG_DNAT) ?
+		meta->nat_dst_ip.v4 : meta->dst_ip.v4;
+	__be16 orig_sport = meta->src_port;
+	__be16 orig_dport = (meta->nat_flags & SESS_FLAG_DNAT) ?
+		meta->nat_dst_port : meta->dst_port;
+	__be32 orig_seq = meta->tcp_seq;
+	__be32 orig_ack = meta->tcp_ack_seq;
+	int orig_has_ack = meta->tcp_flags & 0x10;
+	int orig_has_syn = meta->tcp_flags & 0x02;
+	int orig_has_fin = meta->tcp_flags & 0x01;
+
+	/* Payload length from meta offsets (no packet read) */
+	__u16 hdr_len = meta->payload_offset - meta->l3_offset;
 	__u16 payload_len = 0;
-	if (orig_ip_tot > orig_ip_hdr + orig_tcp_hdr)
-		payload_len = orig_ip_tot - orig_ip_hdr - orig_tcp_hdr;
+	if (meta->pkt_len > hdr_len)
+		payload_len = meta->pkt_len - hdr_len;
 
 	/* Truncate to exactly ETH(14) + IP(20) + TCP(20) = 54 bytes */
-	int target_len = 54;
 	int cur_len = (int)((long)data_end - (long)data);
-	int delta = target_len - cur_len;
+	int delta = 54 - cur_len;
 	if (delta != 0) {
 		if (bpf_xdp_adjust_tail(ctx, delta))
 			return XDP_DROP;
 	}
 
-	/* Re-validate pointers after adjust */
+	/* Re-validate after adjust: single bounds check */
 	data = (void *)(long)ctx->data;
 	data_end = (void *)(long)ctx->data_end;
+	if (data + 54 > data_end)
+		return XDP_DROP;
 	struct ethhdr *eth = data;
-	if ((void *)(eth + 1) > data_end)
-		return XDP_DROP;
-	struct iphdr *ip = (void *)(eth + 1);
-	if ((void *)(ip + 1) > data_end)
-		return XDP_DROP;
-	struct tcphdr *tcp = (void *)(ip + 1);
-	if ((void *)(tcp + 1) > data_end)
-		return XDP_DROP;
+	struct iphdr *ip = data + sizeof(struct ethhdr);
+	struct tcphdr *tcp = data + sizeof(struct ethhdr) + sizeof(struct iphdr);
 
 	/* Swap MACs */
 	__builtin_memcpy(eth->h_source, orig_dmac, ETH_ALEN);
 	__builtin_memcpy(eth->h_dest, orig_smac, ETH_ALEN);
+	eth->h_proto = bpf_htons(ETH_P_IP);
 
-	/* Build IP header (swap src/dst) */
-	ip->version = 4;
-	ip->ihl = 5;
-	ip->tos = 0;
-	ip->tot_len = bpf_htons(40); /* IP(20) + TCP(20) */
-	ip->id = 0;
-	ip->frag_off = bpf_htons(0x4000); /* DF */
-	ip->ttl = 64;
-	ip->protocol = PROTO_TCP;
-	ip->check = 0;
-	ip->saddr = orig_daddr;
-	ip->daddr = orig_saddr;
+	/* Build IP header on stack, compute checksum, write to packet */
+	struct iphdr ip_hdr = {};
+	ip_hdr.version  = 4;
+	ip_hdr.ihl      = 5;
+	ip_hdr.tot_len  = bpf_htons(40);
+	ip_hdr.frag_off = bpf_htons(0x4000);
+	ip_hdr.ttl      = 64;
+	ip_hdr.protocol = PROTO_TCP;
+	ip_hdr.saddr    = orig_daddr;
+	ip_hdr.daddr    = orig_saddr;
 
-	/* IP checksum */
 	__u32 csum = 0;
-	__u16 *ip16 = (__u16 *)ip;
+	__u16 *ip16 = (__u16 *)&ip_hdr;
 	#pragma unroll
 	for (int i = 0; i < 10; i++)
 		csum += ip16[i];
 	csum = (csum >> 16) + (csum & 0xffff);
 	csum += csum >> 16;
-	ip->check = ~csum;
+	ip_hdr.check = ~csum;
+	*ip = ip_hdr;
 
-	/* Build TCP header (swap src/dst ports) */
-	tcp->source = orig_dport;
-	tcp->dest = orig_sport;
-	tcp->doff = 5;
-	tcp->res1 = 0;
-	tcp->window = 0;
-	tcp->urg_ptr = 0;
-	tcp->check = 0;
+	/* Build TCP header on stack */
+	struct tcphdr tcp_hdr = {};
+	tcp_hdr.source = orig_dport;
+	tcp_hdr.dest   = orig_sport;
+	tcp_hdr.doff   = 5;
 
-	/* RST seq/ack logic per RFC 793 */
 	if (orig_has_ack) {
-		/* ACK was set: RST only, seq = incoming ack */
-		tcp->rst = 1;
-		tcp->ack = 0;
-		tcp->syn = 0;
-		tcp->fin = 0;
-		tcp->psh = 0;
-		tcp->urg = 0;
-		tcp->ece = 0;
-		tcp->cwr = 0;
-		tcp->seq = orig_ack;
-		tcp->ack_seq = 0;
+		tcp_hdr.rst = 1;
+		tcp_hdr.seq = orig_ack;
 	} else {
-		/* No ACK: RST+ACK, ack = incoming seq + segment length */
-		tcp->rst = 1;
-		tcp->ack = 1;
-		tcp->syn = 0;
-		tcp->fin = 0;
-		tcp->psh = 0;
-		tcp->urg = 0;
-		tcp->ece = 0;
-		tcp->cwr = 0;
-		tcp->seq = 0;
+		tcp_hdr.rst = 1;
+		tcp_hdr.ack = 1;
 		__u32 seg_len = payload_len;
 		if (orig_has_syn) seg_len++;
 		if (orig_has_fin) seg_len++;
 		if (seg_len == 0) seg_len = 1;
-		tcp->ack_seq = bpf_htonl(bpf_ntohl(orig_seq) + seg_len);
+		tcp_hdr.ack_seq = bpf_htonl(bpf_ntohl(orig_seq) + seg_len);
 	}
 
-	/* TCP checksum with pseudo-header */
+	/* TCP checksum from stack */
 	struct {
-		__be32 saddr;
-		__be32 daddr;
-		__u8   zero;
-		__u8   proto;
-		__be16 tcp_len;
+		__be32 saddr;  __be32 daddr;
+		__u8 zero;     __u8 proto;   __be16 tcp_len;
 	} pseudo = {
-		.saddr = ip->saddr,
-		.daddr = ip->daddr,
-		.zero = 0,
-		.proto = PROTO_TCP,
-		.tcp_len = bpf_htons(20),
+		.saddr = ip_hdr.saddr, .daddr = ip_hdr.daddr,
+		.proto = PROTO_TCP,    .tcp_len = bpf_htons(20),
 	};
-
 	__u32 tcp_csum = 0;
 	__u16 *p16 = (__u16 *)&pseudo;
 	#pragma unroll
 	for (int i = 0; i < 6; i++)
 		tcp_csum += p16[i];
-	__u16 *t16 = (__u16 *)tcp;
+	__u16 *t16 = (__u16 *)&tcp_hdr;
 	#pragma unroll
 	for (int i = 0; i < 10; i++)
 		tcp_csum += t16[i];
 	tcp_csum = (tcp_csum >> 16) + (tcp_csum & 0xffff);
 	tcp_csum += tcp_csum >> 16;
-	tcp->check = ~tcp_csum;
+	tcp_hdr.check = ~tcp_csum;
+	*tcp = tcp_hdr;
 
 	return XDP_TX;
 }
@@ -499,144 +462,107 @@ send_tcp_rst_v6(struct xdp_md *ctx, struct pkt_meta *meta)
 	void *data = (void *)(long)ctx->data;
 	void *data_end = (void *)(long)ctx->data_end;
 
-	/* Parse original headers */
-	struct ethhdr *orig_eth = data;
-	if ((void *)(orig_eth + 1) > data_end)
+	/* Read only MACs from packet */
+	if (data + ETH_HLEN > data_end)
 		return XDP_DROP;
-	struct ipv6hdr *orig_ip6 = (void *)(orig_eth + 1);
-	if ((void *)(orig_ip6 + 1) > data_end)
-		return XDP_DROP;
-
-	/* TCP is at meta->l4_offset from start of packet */
-	struct tcphdr *orig_tcp = data + meta->l4_offset;
-	if ((void *)(orig_tcp + 1) > data_end)
-		return XDP_DROP;
-
-	/* Save original values */
 	__u8 orig_smac[ETH_ALEN], orig_dmac[ETH_ALEN];
-	__builtin_memcpy(orig_smac, orig_eth->h_source, ETH_ALEN);
-	__builtin_memcpy(orig_dmac, orig_eth->h_dest, ETH_ALEN);
-	struct in6_addr orig_saddr = orig_ip6->saddr;
-	struct in6_addr orig_daddr = orig_ip6->daddr;
-	__be16 orig_sport = orig_tcp->source;
-	__be16 orig_dport = orig_tcp->dest;
-	__be32 orig_seq = orig_tcp->seq;
-	__be32 orig_ack = orig_tcp->ack_seq;
-	int orig_has_ack = orig_tcp->ack;
-	int orig_has_syn = orig_tcp->syn;
-	int orig_has_fin = orig_tcp->fin;
+	__builtin_memcpy(orig_smac, ((struct ethhdr *)data)->h_source, ETH_ALEN);
+	__builtin_memcpy(orig_dmac, ((struct ethhdr *)data)->h_dest, ETH_ALEN);
 
-	/* Calculate payload length */
-	__u16 orig_payload = bpf_ntohs(orig_ip6->payload_len);
-	__u16 tcp_offset = meta->l4_offset - sizeof(struct ethhdr) - sizeof(struct ipv6hdr);
-	__u16 tcp_hdr_len = orig_tcp->doff * 4;
+	/* Get everything from meta (no further packet reads) */
+	struct in6_addr orig_saddr, orig_daddr;
+	__builtin_memcpy(&orig_saddr, meta->src_ip.v6, 16);
+	if (meta->nat_flags & SESS_FLAG_DNAT)
+		__builtin_memcpy(&orig_daddr, meta->nat_dst_ip.v6, 16);
+	else
+		__builtin_memcpy(&orig_daddr, meta->dst_ip.v6, 16);
+	__be16 orig_sport = meta->src_port;
+	__be16 orig_dport = (meta->nat_flags & SESS_FLAG_DNAT) ?
+		meta->nat_dst_port : meta->dst_port;
+	__be32 orig_seq = meta->tcp_seq;
+	__be32 orig_ack = meta->tcp_ack_seq;
+	int orig_has_ack = meta->tcp_flags & 0x10;
+	int orig_has_syn = meta->tcp_flags & 0x02;
+	int orig_has_fin = meta->tcp_flags & 0x01;
+
+	__u16 hdr_len = meta->payload_offset - meta->l3_offset;
 	__u16 payload_len = 0;
-	if (orig_payload > tcp_offset + tcp_hdr_len)
-		payload_len = orig_payload - tcp_offset - tcp_hdr_len;
+	if (meta->pkt_len > hdr_len)
+		payload_len = meta->pkt_len - hdr_len;
 
 	/* Truncate to ETH(14) + IPv6(40) + TCP(20) = 74 bytes */
-	int target_len = 74;
 	int cur_len = (int)((long)data_end - (long)data);
-	int delta = target_len - cur_len;
+	int delta = 74 - cur_len;
 	if (delta != 0) {
 		if (bpf_xdp_adjust_tail(ctx, delta))
 			return XDP_DROP;
 	}
 
-	/* Re-validate pointers */
+	/* Re-validate after adjust */
 	data = (void *)(long)ctx->data;
 	data_end = (void *)(long)ctx->data_end;
+	if (data + 74 > data_end)
+		return XDP_DROP;
 	struct ethhdr *eth = data;
-	if ((void *)(eth + 1) > data_end)
-		return XDP_DROP;
-	struct ipv6hdr *ip6 = (void *)(eth + 1);
-	if ((void *)(ip6 + 1) > data_end)
-		return XDP_DROP;
-	struct tcphdr *tcp = (void *)(ip6 + 1);
-	if ((void *)(tcp + 1) > data_end)
-		return XDP_DROP;
+	struct ipv6hdr *ip6 = data + sizeof(struct ethhdr);
+	struct tcphdr *tcp = data + sizeof(struct ethhdr) + sizeof(struct ipv6hdr);
 
-	/* Swap MACs */
+	/* Swap MACs + set EtherType */
 	__builtin_memcpy(eth->h_source, orig_dmac, ETH_ALEN);
 	__builtin_memcpy(eth->h_dest, orig_smac, ETH_ALEN);
+	eth->h_proto = bpf_htons(ETH_P_IPV6);
 
-	/* Build IPv6 header (swap src/dst) */
+	/* Build IPv6 header — write directly, no checksum needed */
 	ip6->version = 6;
 	ip6->priority = 0;
 	ip6->flow_lbl[0] = 0;
 	ip6->flow_lbl[1] = 0;
 	ip6->flow_lbl[2] = 0;
-	ip6->payload_len = bpf_htons(20); /* TCP only */
+	ip6->payload_len = bpf_htons(20);
 	ip6->nexthdr = PROTO_TCP;
 	ip6->hop_limit = 64;
 	ip6->saddr = orig_daddr;
 	ip6->daddr = orig_saddr;
 
-	/* Build TCP header (swap ports) */
-	tcp->source = orig_dport;
-	tcp->dest = orig_sport;
-	tcp->doff = 5;
-	tcp->res1 = 0;
-	tcp->window = 0;
-	tcp->urg_ptr = 0;
-	tcp->check = 0;
+	/* Build TCP header on stack */
+	struct tcphdr tcp_hdr = {};
+	tcp_hdr.source = orig_dport;
+	tcp_hdr.dest   = orig_sport;
+	tcp_hdr.doff   = 5;
 
 	if (orig_has_ack) {
-		tcp->rst = 1;
-		tcp->ack = 0;
-		tcp->syn = 0;
-		tcp->fin = 0;
-		tcp->psh = 0;
-		tcp->urg = 0;
-		tcp->ece = 0;
-		tcp->cwr = 0;
-		tcp->seq = orig_ack;
-		tcp->ack_seq = 0;
+		tcp_hdr.rst = 1;
+		tcp_hdr.seq = orig_ack;
 	} else {
-		tcp->rst = 1;
-		tcp->ack = 1;
-		tcp->syn = 0;
-		tcp->fin = 0;
-		tcp->psh = 0;
-		tcp->urg = 0;
-		tcp->ece = 0;
-		tcp->cwr = 0;
-		tcp->seq = 0;
+		tcp_hdr.rst = 1;
+		tcp_hdr.ack = 1;
 		__u32 seg_len = payload_len;
 		if (orig_has_syn) seg_len++;
 		if (orig_has_fin) seg_len++;
 		if (seg_len == 0) seg_len = 1;
-		tcp->ack_seq = bpf_htonl(bpf_ntohl(orig_seq) + seg_len);
+		tcp_hdr.ack_seq = bpf_htonl(bpf_ntohl(orig_seq) + seg_len);
 	}
 
-	/* TCP checksum with IPv6 pseudo-header */
+	/* TCP checksum: pseudo-header + TCP header, all from stack */
 	__u32 tcp_csum = 0;
-
-	/* Pseudo-header: src addr (16 bytes) */
-	__u16 *s16 = (__u16 *)&ip6->saddr;
+	__u16 *s16 = (__u16 *)&orig_daddr;
 	#pragma unroll
 	for (int i = 0; i < 8; i++)
 		tcp_csum += s16[i];
-
-	/* Pseudo-header: dst addr (16 bytes) */
-	__u16 *d16 = (__u16 *)&ip6->daddr;
+	__u16 *d16 = (__u16 *)&orig_saddr;
 	#pragma unroll
 	for (int i = 0; i < 8; i++)
 		tcp_csum += d16[i];
-
-	/* Pseudo-header: TCP length (20) + next header (6) */
 	tcp_csum += bpf_htons(20);
 	tcp_csum += bpf_htons(PROTO_TCP);
-
-	/* TCP header words */
-	__u16 *t16 = (__u16 *)tcp;
+	__u16 *t16 = (__u16 *)&tcp_hdr;
 	#pragma unroll
 	for (int i = 0; i < 10; i++)
 		tcp_csum += t16[i];
-
 	tcp_csum = (tcp_csum >> 16) + (tcp_csum & 0xffff);
 	tcp_csum += tcp_csum >> 16;
-	tcp->check = ~tcp_csum;
+	tcp_hdr.check = ~tcp_csum;
+	*tcp = tcp_hdr;
 
 	return XDP_TX;
 }

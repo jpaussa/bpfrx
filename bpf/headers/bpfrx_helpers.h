@@ -175,6 +175,8 @@ parse_l4hdr(void *data, void *data_end, struct pkt_meta *meta)
 		meta->src_port = tcp->source;
 		meta->dst_port = tcp->dest;
 		meta->tcp_flags = ((__u8 *)tcp)[13];
+		meta->tcp_seq = tcp->seq;
+		meta->tcp_ack_seq = tcp->ack_seq;
 		meta->payload_offset = meta->l4_offset + tcp->doff * 4;
 		break;
 	}
