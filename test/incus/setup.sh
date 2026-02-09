@@ -342,6 +342,10 @@ cmd_deploy() {
 	info "Building bpfrxd..."
 	make -C "$PROJECT_ROOT" build
 
+	# Stop running bpfrxd if any (avoids "text file busy")
+	incus exec "$INSTANCE_NAME" -- pkill -9 bpfrxd 2>/dev/null || true
+	sleep 1
+
 	info "Pushing bpfrxd to $INSTANCE_NAME..."
 	incus file push "$PROJECT_ROOT/bpfrxd" "$INSTANCE_NAME/usr/local/sbin/bpfrxd" --mode 0755
 

@@ -634,6 +634,214 @@ security {
 	}
 }
 
+func TestRoutingConfigParsing(t *testing.T) {
+	tree := &ConfigTree{}
+
+	setCommands := []string{
+		// Static routes
+		"set routing-options static route 0.0.0.0/0 next-hop 192.168.1.1",
+		"set routing-options static route 10.10.0.0/16 next-hop 10.0.0.2",
+		"set routing-options static route 192.168.99.0/24 discard",
+		"set routing-options static route 172.16.0.0/12 next-hop 10.0.0.3",
+		"set routing-options static route 172.16.0.0/12 preference 100",
+		// OSPF
+		"set protocols ospf router-id 10.0.0.1",
+		"set protocols ospf area 0.0.0.0 interface eth1",
+		"set protocols ospf area 0.0.0.0 interface gre0",
+		"set protocols ospf area 0.0.0.0 interface eth2 passive",
+		// BGP
+		"set protocols bgp local-as 65001",
+		"set protocols bgp router-id 10.0.0.1",
+		"set protocols bgp group ebgp peer-as 65002",
+		"set protocols bgp group ebgp neighbor 10.1.0.1",
+		// GRE tunnel interface
+		"set interfaces gre0 tunnel source 10.0.0.1",
+		"set interfaces gre0 tunnel destination 10.1.0.1",
+		"set interfaces gre0 unit 0 family inet address 172.16.0.1/30",
+		// IPsec
+		"set security ipsec proposal aes256 protocol esp",
+		"set security ipsec proposal aes256 encryption-algorithm aes-256-cbc",
+		"set security ipsec proposal aes256 authentication-algorithm hmac-sha-256",
+		"set security ipsec proposal aes256 dh-group 14",
+		"set security ipsec proposal aes256 lifetime-seconds 3600",
+		"set security ipsec vpn site-a gateway 10.1.0.1",
+		"set security ipsec vpn site-a local-address 10.0.0.1",
+		"set security ipsec vpn site-a ipsec-policy aes256",
+		"set security ipsec vpn site-a local-identity 10.0.0.0/24",
+		"set security ipsec vpn site-a remote-identity 10.1.0.0/24",
+		`set security ipsec vpn site-a pre-shared-key "secret123"`,
+	}
+
+	for _, cmd := range setCommands {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%v): %v", path, err)
+		}
+	}
+
+	// Format and log for debugging
+	output := tree.Format()
+	t.Logf("Formatted tree:\n%s", output)
+
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig failed: %v", err)
+	}
+
+	// --- Static Routes ---
+	if len(cfg.RoutingOptions.StaticRoutes) != 4 {
+		t.Fatalf("expected 4 static routes, got %d", len(cfg.RoutingOptions.StaticRoutes))
+	}
+
+	// Default route
+	r0 := cfg.RoutingOptions.StaticRoutes[0]
+	if r0.Destination != "0.0.0.0/0" || r0.NextHop != "192.168.1.1" {
+		t.Errorf("route 0: dest=%s nh=%s", r0.Destination, r0.NextHop)
+	}
+	if r0.Preference != 5 {
+		t.Errorf("route 0: expected default preference 5, got %d", r0.Preference)
+	}
+
+	// Discard route
+	r2 := cfg.RoutingOptions.StaticRoutes[2]
+	if r2.Destination != "192.168.99.0/24" || !r2.Discard {
+		t.Errorf("route 2: dest=%s discard=%v", r2.Destination, r2.Discard)
+	}
+
+	// Route with custom preference
+	r3 := cfg.RoutingOptions.StaticRoutes[3]
+	if r3.Destination != "172.16.0.0/12" || r3.NextHop != "10.0.0.3" {
+		t.Errorf("route 3: dest=%s nh=%s", r3.Destination, r3.NextHop)
+	}
+	if r3.Preference != 100 {
+		t.Errorf("route 3: expected preference 100, got %d", r3.Preference)
+	}
+
+	// --- OSPF ---
+	if cfg.Protocols.OSPF == nil {
+		t.Fatal("OSPF config is nil")
+	}
+	if cfg.Protocols.OSPF.RouterID != "10.0.0.1" {
+		t.Errorf("OSPF router-id: %s", cfg.Protocols.OSPF.RouterID)
+	}
+	if len(cfg.Protocols.OSPF.Areas) != 1 {
+		t.Fatalf("expected 1 OSPF area, got %d", len(cfg.Protocols.OSPF.Areas))
+	}
+	area := cfg.Protocols.OSPF.Areas[0]
+	if area.ID != "0.0.0.0" {
+		t.Errorf("OSPF area ID: %s", area.ID)
+	}
+	if len(area.Interfaces) != 3 {
+		t.Fatalf("expected 3 OSPF interfaces, got %d", len(area.Interfaces))
+	}
+	if area.Interfaces[0].Name != "eth1" || area.Interfaces[0].Passive {
+		t.Errorf("OSPF iface 0: name=%s passive=%v", area.Interfaces[0].Name, area.Interfaces[0].Passive)
+	}
+	if area.Interfaces[2].Name != "eth2" || !area.Interfaces[2].Passive {
+		t.Errorf("OSPF iface 2: name=%s passive=%v", area.Interfaces[2].Name, area.Interfaces[2].Passive)
+	}
+
+	// --- BGP ---
+	if cfg.Protocols.BGP == nil {
+		t.Fatal("BGP config is nil")
+	}
+	if cfg.Protocols.BGP.LocalAS != 65001 {
+		t.Errorf("BGP local-as: %d", cfg.Protocols.BGP.LocalAS)
+	}
+	if cfg.Protocols.BGP.RouterID != "10.0.0.1" {
+		t.Errorf("BGP router-id: %s", cfg.Protocols.BGP.RouterID)
+	}
+	if len(cfg.Protocols.BGP.Neighbors) != 1 {
+		t.Fatalf("expected 1 BGP neighbor, got %d", len(cfg.Protocols.BGP.Neighbors))
+	}
+	nbr := cfg.Protocols.BGP.Neighbors[0]
+	if nbr.Address != "10.1.0.1" || nbr.PeerAS != 65002 {
+		t.Errorf("BGP neighbor: addr=%s peer-as=%d", nbr.Address, nbr.PeerAS)
+	}
+
+	// --- GRE Tunnel ---
+	ifc := cfg.Interfaces.Interfaces["gre0"]
+	if ifc == nil {
+		t.Fatal("missing interface gre0")
+	}
+	if ifc.Tunnel == nil {
+		t.Fatal("gre0 missing tunnel config")
+	}
+	if ifc.Tunnel.Source != "10.0.0.1" || ifc.Tunnel.Destination != "10.1.0.1" {
+		t.Errorf("tunnel: src=%s dst=%s", ifc.Tunnel.Source, ifc.Tunnel.Destination)
+	}
+	if len(ifc.Tunnel.Addresses) != 1 || ifc.Tunnel.Addresses[0] != "172.16.0.1/30" {
+		t.Errorf("tunnel addresses: %v", ifc.Tunnel.Addresses)
+	}
+
+	// --- IPsec ---
+	prop := cfg.Security.IPsec.Proposals["aes256"]
+	if prop == nil {
+		t.Fatal("missing IPsec proposal aes256")
+	}
+	if prop.Protocol != "esp" {
+		t.Errorf("proposal protocol: %s", prop.Protocol)
+	}
+	if prop.EncryptionAlg != "aes-256-cbc" {
+		t.Errorf("proposal encryption: %s", prop.EncryptionAlg)
+	}
+	if prop.AuthAlg != "hmac-sha-256" {
+		t.Errorf("proposal auth: %s", prop.AuthAlg)
+	}
+	if prop.DHGroup != 14 {
+		t.Errorf("proposal dh-group: %d", prop.DHGroup)
+	}
+	if prop.LifetimeSeconds != 3600 {
+		t.Errorf("proposal lifetime: %d", prop.LifetimeSeconds)
+	}
+
+	vpn := cfg.Security.IPsec.VPNs["site-a"]
+	if vpn == nil {
+		t.Fatal("missing IPsec VPN site-a")
+	}
+	if vpn.Gateway != "10.1.0.1" {
+		t.Errorf("vpn gateway: %s", vpn.Gateway)
+	}
+	if vpn.LocalAddr != "10.0.0.1" {
+		t.Errorf("vpn local-address: %s", vpn.LocalAddr)
+	}
+	if vpn.IPsecPolicy != "aes256" {
+		t.Errorf("vpn ipsec-policy: %s", vpn.IPsecPolicy)
+	}
+	if vpn.LocalID != "10.0.0.0/24" {
+		t.Errorf("vpn local-identity: %s", vpn.LocalID)
+	}
+	if vpn.RemoteID != "10.1.0.0/24" {
+		t.Errorf("vpn remote-identity: %s", vpn.RemoteID)
+	}
+	if vpn.PSK != "secret123" {
+		t.Errorf("vpn psk: %s", vpn.PSK)
+	}
+
+	// --- Round-trip test ---
+	parser2 := NewParser(output)
+	tree2, errs := parser2.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("re-parse errors: %v", errs)
+	}
+	cfg2, err := CompileConfig(tree2)
+	if err != nil {
+		t.Fatalf("re-compile failed: %v", err)
+	}
+	if len(cfg2.RoutingOptions.StaticRoutes) != len(cfg.RoutingOptions.StaticRoutes) {
+		t.Error("round-trip static route count mismatch")
+	}
+	if cfg2.Protocols.OSPF == nil || cfg2.Protocols.OSPF.RouterID != cfg.Protocols.OSPF.RouterID {
+		t.Error("round-trip OSPF mismatch")
+	}
+	if cfg2.Protocols.BGP == nil || cfg2.Protocols.BGP.LocalAS != cfg.Protocols.BGP.LocalAS {
+		t.Error("round-trip BGP mismatch")
+	}
+}
+
 func TestFormatSet(t *testing.T) {
 	input := `security {
     zones {
