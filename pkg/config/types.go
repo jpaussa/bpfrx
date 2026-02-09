@@ -142,6 +142,7 @@ type NATMatch struct {
 	SourceAddress      string // CIDR
 	DestinationAddress string
 	DestinationPort    int
+	Protocol           string // "tcp", "udp", or "" (auto)
 }
 
 // NATThen defines the NAT translation action.

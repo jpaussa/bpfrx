@@ -679,13 +679,17 @@ func htons(v uint16) uint16 {
 	return binary.NativeEndian.Uint16(b[:])
 }
 
-// ipToUint32BE converts a net.IP to a uint32 in network byte order.
+// ipToUint32BE converts a net.IP to a uint32 matching the in-memory layout
+// that BPF programs use when copying __be32 fields (e.g. iph->daddr).
+// The IP address bytes are stored as-is; on little-endian hosts this means
+// the uint32 numeric value differs from the big-endian interpretation, but
+// the byte pattern in the BPF map key matches what BPF writes.
 func ipToUint32BE(ip net.IP) uint32 {
 	ip4 := ip.To4()
 	if ip4 == nil {
 		return 0
 	}
-	return binary.BigEndian.Uint32(ip4)
+	return binary.NativeEndian.Uint32(ip4)
 }
 
 // ipTo16Bytes converts a net.IP to a [16]byte array.

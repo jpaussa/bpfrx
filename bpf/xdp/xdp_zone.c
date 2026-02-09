@@ -45,6 +45,15 @@ int xdp_zone_prog(struct xdp_md *ctx)
 			.dst_port = meta->dst_port,
 		};
 		struct dnat_value *dv = bpf_map_lookup_elem(&dnat_table, &dk);
+		/* Fallback: try wildcard port (port=0) for IP-only DNAT rules */
+		if (!dv) {
+			struct dnat_key dk_wild = {
+				.protocol = meta->protocol,
+				.dst_ip   = meta->dst_ip.v4,
+				.dst_port = 0,
+			};
+			dv = bpf_map_lookup_elem(&dnat_table, &dk_wild);
+		}
 		if (dv) {
 			meta->nat_dst_ip.v4 = meta->dst_ip.v4;
 			meta->nat_dst_port  = meta->dst_port;
@@ -76,6 +85,13 @@ int xdp_zone_prog(struct xdp_md *ctx)
 		dk6.dst_port = meta->dst_port;
 
 		struct dnat_value_v6 *dv6 = bpf_map_lookup_elem(&dnat_table_v6, &dk6);
+		/* Fallback: try wildcard port (port=0) for IP-only DNAT rules */
+		if (!dv6) {
+			struct dnat_key_v6 dk6_wild = { .protocol = meta->protocol };
+			__builtin_memcpy(dk6_wild.dst_ip, meta->dst_ip.v6, 16);
+			dk6_wild.dst_port = 0;
+			dv6 = bpf_map_lookup_elem(&dnat_table_v6, &dk6_wild);
+		}
 		if (dv6) {
 			__builtin_memcpy(meta->nat_dst_ip.v6, meta->dst_ip.v6, 16);
 			meta->nat_dst_port = meta->dst_port;

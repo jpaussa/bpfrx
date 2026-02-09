@@ -87,6 +87,7 @@ type SessionValueV6 struct {
 	ALGType  uint8
 	LogFlags uint8
 	Pad1     [2]byte
+	Pad2     [4]byte // trailing padding for 8-byte struct alignment
 }
 
 // ZoneConfig mirrors the C struct zone_config.

@@ -679,6 +679,10 @@ func compileNATDestination(node *Node, sec *SecurityConfig) error {
 						if len(m.Keys) >= 2 {
 							rule.Match.SourceAddress = m.Keys[1]
 						}
+					case "protocol":
+						if len(m.Keys) >= 2 {
+							rule.Match.Protocol = m.Keys[1]
+						}
 					}
 				}
 			}
@@ -686,10 +690,14 @@ func compileNATDestination(node *Node, sec *SecurityConfig) error {
 			thenNode := ruleNode.FindChild("then")
 			if thenNode != nil {
 				for _, t := range thenNode.Children {
-					if t.Name() == "destination-nat" && len(t.Keys) >= 3 {
-						if t.Keys[1] == "pool" {
+					if t.Name() == "destination-nat" {
+						if len(t.Keys) >= 3 && t.Keys[1] == "pool" {
 							rule.Then.Type = NATDestination
 							rule.Then.PoolName = t.Keys[2]
+						} else if poolNode := t.FindChild("pool"); poolNode != nil && len(poolNode.Keys) >= 2 {
+							// Hierarchical form: destination-nat { pool <name>; }
+							rule.Then.Type = NATDestination
+							rule.Then.PoolName = poolNode.Keys[1]
 						}
 					}
 				}
