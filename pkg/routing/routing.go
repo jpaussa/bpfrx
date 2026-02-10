@@ -292,7 +292,7 @@ func rtProtoName(p netlink.RouteProtocol) string {
 	case unix.RTPROT_KERNEL:
 		return "connected"
 	case unix.RTPROT_BOOT:
-		return "boot"
+		return "dhcp"
 	case unix.RTPROT_STATIC:
 		return "static"
 	case 16: // RTPROT_DHCP
