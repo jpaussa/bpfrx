@@ -341,7 +341,8 @@ cmd_deploy() {
 	info "Building bpfrxd and cli..."
 	make -C "$PROJECT_ROOT" build build-ctl
 
-	# Stop running bpfrxd and cli if any (avoids "text file busy")
+	# Stop running service before pushing binaries (avoids "text file busy")
+	incus exec "$INSTANCE_NAME" -- systemctl stop bpfrxd 2>/dev/null || true
 	incus exec "$INSTANCE_NAME" -- pkill -9 bpfrxd 2>/dev/null || true
 	incus exec "$INSTANCE_NAME" -- pkill -9 cli 2>/dev/null || true
 	sleep 1
@@ -359,7 +360,16 @@ cmd_deploy() {
 		incus file push "${SCRIPT_DIR}/bpfrx-test.conf" "$INSTANCE_NAME/etc/bpfrx/bpfrx.conf"
 	fi
 
-	info "Deploy complete. Run '$0 ssh' then 'bpfrxd' to start."
+	# Install systemd unit file
+	info "Installing systemd service..."
+	incus file push "${SCRIPT_DIR}/bpfrxd.service" "$INSTANCE_NAME/etc/systemd/system/bpfrxd.service"
+	incus exec "$INSTANCE_NAME" -- systemctl daemon-reload
+	incus exec "$INSTANCE_NAME" -- systemctl enable --now bpfrxd
+
+	info "Deploy complete. Service started via systemd."
+	info "  Logs:    $0 logs"
+	info "  Status:  $0 status"
+	info "  SSH:     $0 ssh"
 }
 
 # ── SSH / Status ──────────────────────────────────────────────────────
@@ -371,7 +381,33 @@ cmd_ssh() {
 	exec incus exec "$INSTANCE_NAME" -- bash -l
 }
 
+cmd_start() {
+	incus exec "$INSTANCE_NAME" -- systemctl start bpfrxd
+	info "bpfrxd started"
+}
+
+cmd_stop() {
+	incus exec "$INSTANCE_NAME" -- systemctl stop bpfrxd
+	info "bpfrxd stopped"
+}
+
+cmd_restart() {
+	incus exec "$INSTANCE_NAME" -- systemctl restart bpfrxd
+	info "bpfrxd restarted"
+}
+
+cmd_logs() {
+	incus exec "$INSTANCE_NAME" -- journalctl -u bpfrxd -n 50 --no-pager
+}
+
+cmd_journal() {
+	incus exec "$INSTANCE_NAME" -- journalctl -u bpfrxd -f
+}
+
 cmd_status() {
+	echo "── Service ──"
+	incus exec "$INSTANCE_NAME" -- systemctl status bpfrxd --no-pager 2>/dev/null || echo "(service not installed)"
+	echo ""
 	echo "── Instance ──"
 	incus list "$INSTANCE_NAME" -f table 2>/dev/null || echo "(no instance)"
 	echo ""
@@ -398,7 +434,7 @@ cmd_status() {
 # ── Main ──────────────────────────────────────────────────────────────
 
 usage() {
-	echo "Usage: $0 {init|create-vm|create-ct|destroy|deploy|ssh|status}"
+	echo "Usage: $0 {init|create-vm|create-ct|destroy|deploy|ssh|status|start|stop|restart|logs|journal}"
 	echo ""
 	echo "Commands:"
 	echo "  init        Install incus, create networks and profiles"
@@ -407,7 +443,12 @@ usage() {
 	echo "  destroy     Tear down instance, optionally networks/profiles"
 	echo "  deploy      Build bpfrxd and push to instance"
 	echo "  ssh         Shell into the instance"
-	echo "  status      Show instance and network status"
+	echo "  status      Show instance, service, and network status"
+	echo "  start       Start bpfrxd service"
+	echo "  stop        Stop bpfrxd service"
+	echo "  restart     Restart bpfrxd service"
+	echo "  logs        Show recent bpfrxd logs"
+	echo "  journal     Follow bpfrxd logs (live)"
 	exit 1
 }
 
@@ -419,5 +460,10 @@ case "${1:-}" in
 	deploy)     cmd_deploy ;;
 	ssh)        cmd_ssh ;;
 	status)     cmd_status ;;
+	start)      cmd_start ;;
+	stop)       cmd_stop ;;
+	restart)    cmd_restart ;;
+	logs)       cmd_logs ;;
+	journal)    cmd_journal ;;
 	*)          usage ;;
 esac

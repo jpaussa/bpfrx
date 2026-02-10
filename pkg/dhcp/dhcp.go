@@ -683,32 +683,7 @@ func (m *Manager) applyAddress(ifaceName string, lease *Lease) error {
 		return fmt.Errorf("addr replace: %w", err)
 	}
 
-	// Install default route via gateway if provided
-	if lease.Gateway.IsValid() {
-		var dst *net.IPNet
-		if lease.Family == AFInet {
-			dst = &net.IPNet{
-				IP:   net.IPv4zero,
-				Mask: net.CIDRMask(0, 32),
-			}
-		} else {
-			dst = &net.IPNet{
-				IP:   net.IPv6zero,
-				Mask: net.CIDRMask(0, 128),
-			}
-		}
-
-		route := &netlink.Route{
-			LinkIndex: link.Attrs().Index,
-			Dst:       dst,
-			Gw:        lease.Gateway.AsSlice(),
-			Priority:  1024, // high metric so static routes win
-		}
-		if err := m.nlHandle.RouteReplace(route); err != nil {
-			slog.Warn("DHCP: failed to install default route",
-				"interface", ifaceName, "gateway", lease.Gateway, "err", err)
-		}
-	}
+	// Routes are programmed via FRR by the daemon's recompile callback.
 
 	return nil
 }
@@ -728,22 +703,7 @@ func (m *Manager) removeAddress(ifaceName string, lease *Lease) {
 			"interface", ifaceName, "address", lease.Address, "err", err)
 	}
 
-	// Remove default route
-	if lease.Gateway.IsValid() {
-		var dst *net.IPNet
-		if lease.Family == AFInet {
-			dst = &net.IPNet{IP: net.IPv4zero, Mask: net.CIDRMask(0, 32)}
-		} else {
-			dst = &net.IPNet{IP: net.IPv6zero, Mask: net.CIDRMask(0, 128)}
-		}
-		route := &netlink.Route{
-			LinkIndex: link.Attrs().Index,
-			Dst:       dst,
-			Gw:        lease.Gateway.AsSlice(),
-			Priority:  1024,
-		}
-		_ = m.nlHandle.RouteDel(route)
-	}
+	// Routes are cleaned up via FRR config removal.
 }
 
 // scheduleRecompile debounces address change notifications.

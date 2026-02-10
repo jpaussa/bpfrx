@@ -17,8 +17,8 @@ import (
 func main() {
 	configFile := flag.String("config", "/etc/bpfrx/bpfrx.conf", "configuration file path")
 	noDataplane := flag.Bool("no-dataplane", false, "run without eBPF (config-only mode)")
-	apiAddr := flag.String("api-addr", "", "HTTP API listen address (e.g. 127.0.0.1:8080)")
-	grpcAddr := flag.String("grpc-addr", "", "gRPC API listen address (e.g. 127.0.0.1:50051)")
+	apiAddr := flag.String("api-addr", "127.0.0.1:8080", "HTTP API listen address (empty to disable)")
+	grpcAddr := flag.String("grpc-addr", "127.0.0.1:50051", "gRPC API listen address")
 	debug := flag.Bool("debug", false, "enable debug logging")
 	flag.Parse()
 

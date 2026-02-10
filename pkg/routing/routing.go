@@ -12,12 +12,11 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Manager handles static route, tunnel, and VRF lifecycle.
+// Manager handles tunnel and VRF lifecycle.
 type Manager struct {
 	nlHandle *netlink.Handle
-	routes   []netlink.Route // currently installed static routes (for cleanup)
-	tunnels  []string        // currently created tunnel interface names
-	vrfs     []string        // currently created VRF device names
+	tunnels  []string // currently created tunnel interface names
+	vrfs     []string // currently created VRF device names
 }
 
 // New creates a new routing Manager.
@@ -33,120 +32,6 @@ func New() (*Manager, error) {
 func (m *Manager) Close() error {
 	if m.nlHandle != nil {
 		m.nlHandle.Close()
-	}
-	return nil
-}
-
-// ApplyStaticRoutes installs static routes in the kernel FIB.
-// Previous routes are removed first.
-func (m *Manager) ApplyStaticRoutes(routes []*config.StaticRoute) error {
-	if err := m.ClearStaticRoutes(); err != nil {
-		slog.Warn("failed to clear previous static routes", "err", err)
-	}
-
-	for _, sr := range routes {
-		_, dst, err := net.ParseCIDR(sr.Destination)
-		if err != nil {
-			slog.Warn("invalid static route destination", "dst", sr.Destination, "err", err)
-			continue
-		}
-
-		route := netlink.Route{
-			Dst:      dst,
-			Priority: sr.Preference,
-			Protocol: unix.RTPROT_STATIC,
-		}
-
-		if sr.Discard {
-			route.Type = unix.RTN_BLACKHOLE
-		} else if sr.NextHop != "" {
-			gw := net.ParseIP(sr.NextHop)
-			if gw == nil {
-				slog.Warn("invalid static route next-hop", "nh", sr.NextHop)
-				continue
-			}
-			route.Gw = gw
-		}
-
-		if sr.Interface != "" {
-			link, err := m.nlHandle.LinkByName(sr.Interface)
-			if err != nil {
-				slog.Warn("static route interface not found",
-					"iface", sr.Interface, "err", err)
-				continue
-			}
-			route.LinkIndex = link.Attrs().Index
-		}
-
-		if err := m.nlHandle.RouteAdd(&route); err != nil {
-			slog.Warn("failed to add static route",
-				"dst", sr.Destination, "err", err)
-			continue
-		}
-		slog.Info("static route added", "dst", sr.Destination,
-			"nh", sr.NextHop, "iface", sr.Interface, "discard", sr.Discard)
-		m.routes = append(m.routes, route)
-	}
-
-	return nil
-}
-
-// ClearStaticRoutes removes all previously installed static routes.
-func (m *Manager) ClearStaticRoutes() error {
-	for _, r := range m.routes {
-		if err := m.nlHandle.RouteDel(&r); err != nil {
-			slog.Warn("failed to remove static route", "dst", r.Dst, "err", err)
-		}
-	}
-	m.routes = nil
-	return nil
-}
-
-// ApplyStaticRoutesInTable installs static routes into a specific kernel routing table.
-func (m *Manager) ApplyStaticRoutesInTable(routes []*config.StaticRoute, tableID int) error {
-	for _, sr := range routes {
-		_, dst, err := net.ParseCIDR(sr.Destination)
-		if err != nil {
-			slog.Warn("invalid static route destination", "dst", sr.Destination, "table", tableID, "err", err)
-			continue
-		}
-
-		route := netlink.Route{
-			Dst:      dst,
-			Priority: sr.Preference,
-			Protocol: unix.RTPROT_STATIC,
-			Table:    tableID,
-		}
-
-		if sr.Discard {
-			route.Type = unix.RTN_BLACKHOLE
-		} else if sr.NextHop != "" {
-			gw := net.ParseIP(sr.NextHop)
-			if gw == nil {
-				slog.Warn("invalid static route next-hop", "nh", sr.NextHop, "table", tableID)
-				continue
-			}
-			route.Gw = gw
-		}
-
-		if sr.Interface != "" {
-			link, err := m.nlHandle.LinkByName(sr.Interface)
-			if err != nil {
-				slog.Warn("static route interface not found",
-					"iface", sr.Interface, "table", tableID, "err", err)
-				continue
-			}
-			route.LinkIndex = link.Attrs().Index
-		}
-
-		if err := m.nlHandle.RouteAdd(&route); err != nil {
-			slog.Warn("failed to add static route",
-				"dst", sr.Destination, "table", tableID, "err", err)
-			continue
-		}
-		slog.Info("static route added", "dst", sr.Destination,
-			"nh", sr.NextHop, "iface", sr.Interface, "table", tableID)
-		m.routes = append(m.routes, route)
 	}
 	return nil
 }
@@ -475,6 +360,8 @@ func rtProtoName(p netlink.RouteProtocol) string {
 		return "ospf"
 	case 189:
 		return "rip"
+	case 196:
+		return "static" // RTPROT_ZEBRA — FRR staticd-installed routes
 	default:
 		return strconv.Itoa(pi)
 	}

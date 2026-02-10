@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/psaab/bpfrx/pkg/api"
 	"github.com/psaab/bpfrx/pkg/cli"
 	"github.com/psaab/bpfrx/pkg/config"
@@ -205,8 +207,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 		slog.Info("HTTP API server started", "addr", d.opts.APIAddr)
 	}
 
-	// Start gRPC API server if configured.
-	if d.opts.GRPCAddr != "" {
+	// Start gRPC API server.
+	{
 		grpcSrv := grpcapi.NewServer(d.opts.GRPCAddr, grpcapi.Config{
 			Store:    d.store,
 			DP:       d.dp,
@@ -228,22 +230,28 @@ func (d *Daemon) Run(ctx context.Context) error {
 		slog.Info("gRPC API server started", "addr", d.opts.GRPCAddr)
 	}
 
-	// Start CLI shell
-	shell := cli.New(d.store, d.dp, eventBuf, er, d.routing, d.frr, d.ipsec, d.dhcp)
-
-	// Run CLI in a goroutine so we can still handle signals
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- shell.Run()
-	}()
-
+	// Start interactive CLI or block in daemon mode
 	var runErr error
-	select {
-	case err := <-errCh:
-		if err != nil {
-			runErr = fmt.Errorf("CLI: %w", err)
+	if isInteractive() {
+		shell := cli.New(d.store, d.dp, eventBuf, er, d.routing, d.frr, d.ipsec, d.dhcp)
+
+		// Run CLI in a goroutine so we can still handle signals
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- shell.Run()
+		}()
+
+		select {
+		case err := <-errCh:
+			if err != nil {
+				runErr = fmt.Errorf("CLI: %w", err)
+			}
+		case <-ctx.Done():
+			slog.Info("signal received, shutting down")
 		}
-	case <-ctx.Done():
+	} else {
+		slog.Info("daemon mode (non-interactive), waiting for signals")
+		<-ctx.Done()
 		slog.Info("signal received, shutting down")
 	}
 
@@ -288,7 +296,6 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if d.routing != nil {
 		d.routing.ClearVRFs()
 		d.routing.ClearTunnels()
-		d.routing.ClearStaticRoutes()
 		d.routing.Close()
 	}
 
@@ -300,6 +307,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 	slog.Info("shutdown complete")
 	return runErr
+}
+
+// isInteractive returns true if stdin is a real terminal (not /dev/null or a pipe).
+func isInteractive() bool {
+	_, err := unix.IoctlGetTermios(int(os.Stdin.Fd()), unix.TCGETS)
+	return err == nil
 }
 
 // applyConfig applies a compiled config in the correct order:
@@ -352,42 +365,24 @@ func (d *Daemon) applyConfig(cfg *config.Config) {
 		}
 	}
 
-	// 3. Install static routes (global table)
-	if d.routing != nil && len(cfg.RoutingOptions.StaticRoutes) > 0 {
-		if err := d.routing.ApplyStaticRoutes(cfg.RoutingOptions.StaticRoutes); err != nil {
-			slog.Warn("failed to apply static routes", "err", err)
-		}
-	}
-
-	// 3b. Install per-instance static routes into VRF tables
-	if d.routing != nil {
-		for _, ri := range cfg.RoutingInstances {
-			if len(ri.StaticRoutes) > 0 {
-				if err := d.routing.ApplyStaticRoutesInTable(ri.StaticRoutes, ri.TableID); err != nil {
-					slog.Warn("failed to apply instance static routes",
-						"instance", ri.Name, "err", err)
-				}
-			}
-		}
-	}
-
-	// 4. Apply FRR config (global + per-VRF)
+	// 3. Apply all routes + dynamic protocols via FRR
 	if d.frr != nil {
-		hasGlobal := cfg.Protocols.OSPF != nil || cfg.Protocols.BGP != nil
-		var instances []frr.InstanceConfig
-		for _, ri := range cfg.RoutingInstances {
-			if ri.OSPF != nil || ri.BGP != nil {
-				instances = append(instances, frr.InstanceConfig{
-					VRFName: "vrf-" + ri.Name,
-					OSPF:    ri.OSPF,
-					BGP:     ri.BGP,
-				})
-			}
+		fc := &frr.FullConfig{
+			OSPF:         cfg.Protocols.OSPF,
+			BGP:          cfg.Protocols.BGP,
+			StaticRoutes: cfg.RoutingOptions.StaticRoutes,
+			DHCPRoutes:   d.collectDHCPRoutes(),
 		}
-		if hasGlobal || len(instances) > 0 {
-			if err := d.frr.ApplyWithInstances(cfg.Protocols.OSPF, cfg.Protocols.BGP, instances); err != nil {
-				slog.Warn("failed to apply FRR config", "err", err)
-			}
+		for _, ri := range cfg.RoutingInstances {
+			fc.Instances = append(fc.Instances, frr.InstanceConfig{
+				VRFName:      "vrf-" + ri.Name,
+				OSPF:         ri.OSPF,
+				BGP:          ri.BGP,
+				StaticRoutes: ri.StaticRoutes,
+			})
+		}
+		if err := d.frr.ApplyFull(fc); err != nil {
+			slog.Warn("failed to apply FRR config", "err", err)
 		}
 	}
 
@@ -463,6 +458,26 @@ func (d *Daemon) startDHCPClients(ctx context.Context, cfg *config.Config) {
 			}
 		}
 	}
+}
+
+// collectDHCPRoutes builds FRR DHCPRoute entries from active DHCP leases.
+func (d *Daemon) collectDHCPRoutes() []frr.DHCPRoute {
+	if d.dhcp == nil {
+		return nil
+	}
+	var routes []frr.DHCPRoute
+	for _, lease := range d.dhcp.Leases() {
+		if !lease.Gateway.IsValid() {
+			continue
+		}
+		dr := frr.DHCPRoute{
+			Gateway:   lease.Gateway.String(),
+			Interface: lease.Interface,
+			IsIPv6:    lease.Family == dhcp.AFInet6,
+		}
+		routes = append(routes, dr)
+	}
+	return routes
 }
 
 // logFinalStats reads and logs global counter summary before shutdown.

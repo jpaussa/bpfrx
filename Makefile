@@ -42,7 +42,7 @@ clean:
 	rm -f pkg/dataplane/*_bpfel.o pkg/dataplane/*_bpfeb.o
 
 # Test environment management (Incus VM/container)
-.PHONY: test-env-init test-vm test-ct test-deploy test-ssh test-destroy test-status
+.PHONY: test-env-init test-vm test-ct test-deploy test-ssh test-destroy test-status test-start test-stop test-restart test-logs test-journal
 
 test-env-init:
 	./test/incus/setup.sh init
@@ -64,3 +64,18 @@ test-destroy:
 
 test-status:
 	./test/incus/setup.sh status
+
+test-start:
+	./test/incus/setup.sh start
+
+test-stop:
+	./test/incus/setup.sh stop
+
+test-restart:
+	./test/incus/setup.sh restart
+
+test-logs:
+	./test/incus/setup.sh logs
+
+test-journal:
+	./test/incus/setup.sh journal

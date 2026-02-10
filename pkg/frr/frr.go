@@ -7,39 +7,53 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"github.com/psaab/bpfrx/pkg/config"
 )
 
 const (
-	// DefaultConfigDir is where FRR reads conf.d snippets.
-	DefaultConfigDir = "/etc/frr/conf.d"
-	// BPFRXConfFile is the config file bpfrx manages.
-	BPFRXConfFile = "bpfrx.conf"
+	// DefaultFRRConf is the main FRR config file.
+	DefaultFRRConf = "/etc/frr/frr.conf"
+
+	markerBegin = "! BEGIN BPFRX MANAGED CONFIG - do not edit this section"
+	markerEnd   = "! END BPFRX MANAGED CONFIG"
 )
 
 // Manager handles FRR config generation and state queries.
 type Manager struct {
-	configDir  string
-	configPath string
+	frrConf string
 }
 
 // New creates a new FRR manager.
 func New() *Manager {
-	dir := DefaultConfigDir
 	return &Manager{
-		configDir:  dir,
-		configPath: filepath.Join(dir, BPFRXConfFile),
+		frrConf: DefaultFRRConf,
 	}
 }
 
-// InstanceConfig pairs an OSPF/BGP config with a VRF name for per-instance generation.
+// InstanceConfig pairs routing config with a VRF name for per-instance generation.
 type InstanceConfig struct {
-	VRFName string
-	OSPF    *config.OSPFConfig
-	BGP     *config.BGPConfig
+	VRFName      string
+	OSPF         *config.OSPFConfig
+	BGP          *config.BGPConfig
+	StaticRoutes []*config.StaticRoute
+}
+
+// DHCPRoute represents a default route learned via DHCP.
+type DHCPRoute struct {
+	Gateway   string // "10.0.2.1" or "fe80::1"
+	Interface string // needed for IPv6 link-local gateways
+	IsIPv6    bool
+}
+
+// FullConfig holds the complete routing config for a single FRR apply.
+type FullConfig struct {
+	OSPF         *config.OSPFConfig
+	BGP          *config.BGPConfig
+	StaticRoutes []*config.StaticRoute
+	DHCPRoutes   []DHCPRoute
+	Instances    []InstanceConfig
 }
 
 // Apply generates an FRR config from OSPF/BGP settings and reloads FRR.
@@ -49,10 +63,29 @@ func (m *Manager) Apply(ospf *config.OSPFConfig, bgp *config.BGPConfig) error {
 
 // ApplyWithInstances generates FRR config for the global context and per-VRF instances.
 func (m *Manager) ApplyWithInstances(ospf *config.OSPFConfig, bgp *config.BGPConfig, instances []InstanceConfig) error {
-	hasGlobal := ospf != nil || bgp != nil
-	hasInstances := len(instances) > 0
+	return m.ApplyFull(&FullConfig{
+		OSPF:      ospf,
+		BGP:       bgp,
+		Instances: instances,
+	})
+}
 
-	if !hasGlobal && !hasInstances {
+// ApplyFull generates the complete FRR config including static routes,
+// DHCP-learned defaults, per-VRF routes, and dynamic protocols, then reloads FRR.
+func (m *Manager) ApplyFull(fc *FullConfig) error {
+	if fc == nil {
+		return m.Clear()
+	}
+
+	hasContent := fc.OSPF != nil || fc.BGP != nil ||
+		len(fc.StaticRoutes) > 0 || len(fc.DHCPRoutes) > 0
+	for _, inst := range fc.Instances {
+		if inst.OSPF != nil || inst.BGP != nil || len(inst.StaticRoutes) > 0 {
+			hasContent = true
+			break
+		}
+	}
+	if !hasContent {
 		return m.Clear()
 	}
 
@@ -60,31 +93,61 @@ func (m *Manager) ApplyWithInstances(ospf *config.OSPFConfig, bgp *config.BGPCon
 	b.WriteString("! bpfrx managed config - do not edit\n")
 	b.WriteString("!\n")
 
-	// Global context
-	if hasGlobal {
-		b.WriteString(m.generateOSPFBGP(ospf, bgp, ""))
+	// Global static routes
+	if len(fc.StaticRoutes) > 0 {
+		for _, sr := range fc.StaticRoutes {
+			b.WriteString(m.generateStaticRoute(sr, ""))
+		}
+		b.WriteString("!\n")
 	}
 
-	// Per-VRF contexts
-	for _, inst := range instances {
+	// DHCP-learned default routes (admin distance 200)
+	if len(fc.DHCPRoutes) > 0 {
+		for _, dr := range fc.DHCPRoutes {
+			if dr.IsIPv6 {
+				if dr.Interface != "" {
+					fmt.Fprintf(&b, "ipv6 route ::/0 %s %s 200\n", dr.Gateway, dr.Interface)
+				} else {
+					fmt.Fprintf(&b, "ipv6 route ::/0 %s 200\n", dr.Gateway)
+				}
+			} else {
+				fmt.Fprintf(&b, "ip route 0.0.0.0/0 %s 200\n", dr.Gateway)
+			}
+		}
+		b.WriteString("!\n")
+	}
+
+	// Per-VRF static routes and dynamic protocols
+	for _, inst := range fc.Instances {
+		if len(inst.StaticRoutes) > 0 {
+			for _, sr := range inst.StaticRoutes {
+				b.WriteString(m.generateStaticRoute(sr, inst.VRFName))
+			}
+			b.WriteString("!\n")
+		}
+	}
+
+	// Global dynamic protocols
+	if fc.OSPF != nil || fc.BGP != nil {
+		b.WriteString(m.generateOSPFBGP(fc.OSPF, fc.BGP, ""))
+	}
+
+	// Per-VRF dynamic protocols
+	for _, inst := range fc.Instances {
 		if inst.OSPF != nil || inst.BGP != nil {
 			b.WriteString(m.generateOSPFBGP(inst.OSPF, inst.BGP, inst.VRFName))
 		}
 	}
 
-	cfg := b.String()
+	section := b.String()
 
-	if err := os.MkdirAll(m.configDir, 0755); err != nil {
-		return fmt.Errorf("create config dir: %w", err)
+	if err := m.writeManagedSection(section); err != nil {
+		return err
 	}
 
-	if err := os.WriteFile(m.configPath, []byte(cfg), 0644); err != nil {
-		return fmt.Errorf("write config: %w", err)
-	}
+	slog.Info("FRR config written", "path", m.frrConf)
 
-	slog.Info("FRR config written", "path", m.configPath)
-
-	// Reload FRR
+	// Reload FRR (frr-reload.py diffs running vs on-disk config)
 	if err := m.reload(); err != nil {
 		slog.Warn("FRR reload failed", "err", err)
 		return err
@@ -93,12 +156,86 @@ func (m *Manager) ApplyWithInstances(ospf *config.OSPFConfig, bgp *config.BGPCon
 	return nil
 }
 
-// Clear removes the bpfrx config and reloads FRR.
+// generateStaticRoute produces a single FRR static route command.
+func (m *Manager) generateStaticRoute(sr *config.StaticRoute, vrfName string) string {
+	isV6 := strings.Contains(sr.Destination, ":")
+	prefix := "ip"
+	if isV6 {
+		prefix = "ipv6"
+	}
+
+	vrfPart := ""
+	if vrfName != "" {
+		vrfPart = " vrf " + vrfName
+	}
+
+	var nexthop string
+	switch {
+	case sr.Discard:
+		nexthop = "Null0"
+	case sr.NextHop != "" && sr.Interface != "":
+		// Gateway + interface (useful for IPv6 link-local next-hops)
+		nexthop = sr.NextHop + " " + sr.Interface
+	case sr.NextHop != "":
+		nexthop = sr.NextHop
+	case sr.Interface != "":
+		nexthop = sr.Interface
+	default:
+		nexthop = "Null0"
+	}
+
+	if sr.Preference > 0 {
+		return fmt.Sprintf("%s route %s %s %d%s\n", prefix, sr.Destination, nexthop, sr.Preference, vrfPart)
+	}
+	return fmt.Sprintf("%s route %s %s%s\n", prefix, sr.Destination, nexthop, vrfPart)
+}
+
+// Clear removes the bpfrx managed section from frr.conf and reloads FRR.
 func (m *Manager) Clear() error {
-	if err := os.Remove(m.configPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove config: %w", err)
+	if err := m.writeManagedSection(""); err != nil {
+		return err
 	}
 	_ = m.reload()
+	return nil
+}
+
+// writeManagedSection replaces the bpfrx-managed section in frr.conf.
+// If section is empty, the managed block is removed entirely.
+func (m *Manager) writeManagedSection(section string) error {
+	existing, err := os.ReadFile(m.frrConf)
+	if err != nil {
+		if os.IsNotExist(err) {
+			existing = []byte("log syslog informational\n")
+		} else {
+			return fmt.Errorf("read frr.conf: %w", err)
+		}
+	}
+
+	// Strip existing managed section
+	content := string(existing)
+	if start := strings.Index(content, markerBegin); start >= 0 {
+		end := strings.Index(content, markerEnd)
+		if end >= 0 {
+			end += len(markerEnd)
+			// Also consume the trailing newline
+			if end < len(content) && content[end] == '\n' {
+				end++
+			}
+			content = content[:start] + content[end:]
+		}
+	}
+
+	// Append new managed section
+	if section != "" {
+		content = strings.TrimRight(content, "\n") + "\n"
+		content += markerBegin + "\n"
+		content += section
+		content += markerEnd + "\n"
+	}
+
+	if err := os.WriteFile(m.frrConf, []byte(content), 0644); err != nil {
+		return fmt.Errorf("write frr.conf: %w", err)
+	}
 	return nil
 }
 
@@ -150,7 +287,7 @@ func (m *Manager) generateOSPFBGP(ospf *config.OSPFConfig, bgp *config.BGPConfig
 }
 
 func (m *Manager) reload() error {
-	// Try systemctl reload first
+	// Try systemctl reload first (runs frr-reload.py which diffs running vs frr.conf)
 	cmd := exec.Command("systemctl", "reload", "frr")
 	if err := cmd.Run(); err == nil {
 		slog.Info("FRR reloaded via systemctl")
@@ -158,7 +295,7 @@ func (m *Manager) reload() error {
 	}
 
 	// Fallback: load config directly via vtysh
-	cmd = exec.Command("vtysh", "-f", m.configPath)
+	cmd = exec.Command("vtysh", "-f", m.frrConf)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("vtysh reload: %w: %s", err, string(output))

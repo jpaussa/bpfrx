@@ -982,16 +982,34 @@ func (c *CLI) applyToDataplane(cfg *config.Config) error {
 		}
 	}
 
-	// 3. Install static routes
-	if c.routing != nil && len(cfg.RoutingOptions.StaticRoutes) > 0 {
-		if err := c.routing.ApplyStaticRoutes(cfg.RoutingOptions.StaticRoutes); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: static routes apply failed: %v\n", err)
+	// 3. Apply all routes + dynamic protocols via FRR
+	if c.frr != nil {
+		fc := &frr.FullConfig{
+			OSPF:         cfg.Protocols.OSPF,
+			BGP:          cfg.Protocols.BGP,
+			StaticRoutes: cfg.RoutingOptions.StaticRoutes,
 		}
-	}
-
-	// 4. Apply FRR config
-	if c.frr != nil && (cfg.Protocols.OSPF != nil || cfg.Protocols.BGP != nil) {
-		if err := c.frr.Apply(cfg.Protocols.OSPF, cfg.Protocols.BGP); err != nil {
+		if c.dhcp != nil {
+			for _, lease := range c.dhcp.Leases() {
+				if !lease.Gateway.IsValid() {
+					continue
+				}
+				fc.DHCPRoutes = append(fc.DHCPRoutes, frr.DHCPRoute{
+					Gateway:   lease.Gateway.String(),
+					Interface: lease.Interface,
+					IsIPv6:    lease.Family == dhcp.AFInet6,
+				})
+			}
+		}
+		for _, ri := range cfg.RoutingInstances {
+			fc.Instances = append(fc.Instances, frr.InstanceConfig{
+				VRFName:      "vrf-" + ri.Name,
+				OSPF:         ri.OSPF,
+				BGP:          ri.BGP,
+				StaticRoutes: ri.StaticRoutes,
+			})
+		}
+		if err := c.frr.ApplyFull(fc); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: FRR apply failed: %v\n", err)
 		}
 	}
