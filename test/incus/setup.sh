@@ -254,6 +254,10 @@ provision_instance() {
 	incus exec "$INSTANCE_NAME" -- ip link set "$iface_untrust" up 2>/dev/null || true
 	incus exec "$INSTANCE_NAME" -- ip link set "$iface_dmz" up 2>/dev/null || true
 	incus exec "$INSTANCE_NAME" -- ip link set "$iface_tunnel" up 2>/dev/null || true
+	# SR-IOV WAN interface (enp10s0 in VM, added via PCI passthrough)
+	if [[ "$type" == "vm" ]]; then
+		incus exec "$INSTANCE_NAME" -- ip link set enp10s0 up 2>/dev/null || true
+	fi
 
 	# Internet-facing interface: disable RequiredForOnline (DHCP handled by bpfrxd)
 	if [[ "$type" == "vm" ]]; then
@@ -334,7 +338,7 @@ cmd_deploy() {
 		die "Instance $INSTANCE_NAME does not exist. Run '$0 create-vm' or '$0 create-ct' first."
 	fi
 
-	info "Building bpfrxd and bpfrxctl..."
+	info "Building bpfrxd and cli..."
 	make -C "$PROJECT_ROOT" build build-ctl
 
 	# Stop running bpfrxd if any (avoids "text file busy")
@@ -344,8 +348,8 @@ cmd_deploy() {
 	info "Pushing bpfrxd to $INSTANCE_NAME..."
 	incus file push "$PROJECT_ROOT/bpfrxd" "$INSTANCE_NAME/usr/local/sbin/bpfrxd" --mode 0755
 
-	info "Pushing bpfrxctl to $INSTANCE_NAME..."
-	incus file push "$PROJECT_ROOT/bpfrxctl" "$INSTANCE_NAME/usr/local/bin/bpfrxctl" --mode 0755
+	info "Pushing cli to $INSTANCE_NAME..."
+	incus file push "$PROJECT_ROOT/cli" "$INSTANCE_NAME/usr/local/bin/cli" --mode 0755
 
 	# Push test config if it exists
 	if [[ -f "${SCRIPT_DIR}/bpfrx-test.conf" ]]; then

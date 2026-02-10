@@ -1,4 +1,4 @@
-// bpfrxctl is the remote CLI client for bpfrxd.
+// cli is the remote CLI client for bpfrxd.
 //
 // It connects to the bpfrxd gRPC API and provides the same Junos-style
 // interactive CLI as the embedded console.
@@ -28,7 +28,7 @@ func main() {
 
 	conn, err := grpc.NewClient(*addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bpfrxctl: connect: %v\n", err)
+		fmt.Fprintf(os.Stderr, "cli: connect: %v\n", err)
 		os.Exit(1)
 	}
 	defer conn.Close()
@@ -40,7 +40,7 @@ func main() {
 	resp, err := client.GetStatus(ctx, &pb.GetStatusRequest{})
 	cancel()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bpfrxctl: cannot reach bpfrxd at %s: %v\n", *addr, err)
+		fmt.Fprintf(os.Stderr, "cli: cannot reach bpfrxd at %s: %v\n", *addr, err)
 		os.Exit(1)
 	}
 
@@ -62,19 +62,19 @@ func main() {
 
 	rl, err := readline.NewEx(&readline.Config{
 		Prompt:          c.operationalPrompt(),
-		HistoryFile:     "/tmp/bpfrxctl_history",
+		HistoryFile:     "/tmp/cli_history",
 		InterruptPrompt: "^C",
 		EOFPrompt:       "exit",
 		AutoComplete:    &remoteCompleter{ctl: c},
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bpfrxctl: readline: %v\n", err)
+		fmt.Fprintf(os.Stderr, "cli: readline: %v\n", err)
 		os.Exit(1)
 	}
 	defer rl.Close()
 	c.rl = rl
 
-	fmt.Printf("bpfrxctl — connected to bpfrxd (uptime: %s)\n", resp.Uptime)
+	fmt.Printf("cli — connected to bpfrxd (uptime: %s)\n", resp.Uptime)
 	fmt.Println("Type '?' for help")
 	fmt.Println()
 

@@ -20,7 +20,7 @@ build:
 
 # Build the remote CLI client
 build-ctl:
-	CGO_ENABLED=0 $(GO) build -o bpfrxctl ./cmd/bpfrxctl
+	CGO_ENABLED=0 $(GO) build -o cli ./cmd/cli
 
 # Generate protobuf/gRPC code
 proto:
@@ -31,13 +31,13 @@ proto:
 
 install: build build-ctl
 	install -m 0755 $(BINARY) $(PREFIX)/sbin/$(BINARY)
-	install -m 0755 bpfrxctl $(PREFIX)/bin/bpfrxctl
+	install -m 0755 cli $(PREFIX)/bin/cli
 
 test:
 	$(GO) test ./...
 
 clean:
-	rm -f $(BINARY) bpfrxctl
+	rm -f $(BINARY) cli
 	rm -f pkg/dataplane/*_bpfel.go pkg/dataplane/*_bpfeb.go
 	rm -f pkg/dataplane/*_bpfel.o pkg/dataplane/*_bpfeb.o
 
