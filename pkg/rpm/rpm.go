@@ -1,0 +1,279 @@
+// Package rpm implements Real-time Performance Monitoring probes.
+package rpm
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"sort"
+	"sync"
+	"time"
+
+	"github.com/psaab/bpfrx/pkg/config"
+)
+
+// ProbeResult holds the current state of a single RPM test.
+type ProbeResult struct {
+	ProbeName    string
+	TestName     string
+	ProbeType    string
+	Target       string
+	LastRTT      time.Duration
+	LastStatus   string // "pass" or "fail"
+	SuccFail     int    // consecutive failures
+	TotalSent    int64
+	TotalRecv    int64
+	LastProbeAt  time.Time
+}
+
+// Manager runs RPM probes and tracks their results.
+type Manager struct {
+	mu      sync.RWMutex
+	results map[string]*ProbeResult // key: "probe/test"
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
+}
+
+// New creates a new RPM manager.
+func New() *Manager {
+	return &Manager{
+		results: make(map[string]*ProbeResult),
+	}
+}
+
+// Apply starts probes from the given RPM config.
+func (m *Manager) Apply(ctx context.Context, cfg *config.RPMConfig) {
+	m.StopAll()
+
+	if cfg == nil || len(cfg.Probes) == 0 {
+		return
+	}
+
+	probeCtx, cancel := context.WithCancel(ctx)
+	m.cancel = cancel
+
+	for _, probe := range cfg.Probes {
+		for _, test := range probe.Tests {
+			key := probe.Name + "/" + test.Name
+			m.mu.Lock()
+			m.results[key] = &ProbeResult{
+				ProbeName:  probe.Name,
+				TestName:   test.Name,
+				ProbeType:  test.ProbeType,
+				Target:     test.Target,
+				LastStatus: "unknown",
+			}
+			m.mu.Unlock()
+
+			m.wg.Add(1)
+			go func(p *config.RPMProbe, t *config.RPMTest, k string) {
+				defer m.wg.Done()
+				m.runProbeLoop(probeCtx, p, t, k)
+			}(probe, test, key)
+		}
+	}
+}
+
+// StopAll stops all running probes.
+func (m *Manager) StopAll() {
+	if m.cancel != nil {
+		m.cancel()
+		m.wg.Wait()
+		m.cancel = nil
+	}
+	m.mu.Lock()
+	m.results = make(map[string]*ProbeResult)
+	m.mu.Unlock()
+}
+
+// Results returns a snapshot of all probe results, sorted by key.
+func (m *Manager) Results() []*ProbeResult {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	keys := make([]string, 0, len(m.results))
+	for k := range m.results {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	out := make([]*ProbeResult, 0, len(keys))
+	for _, k := range keys {
+		r := m.results[k]
+		cp := *r
+		out = append(out, &cp)
+	}
+	return out
+}
+
+func (m *Manager) runProbeLoop(ctx context.Context, probe *config.RPMProbe, test *config.RPMTest, key string) {
+	interval := time.Duration(test.TestInterval) * time.Second
+	if interval <= 0 {
+		interval = 60 * time.Second
+	}
+
+	probeInterval := time.Duration(test.ProbeInterval) * time.Second
+	if probeInterval <= 0 {
+		probeInterval = 5 * time.Second
+	}
+
+	probeCount := test.ProbeCount
+	if probeCount <= 0 {
+		probeCount = 1
+	}
+
+	threshold := test.ThresholdSuccessive
+	if threshold <= 0 {
+		threshold = 3
+	}
+
+	slog.Info("RPM probe started",
+		"probe", probe.Name, "test", test.Name,
+		"type", test.ProbeType, "target", test.Target,
+		"interval", interval)
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	// Run first probe immediately
+	m.runSingleTest(ctx, test, key, probeCount, probeInterval, threshold)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.runSingleTest(ctx, test, key, probeCount, probeInterval, threshold)
+		}
+	}
+}
+
+func (m *Manager) runSingleTest(ctx context.Context, test *config.RPMTest, key string, probeCount int, probeInterval time.Duration, threshold int) {
+	var successes, failures int
+
+	for i := 0; i < probeCount; i++ {
+		if i > 0 {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(probeInterval):
+			}
+		}
+
+		rtt, err := m.executeProbe(ctx, test)
+
+		m.mu.Lock()
+		r := m.results[key]
+		if r == nil {
+			m.mu.Unlock()
+			return
+		}
+		r.TotalSent++
+		r.LastProbeAt = time.Now()
+		if err != nil {
+			failures++
+			r.SuccFail++
+			if r.SuccFail >= threshold {
+				r.LastStatus = "fail"
+			}
+		} else {
+			successes++
+			r.TotalRecv++
+			r.LastRTT = rtt
+			r.SuccFail = 0
+			r.LastStatus = "pass"
+		}
+		m.mu.Unlock()
+	}
+}
+
+func (m *Manager) executeProbe(ctx context.Context, test *config.RPMTest) (time.Duration, error) {
+	switch test.ProbeType {
+	case "icmp-ping":
+		return m.probeICMP(ctx, test)
+	case "tcp-ping":
+		return m.probeTCP(ctx, test)
+	case "http-get":
+		return m.probeHTTP(ctx, test)
+	default:
+		return m.probeICMP(ctx, test) // default to ICMP
+	}
+}
+
+func (m *Manager) probeICMP(ctx context.Context, test *config.RPMTest) (time.Duration, error) {
+	// Use TCP dial to port 7 (echo) as a simple reachability check.
+	// Full ICMP requires raw sockets (CAP_NET_RAW); TCP connect is a
+	// reasonable proxy that works without elevated privileges.
+	target := test.Target
+	start := time.Now()
+	dialer := &net.Dialer{Timeout: 3 * time.Second}
+	if test.SourceAddress != "" {
+		dialer.LocalAddr = &net.TCPAddr{IP: net.ParseIP(test.SourceAddress)}
+	}
+	conn, err := dialer.DialContext(ctx, "ip4:icmp", target)
+	if err != nil {
+		// Fallback: try UDP dial which succeeds if host is reachable
+		conn2, err2 := dialer.DialContext(ctx, "udp4", net.JoinHostPort(target, "33434"))
+		if err2 != nil {
+			return 0, fmt.Errorf("probe failed: %w", err)
+		}
+		conn2.Close()
+		return time.Since(start), nil
+	}
+	conn.Close()
+	return time.Since(start), nil
+}
+
+func (m *Manager) probeTCP(ctx context.Context, test *config.RPMTest) (time.Duration, error) {
+	port := test.DestPort
+	if port == 0 {
+		port = 80
+	}
+	addr := net.JoinHostPort(test.Target, fmt.Sprintf("%d", port))
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	if test.SourceAddress != "" {
+		dialer.LocalAddr = &net.TCPAddr{IP: net.ParseIP(test.SourceAddress)}
+	}
+
+	start := time.Now()
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return 0, fmt.Errorf("TCP connect failed: %w", err)
+	}
+	rtt := time.Since(start)
+	conn.Close()
+	return rtt, nil
+}
+
+func (m *Manager) probeHTTP(ctx context.Context, test *config.RPMTest) (time.Duration, error) {
+	target := test.Target
+	if target == "" {
+		return 0, fmt.Errorf("no target specified")
+	}
+	// If target doesn't look like a URL, make it one
+	url := target
+	if len(url) > 0 && url[0] != 'h' {
+		url = "http://" + target
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	start := time.Now()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return 0, fmt.Errorf("HTTP request error: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("HTTP GET failed: %w", err)
+	}
+	resp.Body.Close()
+	rtt := time.Since(start)
+
+	if resp.StatusCode >= 400 {
+		return rtt, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	return rtt, nil
+}

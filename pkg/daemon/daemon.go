@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -19,12 +20,16 @@ import (
 	"github.com/psaab/bpfrx/pkg/conntrack"
 	"github.com/psaab/bpfrx/pkg/dataplane"
 	"github.com/psaab/bpfrx/pkg/dhcp"
+	"github.com/psaab/bpfrx/pkg/dhcpserver"
+	"github.com/psaab/bpfrx/pkg/feeds"
+	"github.com/psaab/bpfrx/pkg/flowexport"
 	"github.com/psaab/bpfrx/pkg/frr"
 	"github.com/psaab/bpfrx/pkg/grpcapi"
 	"github.com/psaab/bpfrx/pkg/ipsec"
 	"github.com/psaab/bpfrx/pkg/logging"
 	"github.com/psaab/bpfrx/pkg/radvd"
 	"github.com/psaab/bpfrx/pkg/routing"
+	"github.com/psaab/bpfrx/pkg/rpm"
 )
 
 // Options configures the daemon.
@@ -37,14 +42,20 @@ type Options struct {
 
 // Daemon is the main bpfrx daemon.
 type Daemon struct {
-	opts    Options
-	store   *configstore.Store
-	dp      *dataplane.Manager
-	routing *routing.Manager
-	frr     *frr.Manager
-	ipsec   *ipsec.Manager
-	radvd   *radvd.Manager
-	dhcp    *dhcp.Manager
+	opts         Options
+	store        *configstore.Store
+	dp           *dataplane.Manager
+	routing      *routing.Manager
+	frr          *frr.Manager
+	ipsec        *ipsec.Manager
+	radvd        *radvd.Manager
+	dhcp         *dhcp.Manager
+	dhcpServer   *dhcpserver.Manager
+	feeds        *feeds.Manager
+	rpm          *rpm.Manager
+	flowExporter *flowexport.Exporter
+	flowCancel   context.CancelFunc
+	flowWg       sync.WaitGroup
 }
 
 // New creates a new Daemon.
@@ -84,6 +95,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.frr = frr.New()
 		d.ipsec = ipsec.New()
 		d.radvd = radvd.New()
+		d.dhcpServer = dhcpserver.New()
 	}
 
 	// Load eBPF programs (unless in config-only mode)
@@ -136,6 +148,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 			if cfg := d.store.ActiveConfig(); cfg != nil {
 				applySyslogConfig(er, cfg)
 			}
+
+			// Start NetFlow exporter if configured
+			if cfg := d.store.ActiveConfig(); cfg != nil {
+				d.startFlowExporter(ctx, cfg, er)
+			}
 		}
 	}
 
@@ -146,6 +163,23 @@ func (d *Daemon) Run(ctx context.Context) error {
 		if cfg := d.store.ActiveConfig(); cfg != nil {
 			d.startDHCPClients(ctx, cfg)
 		}
+	}
+
+	// Start dynamic address feeds if configured.
+	if cfg := d.store.ActiveConfig(); cfg != nil && len(cfg.Security.DynamicAddress.FeedServers) > 0 {
+		d.feeds = feeds.New(func() {
+			slog.Info("dynamic-address feed updated, recompiling dataplane")
+			if activeCfg := d.store.ActiveConfig(); activeCfg != nil {
+				d.applyConfig(activeCfg)
+			}
+		})
+		d.feeds.Apply(ctx, &cfg.Security.DynamicAddress)
+	}
+
+	// Start RPM probes if configured.
+	if cfg := d.store.ActiveConfig(); cfg != nil && cfg.Services.RPM != nil && len(cfg.Services.RPM.Probes) > 0 {
+		d.rpm = rpm.New()
+		d.rpm.Apply(ctx, cfg.Services.RPM)
 	}
 
 	// Start HTTP API server if configured.
@@ -217,10 +251,28 @@ func (d *Daemon) Run(ctx context.Context) error {
 	stop()
 	wg.Wait()
 
+	// Clean up flow exporter.
+	d.stopFlowExporter()
+
+	// Clean up dynamic address feeds.
+	if d.feeds != nil {
+		d.feeds.StopAll()
+	}
+
+	// Clean up RPM probes.
+	if d.rpm != nil {
+		d.rpm.StopAll()
+	}
+
 	// Clean up DHCP clients (releases leases, removes addresses).
 	if d.dhcp != nil {
 		d.dhcp.StopAll()
 		d.dhcp.Close()
+	}
+
+	// Clean up DHCP server.
+	if d.dhcpServer != nil {
+		d.dhcpServer.Clear()
 	}
 
 	// Clean up routing subsystems.
@@ -352,6 +404,13 @@ func (d *Daemon) applyConfig(cfg *config.Config) {
 			slog.Warn("failed to apply IPsec config", "err", err)
 		}
 	}
+
+	// 7. Apply DHCP server config (Kea)
+	if d.dhcpServer != nil && cfg.System.DHCPServer.DHCPLocalServer != nil {
+		if err := d.dhcpServer.Apply(&cfg.System.DHCPServer); err != nil {
+			slog.Warn("failed to apply DHCP server config", "err", err)
+		}
+	}
 }
 
 // startDHCPClients iterates the config and starts DHCP/DHCPv6 clients
@@ -443,6 +502,122 @@ func logFinalStats(dp *dataplane.Manager) {
 	}
 
 	slog.Info("final statistics", attrs...)
+}
+
+// startFlowExporter starts the NetFlow v9 exporter if configured.
+func (d *Daemon) startFlowExporter(ctx context.Context, cfg *config.Config, er *logging.EventReader) {
+	ec := flowexport.BuildExportConfig(&cfg.Services, &cfg.ForwardingOptions)
+	if ec == nil {
+		return
+	}
+
+	exp, err := flowexport.NewExporter(*ec)
+	if err != nil {
+		slog.Warn("failed to create flow exporter", "err", err)
+		return
+	}
+
+	flowCtx, cancel := context.WithCancel(ctx)
+	d.flowExporter = exp
+	d.flowCancel = cancel
+
+	// Register callback for session close events
+	er.AddCallback(func(rec logging.EventRecord, raw []byte) {
+		if rec.Type != "SESSION_CLOSE" {
+			return
+		}
+		sd := flowexport.SessionCloseData{
+			SrcPort:  parseSrcPort(rec.SrcAddr),
+			DstPort:  parseSrcPort(rec.DstAddr),
+			Protocol: parseProtocol(rec.Protocol),
+		}
+		sd.SrcIP, sd.DstIP, sd.IsIPv6 = parseAddrPair(rec.SrcAddr, rec.DstAddr)
+		exp.ExportSessionClose(rec, sd)
+	})
+
+	d.flowWg.Add(1)
+	go func() {
+		defer d.flowWg.Done()
+		exp.Run(flowCtx)
+	}()
+
+	slog.Info("NetFlow v9 exporter started",
+		"collectors", len(ec.Collectors),
+		"active_timeout", ec.FlowActiveTimeout,
+		"inactive_timeout", ec.FlowInactiveTimeout)
+}
+
+// stopFlowExporter stops the running flow exporter.
+func (d *Daemon) stopFlowExporter() {
+	if d.flowCancel != nil {
+		d.flowCancel()
+	}
+	d.flowWg.Wait()
+	if d.flowExporter != nil {
+		d.flowExporter.Close()
+		d.flowExporter = nil
+	}
+}
+
+// parseAddrPair parses "ip:port" or "[ip]:port" into net.IPs and IPv6 flag.
+func parseAddrPair(src, dst string) (srcIP, dstIP net.IP, isV6 bool) {
+	srcIP = parseHost(src)
+	dstIP = parseHost(dst)
+	isV6 = srcIP != nil && srcIP.To4() == nil
+	return
+}
+
+func parseHost(addr string) net.IP {
+	// Handle "[ipv6]:port" format
+	if len(addr) > 0 && addr[0] == '[' {
+		end := 0
+		for i, c := range addr {
+			if c == ']' {
+				end = i
+				break
+			}
+		}
+		if end > 1 {
+			return net.ParseIP(addr[1:end])
+		}
+	}
+	// Handle "ipv4:port" format
+	for i := len(addr) - 1; i >= 0; i-- {
+		if addr[i] == ':' {
+			return net.ParseIP(addr[:i])
+		}
+	}
+	return net.ParseIP(addr)
+}
+
+func parseSrcPort(addr string) uint16 {
+	// Find last colon
+	for i := len(addr) - 1; i >= 0; i-- {
+		if addr[i] == ':' {
+			var port uint16
+			for _, c := range addr[i+1:] {
+				if c >= '0' && c <= '9' {
+					port = port*10 + uint16(c-'0')
+				}
+			}
+			return port
+		}
+	}
+	return 0
+}
+
+func parseProtocol(proto string) uint8 {
+	switch proto {
+	case "TCP":
+		return 6
+	case "UDP":
+		return 17
+	case "ICMP":
+		return 1
+	case "ICMPv6":
+		return 58
+	}
+	return 0
 }
 
 // applySyslogConfig constructs syslog clients from the config and applies them

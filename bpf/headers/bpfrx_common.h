@@ -557,4 +557,16 @@ struct filter_rule {
 	__u32  routing_table;   /* VRF table ID (for FILTER_ACTION_ROUTE) */
 };
 
+/* ============================================================
+ * Global flow configuration (single-entry array map)
+ * ============================================================ */
+
+struct flow_config {
+	__u16 tcp_mss_ipsec;   /* TCP MSS clamp for IPsec VPN (0=disabled) */
+	__u16 tcp_mss_gre;     /* TCP MSS clamp for GRE tunnels (0=disabled) */
+	__u8  allow_dns_reply;
+	__u8  allow_embedded_icmp;
+	__u8  pad[2];
+};
+
 #endif /* __BPFRX_COMMON_H__ */

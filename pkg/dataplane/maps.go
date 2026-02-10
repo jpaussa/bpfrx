@@ -490,6 +490,24 @@ func (m *Manager) SetFlowTimeout(idx, seconds uint32) error {
 	return zm.Update(idx, seconds, ebpf.UpdateAny)
 }
 
+// FlowConfigValue mirrors struct flow_config in bpfrx_common.h.
+type FlowConfigValue struct {
+	TCPMSSIPsec      uint16
+	TCPMSSGre        uint16
+	AllowDNSReply    uint8
+	AllowEmbeddedICMP uint8
+	Pad              [2]uint8
+}
+
+// SetFlowConfig writes the global flow configuration (TCP MSS clamp, etc.).
+func (m *Manager) SetFlowConfig(cfg FlowConfigValue) error {
+	zm, ok := m.maps["flow_config_map"]
+	if !ok {
+		return fmt.Errorf("flow_config_map map not found")
+	}
+	return zm.Update(uint32(0), cfg, ebpf.UpdateAny)
+}
+
 // SetStaticNATEntryV4 writes a static NAT v4 entry.
 func (m *Manager) SetStaticNATEntryV4(ip uint32, direction uint8, translated uint32) error {
 	zm, ok := m.maps["static_nat_v4"]

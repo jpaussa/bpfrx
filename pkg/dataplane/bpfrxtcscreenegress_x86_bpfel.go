@@ -119,6 +119,15 @@ type bpfrxTcScreenEgressFloodState struct {
 	WindowStart uint64
 }
 
+type bpfrxTcScreenEgressFlowConfig struct {
+	_                 structs.HostLayout
+	TcpMssIpsec       uint16
+	TcpMssGre         uint16
+	AllowDnsReply     uint8
+	AllowEmbeddedIcmp uint8
+	Pad               [2]uint8
+}
+
 type bpfrxTcScreenEgressIfaceCounterValue struct {
 	_         structs.HostLayout
 	RxPackets uint64
@@ -472,6 +481,7 @@ type bpfrxTcScreenEgressMapSpecs struct {
 	FilterConfigs     *ebpf.MapSpec `ebpf:"filter_configs"`
 	FilterRules       *ebpf.MapSpec `ebpf:"filter_rules"`
 	FloodCounters     *ebpf.MapSpec `ebpf:"flood_counters"`
+	FlowConfigMap     *ebpf.MapSpec `ebpf:"flow_config_map"`
 	FlowTimeouts      *ebpf.MapSpec `ebpf:"flow_timeouts"`
 	GlobalCounters    *ebpf.MapSpec `ebpf:"global_counters"`
 	IfaceFilterMap    *ebpf.MapSpec `ebpf:"iface_filter_map"`
@@ -537,6 +547,7 @@ type bpfrxTcScreenEgressMaps struct {
 	FilterConfigs     *ebpf.Map `ebpf:"filter_configs"`
 	FilterRules       *ebpf.Map `ebpf:"filter_rules"`
 	FloodCounters     *ebpf.Map `ebpf:"flood_counters"`
+	FlowConfigMap     *ebpf.Map `ebpf:"flow_config_map"`
 	FlowTimeouts      *ebpf.Map `ebpf:"flow_timeouts"`
 	GlobalCounters    *ebpf.Map `ebpf:"global_counters"`
 	IfaceFilterMap    *ebpf.Map `ebpf:"iface_filter_map"`
@@ -578,6 +589,7 @@ func (m *bpfrxTcScreenEgressMaps) Close() error {
 		m.FilterConfigs,
 		m.FilterRules,
 		m.FloodCounters,
+		m.FlowConfigMap,
 		m.FlowTimeouts,
 		m.GlobalCounters,
 		m.IfaceFilterMap,

@@ -108,6 +108,11 @@ func (m *Manager) Compile(cfg *config.Config) (*CompileResult, error) {
 		return nil, fmt.Errorf("compile flow timeouts: %w", err)
 	}
 
+	// Phase 9b: Compile flow config (TCP MSS clamp, etc.)
+	if err := m.compileFlowConfig(cfg); err != nil {
+		return nil, fmt.Errorf("compile flow config: %w", err)
+	}
+
 	// Phase 10: Compile firewall filters
 	if err := m.compileFirewallFilters(cfg, result); err != nil {
 		return nil, fmt.Errorf("compile firewall filters: %w", err)
@@ -1365,6 +1370,34 @@ func (m *Manager) compileFlowTimeouts(cfg *config.Config) error {
 				"icmp", timeouts[FlowTimeoutICMP])
 			break
 		}
+	}
+
+	return nil
+}
+
+func (m *Manager) compileFlowConfig(cfg *config.Config) error {
+	flow := &cfg.Security.Flow
+	fc := FlowConfigValue{
+		TCPMSSIPsec: uint16(flow.TCPMSSIPsecVPN),
+		TCPMSSGre:   uint16(flow.TCPMSSGre),
+	}
+	if flow.AllowDNSReply {
+		fc.AllowDNSReply = 1
+	}
+	if flow.AllowEmbeddedICMP {
+		fc.AllowEmbeddedICMP = 1
+	}
+
+	if err := m.SetFlowConfig(fc); err != nil {
+		return err
+	}
+
+	if fc.TCPMSSIPsec > 0 || fc.TCPMSSGre > 0 {
+		slog.Info("flow config compiled",
+			"tcp_mss_ipsec", fc.TCPMSSIPsec,
+			"tcp_mss_gre", fc.TCPMSSGre,
+			"allow_dns_reply", fc.AllowDNSReply,
+			"allow_embedded_icmp", fc.AllowEmbeddedICMP)
 	}
 
 	return nil

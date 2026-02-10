@@ -2,13 +2,102 @@ package config
 
 // Config is the top-level typed configuration, compiled from the AST.
 type Config struct {
-	Security         SecurityConfig
-	Interfaces       InterfacesConfig
-	Applications     ApplicationsConfig
-	RoutingOptions   RoutingOptionsConfig
-	Protocols        ProtocolsConfig
-	RoutingInstances []*RoutingInstanceConfig
-	Firewall         FirewallConfig
+	Security          SecurityConfig
+	Interfaces        InterfacesConfig
+	Applications      ApplicationsConfig
+	RoutingOptions    RoutingOptionsConfig
+	Protocols         ProtocolsConfig
+	RoutingInstances  []*RoutingInstanceConfig
+	Firewall          FirewallConfig
+	Services          ServicesConfig
+	ForwardingOptions ForwardingOptionsConfig
+	System            SystemConfig
+}
+
+// SystemConfig holds system-level configuration.
+type SystemConfig struct {
+	DHCPServer DHCPServerConfig
+}
+
+// ServicesConfig holds service configuration (flow-monitoring, RPM, etc.).
+type ServicesConfig struct {
+	FlowMonitoring *FlowMonitoringConfig
+	RPM            *RPMConfig
+}
+
+// RPMConfig holds RPM (Real-time Performance Monitoring) configuration.
+type RPMConfig struct {
+	Probes map[string]*RPMProbe
+}
+
+// RPMProbe defines a single RPM probe for health monitoring.
+type RPMProbe struct {
+	Name            string
+	Tests           map[string]*RPMTest
+}
+
+// RPMTest defines a test within an RPM probe.
+type RPMTest struct {
+	Name             string
+	ProbeType        string // "http-get", "icmp-ping", "tcp-ping"
+	Target           string // target IP or hostname
+	SourceAddress    string
+	RoutingInstance  string
+	ProbeInterval    int // seconds (0 = default 5)
+	ProbeCount       int // number of probes per test (0 = default 1)
+	TestInterval     int // seconds (0 = default 60)
+	ThresholdSuccessive int // successive failures before probe-fail (0 = default 3)
+	DestPort         int // for tcp-ping
+}
+
+// FlowMonitoringConfig holds flow monitoring configuration.
+type FlowMonitoringConfig struct {
+	Version9 *NetFlowV9Config
+}
+
+// NetFlowV9Config holds NetFlow v9 template definitions.
+type NetFlowV9Config struct {
+	Templates map[string]*NetFlowV9Template
+}
+
+// NetFlowV9Template defines a NetFlow v9 export template.
+type NetFlowV9Template struct {
+	Name                string
+	FlowActiveTimeout   int // seconds (0 = default 60)
+	FlowInactiveTimeout int // seconds (0 = default 15)
+	TemplateRefreshRate  int // seconds (0 = default 60)
+}
+
+// ForwardingOptionsConfig holds forwarding/sampling configuration.
+type ForwardingOptionsConfig struct {
+	Sampling *SamplingConfig
+}
+
+// SamplingConfig holds sampling instance definitions.
+type SamplingConfig struct {
+	Instances map[string]*SamplingInstance
+}
+
+// SamplingInstance defines a traffic sampling instance.
+type SamplingInstance struct {
+	Name       string
+	InputRate  int // 1-in-N sampling rate (0 = sample all)
+	FamilyInet  *SamplingFamily
+	FamilyInet6 *SamplingFamily
+}
+
+// SamplingFamily holds per-AF sampling output configuration.
+type SamplingFamily struct {
+	FlowServers   []*FlowServer
+	SourceAddress string
+	InlineJflow   bool
+}
+
+// FlowServer defines a flow export collector destination.
+type FlowServer struct {
+	Address          string
+	Port             int
+	Version9Template string
 }
 
 // FirewallConfig holds firewall filter definitions.
@@ -38,17 +127,62 @@ type FirewallFilterTerm struct {
 	Log              bool
 }
 
+// DHCPServerConfig holds DHCP server configuration.
+type DHCPServerConfig struct {
+	DHCPLocalServer *DHCPLocalServerConfig
+}
+
+// DHCPLocalServerConfig holds per-group DHCP server settings.
+type DHCPLocalServerConfig struct {
+	Groups map[string]*DHCPServerGroup
+}
+
+// DHCPServerGroup defines a DHCP server group.
+type DHCPServerGroup struct {
+	Name       string
+	Interfaces []string
+	Pools      []*DHCPPool
+}
+
+// DHCPPool defines an address pool for DHCP leases.
+type DHCPPool struct {
+	Name       string
+	RangeLow   string
+	RangeHigh  string
+	Subnet     string // pool network (e.g. "10.0.1.0/24")
+	Router     string
+	DNSServers []string
+	LeaseTime  int // seconds (0 = default 86400)
+	Domain     string
+}
+
+// DynamicAddressConfig defines a dynamic address feed server.
+type DynamicAddressConfig struct {
+	FeedServers map[string]*FeedServer
+}
+
+// FeedServer defines a remote address feed source.
+type FeedServer struct {
+	Name           string
+	URL            string
+	UpdateInterval int // seconds (0 = default 3600)
+	HoldInterval   int // seconds (0 = default 7200)
+	FeedName       string
+}
+
 // SecurityConfig holds all security-related configuration.
 type SecurityConfig struct {
-	Zones         map[string]*ZoneConfig       // keyed by zone name
-	Policies      []*ZonePairPolicies          // ordered list of zone-pair policy sets
-	DefaultPolicy PolicyAction                 // global fallback policy (permit-all or deny-all)
-	NAT           NATConfig
-	Screen        map[string]*ScreenProfile    // keyed by profile name
-	AddressBook   *AddressBook
-	Log           LogConfig
-	Flow          FlowConfig
-	IPsec         IPsecConfig
+	Zones          map[string]*ZoneConfig       // keyed by zone name
+	Policies       []*ZonePairPolicies          // ordered list of zone-pair policy sets
+	DefaultPolicy  PolicyAction                 // global fallback policy (permit-all or deny-all)
+	NAT            NATConfig
+	Screen         map[string]*ScreenProfile    // keyed by profile name
+	AddressBook    *AddressBook
+	Log            LogConfig
+	Flow           FlowConfig
+	ALG            ALGConfig
+	IPsec          IPsecConfig
+	DynamicAddress DynamicAddressConfig
 }
 
 // FlowConfig holds flow/session timeout configuration.
@@ -56,6 +190,18 @@ type FlowConfig struct {
 	TCPSession         *TCPSessionConfig
 	UDPSessionTimeout  int // seconds, 0 = default (60s)
 	ICMPSessionTimeout int // seconds, 0 = default (30s)
+	TCPMSSIPsecVPN     int // TCP MSS clamp for IPsec VPN traffic (0 = disabled)
+	TCPMSSGre          int // TCP MSS clamp for GRE tunnel traffic (0 = disabled)
+	AllowDNSReply      bool
+	AllowEmbeddedICMP  bool
+}
+
+// ALGConfig holds ALG (Application Layer Gateway) disable flags.
+type ALGConfig struct {
+	DNSDisable  bool
+	FTPDisable  bool
+	SIPDisable  bool
+	TFTPDisable bool
 }
 
 // TCPSessionConfig holds TCP session timeout configuration.

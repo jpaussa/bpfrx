@@ -51,6 +51,18 @@ func CompileConfig(tree *ConfigTree) (*Config, error) {
 			if err := compileFirewall(node, &cfg.Firewall); err != nil {
 				return nil, fmt.Errorf("firewall: %w", err)
 			}
+		case "services":
+			if err := compileServices(node, &cfg.Services); err != nil {
+				return nil, fmt.Errorf("services: %w", err)
+			}
+		case "forwarding-options":
+			if err := compileForwardingOptions(node, &cfg.ForwardingOptions); err != nil {
+				return nil, fmt.Errorf("forwarding-options: %w", err)
+			}
+		case "system":
+			if err := compileSystem(node, &cfg.System); err != nil {
+				return nil, fmt.Errorf("system: %w", err)
+			}
 		}
 	}
 
@@ -91,6 +103,14 @@ func compileSecurity(node *Node, sec *SecurityConfig) error {
 		case "ipsec":
 			if err := compileIPsec(child, sec); err != nil {
 				return fmt.Errorf("ipsec: %w", err)
+			}
+		case "dynamic-address":
+			if err := compileDynamicAddress(child, sec); err != nil {
+				return fmt.Errorf("dynamic-address: %w", err)
+			}
+		case "alg":
+			if err := compileALG(child, sec); err != nil {
+				return fmt.Errorf("alg: %w", err)
 			}
 		}
 	}
@@ -926,6 +946,70 @@ func compileFlow(node *Node, sec *SecurityConfig) error {
 		}
 	}
 
+	// TCP MSS clamping
+	mssNode := node.FindChild("tcp-mss")
+	if mssNode != nil {
+		for _, opt := range mssNode.Children {
+			switch opt.Name() {
+			case "ipsec-vpn":
+				if len(opt.Keys) >= 2 {
+					if v, err := strconv.Atoi(opt.Keys[1]); err == nil {
+						sec.Flow.TCPMSSIPsecVPN = v
+					}
+				}
+			case "gre-in", "gre-out":
+				if len(opt.Keys) >= 2 {
+					if v, err := strconv.Atoi(opt.Keys[1]); err == nil {
+						sec.Flow.TCPMSSGre = v
+					}
+				}
+			case "all-tcp":
+				// Junos "all-tcp { mss VALUE }" variant
+				mssChild := opt.FindChild("mss")
+				if mssChild != nil && len(mssChild.Keys) >= 2 {
+					if v, err := strconv.Atoi(mssChild.Keys[1]); err == nil {
+						sec.Flow.TCPMSSIPsecVPN = v
+						sec.Flow.TCPMSSGre = v
+					}
+				}
+			}
+		}
+	}
+
+	// allow-dns-reply
+	if node.FindChild("allow-dns-reply") != nil {
+		sec.Flow.AllowDNSReply = true
+	}
+
+	// allow-embedded-icmp
+	if node.FindChild("allow-embedded-icmp") != nil {
+		sec.Flow.AllowEmbeddedICMP = true
+	}
+
+	return nil
+}
+
+func compileALG(node *Node, sec *SecurityConfig) error {
+	if dnsNode := node.FindChild("dns"); dnsNode != nil {
+		if dnsNode.FindChild("disable") != nil {
+			sec.ALG.DNSDisable = true
+		}
+	}
+	if ftpNode := node.FindChild("ftp"); ftpNode != nil {
+		if ftpNode.FindChild("disable") != nil {
+			sec.ALG.FTPDisable = true
+		}
+	}
+	if sipNode := node.FindChild("sip"); sipNode != nil {
+		if sipNode.FindChild("disable") != nil {
+			sec.ALG.SIPDisable = true
+		}
+	}
+	if tftpNode := node.FindChild("tftp"); tftpNode != nil {
+		if tftpNode.FindChild("disable") != nil {
+			sec.ALG.TFTPDisable = true
+		}
+	}
 	return nil
 }
 
@@ -1509,4 +1593,371 @@ func compileFilterThen(node *Node, term *FirewallFilterTerm) {
 			}
 		}
 	}
+}
+
+func compileSystem(node *Node, sys *SystemConfig) error {
+	svcNode := node.FindChild("services")
+	if svcNode == nil {
+		return nil
+	}
+
+	dhcpNode := svcNode.FindChild("dhcp-local-server")
+	if dhcpNode == nil {
+		return nil
+	}
+
+	return compileDHCPLocalServer(dhcpNode, &sys.DHCPServer)
+}
+
+func compileDHCPLocalServer(node *Node, dhcp *DHCPServerConfig) error {
+	dhcp.DHCPLocalServer = &DHCPLocalServerConfig{
+		Groups: make(map[string]*DHCPServerGroup),
+	}
+
+	for _, groupNode := range node.FindChildren("group") {
+		if len(groupNode.Keys) < 2 {
+			continue
+		}
+		group := &DHCPServerGroup{Name: groupNode.Keys[1]}
+
+		for _, prop := range groupNode.Children {
+			switch prop.Name() {
+			case "interface":
+				if len(prop.Keys) >= 2 {
+					group.Interfaces = append(group.Interfaces, prop.Keys[1])
+				}
+			case "pool":
+				if len(prop.Keys) >= 2 {
+					pool := &DHCPPool{Name: prop.Keys[1]}
+					for _, pp := range prop.Children {
+						switch pp.Name() {
+						case "address-range":
+							// address-range low X high Y
+							if len(pp.Keys) >= 5 && pp.Keys[1] == "low" && pp.Keys[3] == "high" {
+								pool.RangeLow = pp.Keys[2]
+								pool.RangeHigh = pp.Keys[4]
+							}
+						case "subnet":
+							if len(pp.Keys) >= 2 {
+								pool.Subnet = pp.Keys[1]
+							}
+						case "router":
+							if len(pp.Keys) >= 2 {
+								pool.Router = pp.Keys[1]
+							}
+						case "dns-server":
+							if len(pp.Keys) >= 2 {
+								pool.DNSServers = append(pool.DNSServers, pp.Keys[1])
+							}
+						case "lease-time":
+							if len(pp.Keys) >= 2 {
+								if v, err := strconv.Atoi(pp.Keys[1]); err == nil {
+									pool.LeaseTime = v
+								}
+							}
+						case "domain-name":
+							if len(pp.Keys) >= 2 {
+								pool.Domain = pp.Keys[1]
+							}
+						}
+					}
+					group.Pools = append(group.Pools, pool)
+				}
+			}
+		}
+
+		dhcp.DHCPLocalServer.Groups[group.Name] = group
+	}
+	return nil
+}
+
+func compileDynamicAddress(node *Node, sec *SecurityConfig) error {
+	if sec.DynamicAddress.FeedServers == nil {
+		sec.DynamicAddress.FeedServers = make(map[string]*FeedServer)
+	}
+
+	for _, fsNode := range node.FindChildren("feed-server") {
+		if len(fsNode.Keys) < 2 {
+			continue
+		}
+		fs := &FeedServer{Name: fsNode.Keys[1]}
+
+		for _, prop := range fsNode.Children {
+			switch prop.Name() {
+			case "url":
+				if len(prop.Keys) >= 2 {
+					fs.URL = prop.Keys[1]
+				}
+			case "update-interval":
+				if len(prop.Keys) >= 2 {
+					if v, err := strconv.Atoi(prop.Keys[1]); err == nil {
+						fs.UpdateInterval = v
+					}
+				}
+			case "hold-interval":
+				if len(prop.Keys) >= 2 {
+					if v, err := strconv.Atoi(prop.Keys[1]); err == nil {
+						fs.HoldInterval = v
+					}
+				}
+			case "feed-name":
+				if len(prop.Keys) >= 2 {
+					fs.FeedName = prop.Keys[1]
+				}
+			}
+		}
+
+		sec.DynamicAddress.FeedServers[fs.Name] = fs
+	}
+	return nil
+}
+
+func compileServices(node *Node, svc *ServicesConfig) error {
+	if fmNode := node.FindChild("flow-monitoring"); fmNode != nil {
+		if err := compileFlowMonitoring(fmNode, svc); err != nil {
+			return err
+		}
+	}
+	if rpmNode := node.FindChild("rpm"); rpmNode != nil {
+		if err := compileRPM(rpmNode, svc); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func compileRPM(node *Node, svc *ServicesConfig) error {
+	rpmCfg := &RPMConfig{Probes: make(map[string]*RPMProbe)}
+
+	for _, probeNode := range node.FindChildren("probe") {
+		if len(probeNode.Keys) < 2 {
+			continue
+		}
+		probe := &RPMProbe{
+			Name:  probeNode.Keys[1],
+			Tests: make(map[string]*RPMTest),
+		}
+
+		for _, testNode := range probeNode.FindChildren("test") {
+			if len(testNode.Keys) < 2 {
+				continue
+			}
+			test := &RPMTest{Name: testNode.Keys[1]}
+
+			for _, prop := range testNode.Children {
+				switch prop.Name() {
+				case "probe-type":
+					if len(prop.Keys) >= 2 {
+						test.ProbeType = prop.Keys[1]
+					}
+				case "target":
+					if len(prop.Keys) >= 2 {
+						test.Target = prop.Keys[1]
+					}
+				case "source-address":
+					if len(prop.Keys) >= 2 {
+						test.SourceAddress = prop.Keys[1]
+					}
+				case "routing-instance":
+					if len(prop.Keys) >= 2 {
+						test.RoutingInstance = prop.Keys[1]
+					}
+				case "probe-interval":
+					if len(prop.Keys) >= 2 {
+						if v, err := strconv.Atoi(prop.Keys[1]); err == nil {
+							test.ProbeInterval = v
+						}
+					}
+				case "probe-count":
+					if len(prop.Keys) >= 2 {
+						if v, err := strconv.Atoi(prop.Keys[1]); err == nil {
+							test.ProbeCount = v
+						}
+					}
+				case "test-interval":
+					if len(prop.Keys) >= 2 {
+						if v, err := strconv.Atoi(prop.Keys[1]); err == nil {
+							test.TestInterval = v
+						}
+					}
+				case "thresholds":
+					for _, th := range prop.Children {
+						if th.Name() == "successive-loss" && len(th.Keys) >= 2 {
+							if v, err := strconv.Atoi(th.Keys[1]); err == nil {
+								test.ThresholdSuccessive = v
+							}
+						}
+					}
+				case "destination-port":
+					if len(prop.Keys) >= 2 {
+						if v, err := strconv.Atoi(prop.Keys[1]); err == nil {
+							test.DestPort = v
+						}
+					}
+				}
+			}
+
+			probe.Tests[test.Name] = test
+		}
+
+		rpmCfg.Probes[probe.Name] = probe
+	}
+
+	svc.RPM = rpmCfg
+	return nil
+}
+
+func compileFlowMonitoring(node *Node, svc *ServicesConfig) error {
+	v9Node := node.FindChild("version9")
+	if v9Node == nil {
+		return nil
+	}
+
+	v9cfg := &NetFlowV9Config{
+		Templates: make(map[string]*NetFlowV9Template),
+	}
+
+	for _, tmplNode := range v9Node.FindChildren("template") {
+		if len(tmplNode.Keys) < 2 {
+			continue
+		}
+		tmpl := &NetFlowV9Template{Name: tmplNode.Keys[1]}
+
+		for _, prop := range tmplNode.Children {
+			switch prop.Name() {
+			case "flow-active-timeout":
+				if len(prop.Keys) >= 2 {
+					if v, err := strconv.Atoi(prop.Keys[1]); err == nil {
+						tmpl.FlowActiveTimeout = v
+					}
+				}
+			case "flow-inactive-timeout":
+				if len(prop.Keys) >= 2 {
+					if v, err := strconv.Atoi(prop.Keys[1]); err == nil {
+						tmpl.FlowInactiveTimeout = v
+					}
+				}
+			case "template-refresh-rate":
+				// Two forms:
+				// "template-refresh-rate 60;" (flat) → prop.Keys = ["template-refresh-rate", "60"]
+				// "template-refresh-rate { seconds 60; }" (hierarchical)
+				if len(prop.Keys) >= 2 {
+					if v, err := strconv.Atoi(prop.Keys[1]); err == nil {
+						tmpl.TemplateRefreshRate = v
+					}
+				}
+				if secNode := prop.FindChild("seconds"); secNode != nil && len(secNode.Keys) >= 2 {
+					if v, err := strconv.Atoi(secNode.Keys[1]); err == nil {
+						tmpl.TemplateRefreshRate = v
+					}
+				}
+			}
+		}
+
+		v9cfg.Templates[tmpl.Name] = tmpl
+	}
+
+	svc.FlowMonitoring = &FlowMonitoringConfig{Version9: v9cfg}
+	return nil
+}
+
+func compileForwardingOptions(node *Node, fo *ForwardingOptionsConfig) error {
+	sampNode := node.FindChild("sampling")
+	if sampNode == nil {
+		return nil
+	}
+	return compileSampling(sampNode, fo)
+}
+
+func compileSampling(node *Node, fo *ForwardingOptionsConfig) error {
+	sc := &SamplingConfig{
+		Instances: make(map[string]*SamplingInstance),
+	}
+
+	for _, instNode := range node.FindChildren("instance") {
+		if len(instNode.Keys) < 2 {
+			continue
+		}
+		inst := &SamplingInstance{Name: instNode.Keys[1]}
+
+		inputNode := instNode.FindChild("input")
+		if inputNode != nil {
+			for _, prop := range inputNode.Children {
+				if prop.Name() == "rate" && len(prop.Keys) >= 2 {
+					if v, err := strconv.Atoi(prop.Keys[1]); err == nil {
+						inst.InputRate = v
+					}
+				}
+			}
+		}
+
+		for _, familyNode := range instNode.FindChildren("family") {
+			var afNodes []*Node
+			if len(familyNode.Keys) >= 2 {
+				afNodes = append(afNodes, familyNode)
+			} else {
+				afNodes = append(afNodes, familyNode.Children...)
+			}
+			for _, afNode := range afNodes {
+				afName := afNode.Keys[0]
+				if len(afNode.Keys) >= 2 {
+					afName = afNode.Keys[1]
+				}
+
+				sf := compileSamplingFamily(afNode)
+				switch afName {
+				case "inet":
+					inst.FamilyInet = sf
+				case "inet6":
+					inst.FamilyInet6 = sf
+				}
+			}
+		}
+
+		sc.Instances[inst.Name] = inst
+	}
+
+	fo.Sampling = sc
+	return nil
+}
+
+func compileSamplingFamily(node *Node) *SamplingFamily {
+	sf := &SamplingFamily{}
+
+	outputNode := node.FindChild("output")
+	if outputNode == nil {
+		return sf
+	}
+
+	for _, child := range outputNode.Children {
+		switch child.Name() {
+		case "flow-server":
+			if len(child.Keys) >= 2 {
+				fs := &FlowServer{Address: child.Keys[1]}
+				for _, prop := range child.Children {
+					switch prop.Name() {
+					case "port":
+						if len(prop.Keys) >= 2 {
+							if v, err := strconv.Atoi(prop.Keys[1]); err == nil {
+								fs.Port = v
+							}
+						}
+					case "version9-template":
+						if len(prop.Keys) >= 2 {
+							fs.Version9Template = prop.Keys[1]
+						}
+					case "source-address":
+						if len(prop.Keys) >= 2 {
+							sf.SourceAddress = prop.Keys[1]
+						}
+					}
+				}
+				sf.FlowServers = append(sf.FlowServers, fs)
+			}
+		case "inline-jflow":
+			sf.InlineJflow = true
+		}
+	}
+
+	return sf
 }

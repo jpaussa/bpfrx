@@ -79,13 +79,16 @@ var operationalTree = map[string]*completionNode{
 			"leases":            {desc: "Show DHCP leases"},
 			"client-identifier": {desc: "Show DHCPv6 DUID(s)"},
 		}},
+		"flow-monitoring": {desc: "Show flow monitoring/NetFlow configuration"},
 		"route": {desc: "Show routing table [instance <name>]", children: map[string]*completionNode{
 			"instance": {desc: "Show routes for a routing instance"},
 		}},
 		"security": {desc: "Show security information", children: map[string]*completionNode{
-			"zones":    {desc: "Show security zones"},
-			"policies": {desc: "Show security policies"},
-			"screen":   {desc: "Show screen/IDS profiles"},
+			"zones":           {desc: "Show security zones"},
+			"policies":        {desc: "Show security policies"},
+			"screen":          {desc: "Show screen/IDS profiles"},
+			"alg":             {desc: "Show ALG status"},
+			"dynamic-address": {desc: "Show dynamic address feeds"},
 			"flow": {desc: "Show flow information", children: map[string]*completionNode{
 				"session": {desc: "Show active sessions"},
 			}},
@@ -100,6 +103,11 @@ var operationalTree = map[string]*completionNode{
 			"statistics":   {desc: "Show global statistics"},
 			"ipsec": {desc: "Show IPsec status", children: map[string]*completionNode{
 				"security-associations": {desc: "Show IPsec SAs"},
+			}},
+		}},
+		"services": {desc: "Show services information", children: map[string]*completionNode{
+			"rpm": {desc: "Show RPM probe results", children: map[string]*completionNode{
+				"probe-results": {desc: "Show RPM probe results"},
 			}},
 		}},
 		"interfaces": {desc: "Show interface status", children: map[string]*completionNode{
@@ -487,8 +495,10 @@ func (c *CLI) handleShow(args []string) error {
 		fmt.Println("  configuration    Show active configuration")
 		fmt.Println("  dhcp             Show DHCP information")
 		fmt.Println("  firewall         Show firewall filters")
+		fmt.Println("  flow-monitoring  Show flow monitoring/NetFlow configuration")
 		fmt.Println("  route            Show routing table")
 		fmt.Println("  security         Show security information")
+		fmt.Println("  services         Show services information")
 		fmt.Println("  interfaces       Show interface status")
 		fmt.Println("  protocols        Show protocol information")
 		fmt.Println("  system           Show system information")
@@ -522,11 +532,17 @@ func (c *CLI) handleShow(args []string) error {
 	case "firewall":
 		return c.showFirewallFilters()
 
+	case "flow-monitoring":
+		return c.showFlowMonitoring()
+
 	case "route":
 		return c.handleShowRoute(args[1:])
 
 	case "security":
 		return c.handleShowSecurity(args[1:])
+
+	case "services":
+		return c.handleShowServices(args[1:])
 
 	case "interfaces":
 		return c.showInterfaces(args[1:])
@@ -554,7 +570,9 @@ func (c *CLI) handleShowSecurity(args []string) error {
 		fmt.Println("  nat destination  Show destination NAT information")
 		fmt.Println("  address-book     Show address book entries")
 		fmt.Println("  applications     Show application definitions")
+		fmt.Println("  alg              Show ALG (Application Layer Gateway) status")
 		fmt.Println("  ipsec            Show IPsec VPN status")
+		fmt.Println("  dynamic-address  Show dynamic address feeds")
 		fmt.Println("  log [N] [zone <name>] [protocol <proto>] [action <act>]")
 		fmt.Println("  statistics       Show global statistics")
 		return nil
@@ -677,6 +695,12 @@ func (c *CLI) handleShowSecurity(args []string) error {
 
 	case "ipsec":
 		return c.showIPsec(args[1:])
+
+	case "alg":
+		return c.showALG()
+
+	case "dynamic-address":
+		return c.showDynamicAddress()
 
 	default:
 		return fmt.Errorf("unknown show security target: %s", args[0])
@@ -1246,6 +1270,30 @@ func (c *CLI) showFlowTimeouts() error {
 		fmt.Printf("  %-30s %ds\n", "ICMP session timeout:", flow.ICMPSessionTimeout)
 	} else {
 		fmt.Println("  ICMP session timeout:          30s (default)")
+	}
+
+	// TCP MSS clamping
+	if flow.TCPMSSIPsecVPN > 0 || flow.TCPMSSGre > 0 {
+		fmt.Println()
+		fmt.Println("TCP MSS clamping:")
+		if flow.TCPMSSIPsecVPN > 0 {
+			fmt.Printf("  %-30s %d\n", "IPsec VPN MSS:", flow.TCPMSSIPsecVPN)
+		}
+		if flow.TCPMSSGre > 0 {
+			fmt.Printf("  %-30s %d\n", "GRE tunnel MSS:", flow.TCPMSSGre)
+		}
+	}
+
+	// Flow options
+	if flow.AllowDNSReply || flow.AllowEmbeddedICMP {
+		fmt.Println()
+		fmt.Println("Flow options:")
+		if flow.AllowDNSReply {
+			fmt.Println("  allow-dns-reply:               enabled")
+		}
+		if flow.AllowEmbeddedICMP {
+			fmt.Println("  allow-embedded-icmp:           enabled")
+		}
 	}
 
 	return nil
@@ -2694,5 +2742,204 @@ func (c *CLI) showFirewallFilters() error {
 
 	showFilters("inet", cfg.Firewall.FiltersInet)
 	showFilters("inet6", cfg.Firewall.FiltersInet6)
+	return nil
+}
+
+func (c *CLI) showFlowMonitoring() error {
+	cfg := c.store.ActiveConfig()
+	if cfg == nil {
+		fmt.Println("No active configuration")
+		return nil
+	}
+
+	hasConfig := false
+
+	if cfg.Services.FlowMonitoring != nil && cfg.Services.FlowMonitoring.Version9 != nil {
+		v9 := cfg.Services.FlowMonitoring.Version9
+		if len(v9.Templates) > 0 {
+			hasConfig = true
+			fmt.Println("Flow Monitoring Version 9 Templates:")
+			for name, tmpl := range v9.Templates {
+				activeTimeout := tmpl.FlowActiveTimeout
+				if activeTimeout == 0 {
+					activeTimeout = 60
+				}
+				inactiveTimeout := tmpl.FlowInactiveTimeout
+				if inactiveTimeout == 0 {
+					inactiveTimeout = 15
+				}
+				refreshRate := tmpl.TemplateRefreshRate
+				if refreshRate == 0 {
+					refreshRate = 60
+				}
+				fmt.Printf("  Template: %s\n", name)
+				fmt.Printf("    Flow active timeout:   %d seconds\n", activeTimeout)
+				fmt.Printf("    Flow inactive timeout: %d seconds\n", inactiveTimeout)
+				fmt.Printf("    Template refresh rate: %d seconds\n", refreshRate)
+			}
+			fmt.Println()
+		}
+	}
+
+	if cfg.ForwardingOptions.Sampling != nil {
+		for name, inst := range cfg.ForwardingOptions.Sampling.Instances {
+			hasConfig = true
+			fmt.Printf("Sampling Instance: %s\n", name)
+			if inst.InputRate > 0 {
+				fmt.Printf("  Input rate: 1/%d\n", inst.InputRate)
+			}
+			showSamplingFamily := func(af string, fam *config.SamplingFamily) {
+				if fam == nil {
+					return
+				}
+				fmt.Printf("  Family %s:\n", af)
+				if fam.InlineJflow {
+					fmt.Printf("    Inline jflow: enabled\n")
+				}
+				if fam.SourceAddress != "" {
+					fmt.Printf("    Source address: %s\n", fam.SourceAddress)
+				}
+				for _, fs := range fam.FlowServers {
+					portStr := ""
+					if fs.Port > 0 {
+						portStr = fmt.Sprintf(":%d", fs.Port)
+					}
+					tmplStr := ""
+					if fs.Version9Template != "" {
+						tmplStr = fmt.Sprintf(" (template: %s)", fs.Version9Template)
+					}
+					fmt.Printf("    Collector: %s%s%s\n", fs.Address, portStr, tmplStr)
+				}
+			}
+			showSamplingFamily("inet", inst.FamilyInet)
+			showSamplingFamily("inet6", inst.FamilyInet6)
+			fmt.Println()
+		}
+	}
+
+	if !hasConfig {
+		fmt.Println("No flow monitoring configured")
+	}
+
+	return nil
+}
+
+func (c *CLI) showDynamicAddress() error {
+	cfg := c.store.ActiveConfig()
+	if cfg == nil {
+		fmt.Println("No active configuration")
+		return nil
+	}
+
+	if len(cfg.Security.DynamicAddress.FeedServers) == 0 {
+		fmt.Println("No dynamic address feeds configured")
+		return nil
+	}
+
+	fmt.Println("Dynamic Address Feed Servers:")
+	for name, fs := range cfg.Security.DynamicAddress.FeedServers {
+		updateInt := fs.UpdateInterval
+		if updateInt == 0 {
+			updateInt = 3600
+		}
+		holdInt := fs.HoldInterval
+		if holdInt == 0 {
+			holdInt = 7200
+		}
+		fmt.Printf("  Feed Server: %s\n", name)
+		if fs.URL != "" {
+			fmt.Printf("    URL: %s\n", fs.URL)
+		}
+		if fs.FeedName != "" {
+			fmt.Printf("    Feed name: %s\n", fs.FeedName)
+		}
+		fmt.Printf("    Update interval: %d seconds\n", updateInt)
+		fmt.Printf("    Hold interval:   %d seconds\n", holdInt)
+	}
+
+	return nil
+}
+
+func (c *CLI) showALG() error {
+	cfg := c.store.ActiveConfig()
+	if cfg == nil {
+		fmt.Println("No active configuration")
+		return nil
+	}
+
+	alg := &cfg.Security.ALG
+	fmt.Println("ALG (Application Layer Gateway) status:")
+
+	printALG := func(name string, disabled bool) {
+		if disabled {
+			fmt.Printf("  %-10s disabled\n", name+":")
+		} else {
+			fmt.Printf("  %-10s enabled\n", name+":")
+		}
+	}
+
+	printALG("DNS", alg.DNSDisable)
+	printALG("FTP", alg.FTPDisable)
+	printALG("SIP", alg.SIPDisable)
+	printALG("TFTP", alg.TFTPDisable)
+
+	return nil
+}
+
+func (c *CLI) handleShowServices(args []string) error {
+	if len(args) == 0 {
+		fmt.Println("show services:")
+		fmt.Println("  rpm    Show RPM probe information")
+		return nil
+	}
+	switch args[0] {
+	case "rpm":
+		rest := args[1:]
+		if len(rest) > 0 && rest[0] == "probe-results" {
+			return c.showRPMProbeResults()
+		}
+		return c.showRPMProbeResults()
+	default:
+		return fmt.Errorf("unknown services target: %s", args[0])
+	}
+}
+
+func (c *CLI) showRPMProbeResults() error {
+	cfg := c.store.ActiveConfig()
+	if cfg == nil || cfg.Services.RPM == nil || len(cfg.Services.RPM.Probes) == 0 {
+		fmt.Println("No RPM probes configured")
+		return nil
+	}
+
+	fmt.Println("RPM Probe Results:")
+	for probeName, probe := range cfg.Services.RPM.Probes {
+		for testName, test := range probe.Tests {
+			probeInt := test.ProbeInterval
+			if probeInt == 0 {
+				probeInt = 5
+			}
+			testInt := test.TestInterval
+			if testInt == 0 {
+				testInt = 60
+			}
+			thresh := test.ThresholdSuccessive
+			if thresh == 0 {
+				thresh = 3
+			}
+			fmt.Printf("  Probe: %s, Test: %s\n", probeName, testName)
+			fmt.Printf("    Type: %s, Target: %s\n", test.ProbeType, test.Target)
+			if test.SourceAddress != "" {
+				fmt.Printf("    Source: %s\n", test.SourceAddress)
+			}
+			if test.RoutingInstance != "" {
+				fmt.Printf("    Routing instance: %s\n", test.RoutingInstance)
+			}
+			fmt.Printf("    Probe interval: %ds, Test interval: %ds\n", probeInt, testInt)
+			fmt.Printf("    Threshold successive-loss: %d\n", thresh)
+			if test.DestPort > 0 {
+				fmt.Printf("    Destination port: %d\n", test.DestPort)
+			}
+		}
+	}
 	return nil
 }

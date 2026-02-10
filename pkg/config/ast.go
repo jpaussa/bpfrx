@@ -217,13 +217,25 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 			"stream": {args: 1, valueHint: ValueHintStreamName, children: nil},
 		}},
 		"flow": {children: map[string]*schemaNode{
-			"tcp-session":  {children: nil},
-			"udp-session":  {children: nil},
-			"icmp-session": {children: nil},
+			"tcp-session":        {children: nil},
+			"udp-session":        {children: nil},
+			"icmp-session":       {children: nil},
+			"tcp-mss":            {children: nil},
+			"allow-dns-reply":    {children: nil},
+			"allow-embedded-icmp": {children: nil},
+		}},
+		"alg": {children: map[string]*schemaNode{
+			"dns":  {children: nil},
+			"ftp":  {children: nil},
+			"sip":  {children: nil},
+			"tftp": {children: nil},
 		}},
 		"ipsec": {children: map[string]*schemaNode{
 			"proposal": {args: 1, children: nil},
 			"vpn":      {args: 1, children: nil},
+		}},
+		"dynamic-address": {children: map[string]*schemaNode{
+			"feed-server": {args: 1, children: nil},
 		}},
 	}},
 	"interfaces": {wildcard: &schemaNode{valueHint: ValueHintInterfaceName, children: map[string]*schemaNode{
@@ -283,6 +295,52 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 					"term": {args: 1, children: map[string]*schemaNode{
 						"from": {children: nil},
 						"then": {children: nil},
+					}},
+				}},
+			}},
+		}},
+	}},
+	"system": {children: map[string]*schemaNode{
+		"services": {children: map[string]*schemaNode{
+			"dhcp-local-server": {children: map[string]*schemaNode{
+				"group": {args: 1, children: map[string]*schemaNode{
+					"pool": {args: 1, children: nil},
+				}},
+			}},
+		}},
+	}},
+	"services": {children: map[string]*schemaNode{
+		"rpm": {children: map[string]*schemaNode{
+			"probe": {args: 1, children: map[string]*schemaNode{
+				"test": {args: 1, children: nil},
+			}},
+		}},
+		"flow-monitoring": {children: map[string]*schemaNode{
+			"version9": {children: map[string]*schemaNode{
+				"template": {args: 1, children: map[string]*schemaNode{
+					"template-refresh-rate": {children: map[string]*schemaNode{
+						"seconds": {args: 1, children: nil},
+					}},
+				}},
+			}},
+		}},
+	}},
+	"forwarding-options": {children: map[string]*schemaNode{
+		"sampling": {children: map[string]*schemaNode{
+			"instance": {args: 1, children: map[string]*schemaNode{
+				"input": {children: nil},
+				"family": {children: map[string]*schemaNode{
+					"inet": {children: map[string]*schemaNode{
+						"output": {children: map[string]*schemaNode{
+							"flow-server": {args: 1, children: nil},
+							"inline-jflow": {children: nil},
+						}},
+					}},
+					"inet6": {children: map[string]*schemaNode{
+						"output": {children: map[string]*schemaNode{
+							"flow-server": {args: 1, children: nil},
+							"inline-jflow": {children: nil},
+						}},
 					}},
 				}},
 			}},

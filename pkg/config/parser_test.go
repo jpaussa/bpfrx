@@ -1457,6 +1457,462 @@ routing-instances {
 	}
 }
 
+func TestFlowMonitoringConfig(t *testing.T) {
+	// Test hierarchical syntax
+	input := `services {
+    flow-monitoring {
+        version9 {
+            template v9-tmpl {
+                flow-active-timeout 60;
+                flow-inactive-timeout 15;
+                template-refresh-rate {
+                    seconds 30;
+                }
+            }
+        }
+    }
+}
+forwarding-options {
+    sampling {
+        instance sample-1 {
+            input {
+                rate 1;
+            }
+            family inet {
+                output {
+                    flow-server 192.168.99.104 {
+                        port 4739;
+                        version9-template v9-tmpl;
+                        source-address 192.168.99.1;
+                    }
+                    inline-jflow;
+                }
+            }
+            family inet6 {
+                output {
+                    flow-server 192.168.99.104 {
+                        port 4739;
+                        version9-template v9-tmpl;
+                    }
+                    inline-jflow;
+                }
+            }
+        }
+    }
+}
+`
+	parser := NewParser(input)
+	tree, errs := parser.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	// Verify services/flow-monitoring
+	if cfg.Services.FlowMonitoring == nil {
+		t.Fatal("expected FlowMonitoring to be non-nil")
+	}
+	v9 := cfg.Services.FlowMonitoring.Version9
+	if v9 == nil {
+		t.Fatal("expected Version9 to be non-nil")
+	}
+	if len(v9.Templates) != 1 {
+		t.Fatalf("expected 1 template, got %d", len(v9.Templates))
+	}
+	tmpl := v9.Templates["v9-tmpl"]
+	if tmpl == nil {
+		t.Fatal("expected template v9-tmpl")
+	}
+	if tmpl.FlowActiveTimeout != 60 {
+		t.Errorf("active timeout: got %d, want 60", tmpl.FlowActiveTimeout)
+	}
+	if tmpl.FlowInactiveTimeout != 15 {
+		t.Errorf("inactive timeout: got %d, want 15", tmpl.FlowInactiveTimeout)
+	}
+	if tmpl.TemplateRefreshRate != 30 {
+		t.Errorf("refresh rate: got %d, want 30", tmpl.TemplateRefreshRate)
+	}
+
+	// Verify forwarding-options/sampling
+	if cfg.ForwardingOptions.Sampling == nil {
+		t.Fatal("expected Sampling to be non-nil")
+	}
+	if len(cfg.ForwardingOptions.Sampling.Instances) != 1 {
+		t.Fatalf("expected 1 instance, got %d", len(cfg.ForwardingOptions.Sampling.Instances))
+	}
+	inst := cfg.ForwardingOptions.Sampling.Instances["sample-1"]
+	if inst == nil {
+		t.Fatal("expected instance sample-1")
+	}
+	if inst.InputRate != 1 {
+		t.Errorf("input rate: got %d, want 1", inst.InputRate)
+	}
+
+	// Family inet
+	if inst.FamilyInet == nil {
+		t.Fatal("expected FamilyInet")
+	}
+	if !inst.FamilyInet.InlineJflow {
+		t.Error("expected inline-jflow for inet")
+	}
+	if inst.FamilyInet.SourceAddress != "192.168.99.1" {
+		t.Errorf("source-address: got %q, want 192.168.99.1", inst.FamilyInet.SourceAddress)
+	}
+	if len(inst.FamilyInet.FlowServers) != 1 {
+		t.Fatalf("expected 1 flow server for inet, got %d", len(inst.FamilyInet.FlowServers))
+	}
+	fs := inst.FamilyInet.FlowServers[0]
+	if fs.Address != "192.168.99.104" {
+		t.Errorf("flow-server address: got %q", fs.Address)
+	}
+	if fs.Port != 4739 {
+		t.Errorf("flow-server port: got %d", fs.Port)
+	}
+	if fs.Version9Template != "v9-tmpl" {
+		t.Errorf("flow-server template: got %q", fs.Version9Template)
+	}
+
+	// Family inet6
+	if inst.FamilyInet6 == nil {
+		t.Fatal("expected FamilyInet6")
+	}
+	if !inst.FamilyInet6.InlineJflow {
+		t.Error("expected inline-jflow for inet6")
+	}
+	if len(inst.FamilyInet6.FlowServers) != 1 {
+		t.Fatalf("expected 1 flow server for inet6, got %d", len(inst.FamilyInet6.FlowServers))
+	}
+
+	// Test set-command syntax
+	tree2 := &ConfigTree{}
+	setCommands := []string{
+		"set services flow-monitoring version9 template v9-set flow-active-timeout 120",
+		"set services flow-monitoring version9 template v9-set flow-inactive-timeout 30",
+		"set services flow-monitoring version9 template v9-set template-refresh-rate seconds 45",
+		"set forwarding-options sampling instance jf-inst input rate 100",
+		"set forwarding-options sampling instance jf-inst family inet output flow-server 10.0.0.1 port 2055",
+		"set forwarding-options sampling instance jf-inst family inet output flow-server 10.0.0.1 version9-template v9-set",
+		"set forwarding-options sampling instance jf-inst family inet output inline-jflow",
+	}
+	for _, cmd := range setCommands {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree2.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%q): %v", cmd, err)
+		}
+	}
+
+	cfg2, err := CompileConfig(tree2)
+	if err != nil {
+		t.Fatalf("set-command compile error: %v", err)
+	}
+
+	if cfg2.Services.FlowMonitoring == nil {
+		t.Fatal("set syntax: expected FlowMonitoring")
+	}
+	tmpl2 := cfg2.Services.FlowMonitoring.Version9.Templates["v9-set"]
+	if tmpl2 == nil {
+		t.Fatal("set syntax: expected template v9-set")
+	}
+	if tmpl2.FlowActiveTimeout != 120 {
+		t.Errorf("set syntax active timeout: got %d, want 120", tmpl2.FlowActiveTimeout)
+	}
+	if tmpl2.FlowInactiveTimeout != 30 {
+		t.Errorf("set syntax inactive timeout: got %d, want 30", tmpl2.FlowInactiveTimeout)
+	}
+	if tmpl2.TemplateRefreshRate != 45 {
+		t.Errorf("set syntax refresh rate: got %d, want 45", tmpl2.TemplateRefreshRate)
+	}
+
+	inst2 := cfg2.ForwardingOptions.Sampling.Instances["jf-inst"]
+	if inst2 == nil {
+		t.Fatal("set syntax: expected instance jf-inst")
+	}
+	if inst2.InputRate != 100 {
+		t.Errorf("set syntax input rate: got %d, want 100", inst2.InputRate)
+	}
+	if inst2.FamilyInet == nil {
+		t.Fatal("set syntax: expected FamilyInet")
+	}
+	if !inst2.FamilyInet.InlineJflow {
+		t.Error("set syntax: expected inline-jflow")
+	}
+	if len(inst2.FamilyInet.FlowServers) != 1 {
+		t.Fatalf("set syntax: expected 1 flow server, got %d", len(inst2.FamilyInet.FlowServers))
+	}
+	fs2 := inst2.FamilyInet.FlowServers[0]
+	if fs2.Address != "10.0.0.1" || fs2.Port != 2055 {
+		t.Errorf("set syntax flow-server: addr=%s port=%d", fs2.Address, fs2.Port)
+	}
+	if fs2.Version9Template != "v9-set" {
+		t.Errorf("set syntax flow-server template: %q", fs2.Version9Template)
+	}
+}
+
+func TestALGAndFlowOptions(t *testing.T) {
+	input := `security {
+    flow {
+        tcp-mss {
+            ipsec-vpn 1350;
+            gre-in 1400;
+        }
+        allow-dns-reply;
+        allow-embedded-icmp;
+    }
+    alg {
+        dns { disable; }
+        ftp { disable; }
+    }
+}
+`
+	parser := NewParser(input)
+	tree, errs := parser.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	if cfg.Security.Flow.TCPMSSIPsecVPN != 1350 {
+		t.Errorf("tcp-mss ipsec-vpn: got %d, want 1350", cfg.Security.Flow.TCPMSSIPsecVPN)
+	}
+	if cfg.Security.Flow.TCPMSSGre != 1400 {
+		t.Errorf("tcp-mss gre: got %d, want 1400", cfg.Security.Flow.TCPMSSGre)
+	}
+	if !cfg.Security.Flow.AllowDNSReply {
+		t.Error("expected allow-dns-reply to be true")
+	}
+	if !cfg.Security.Flow.AllowEmbeddedICMP {
+		t.Error("expected allow-embedded-icmp to be true")
+	}
+	if !cfg.Security.ALG.DNSDisable {
+		t.Error("expected ALG DNS disable")
+	}
+	if !cfg.Security.ALG.FTPDisable {
+		t.Error("expected ALG FTP disable")
+	}
+
+	// Test set-command syntax
+	tree2 := &ConfigTree{}
+	setCommands := []string{
+		"set security flow tcp-mss ipsec-vpn 1350",
+		"set security flow tcp-mss gre-in 1400",
+		"set security flow allow-dns-reply",
+		"set security flow allow-embedded-icmp",
+		"set security alg dns disable",
+		"set security alg ftp disable",
+	}
+	for _, cmd := range setCommands {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree2.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%q): %v", cmd, err)
+		}
+	}
+
+	cfg2, err := CompileConfig(tree2)
+	if err != nil {
+		t.Fatalf("set-command compile error: %v", err)
+	}
+
+	if cfg2.Security.Flow.TCPMSSIPsecVPN != 1350 {
+		t.Errorf("set syntax: tcp-mss ipsec-vpn: got %d, want 1350", cfg2.Security.Flow.TCPMSSIPsecVPN)
+	}
+	if cfg2.Security.Flow.TCPMSSGre != 1400 {
+		t.Errorf("set syntax: tcp-mss gre: got %d, want 1400", cfg2.Security.Flow.TCPMSSGre)
+	}
+	if !cfg2.Security.Flow.AllowDNSReply {
+		t.Error("set syntax: expected allow-dns-reply")
+	}
+	if !cfg2.Security.ALG.DNSDisable {
+		t.Error("set syntax: expected ALG DNS disable")
+	}
+	if !cfg2.Security.ALG.FTPDisable {
+		t.Error("set syntax: expected ALG FTP disable")
+	}
+}
+
+func TestRPMConfig(t *testing.T) {
+	// Test hierarchical syntax
+	input := `services {
+    rpm {
+        probe isp-comcast {
+            test icmp-check {
+                probe-type icmp-ping;
+                target 1.1.1.1;
+                probe-interval 5;
+                probe-count 3;
+                test-interval 30;
+                thresholds {
+                    successive-loss 3;
+                }
+            }
+            test http-check {
+                probe-type http-get;
+                target http://1.1.1.1;
+                test-interval 60;
+            }
+        }
+        probe isp-att {
+            test tcp-check {
+                probe-type tcp-ping;
+                target 8.8.8.8;
+                destination-port 443;
+                source-address 10.0.1.1;
+                routing-instance att-vr;
+                thresholds {
+                    successive-loss 5;
+                }
+            }
+        }
+    }
+}
+`
+	parser := NewParser(input)
+	tree, errs := parser.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	if cfg.Services.RPM == nil {
+		t.Fatal("expected RPM to be non-nil")
+	}
+	if len(cfg.Services.RPM.Probes) != 2 {
+		t.Fatalf("expected 2 probes, got %d", len(cfg.Services.RPM.Probes))
+	}
+
+	// Check isp-comcast probe
+	comcast := cfg.Services.RPM.Probes["isp-comcast"]
+	if comcast == nil {
+		t.Fatal("expected probe isp-comcast")
+	}
+	if len(comcast.Tests) != 2 {
+		t.Fatalf("expected 2 tests, got %d", len(comcast.Tests))
+	}
+
+	icmpTest := comcast.Tests["icmp-check"]
+	if icmpTest == nil {
+		t.Fatal("expected test icmp-check")
+	}
+	if icmpTest.ProbeType != "icmp-ping" {
+		t.Errorf("probe type: got %q, want icmp-ping", icmpTest.ProbeType)
+	}
+	if icmpTest.Target != "1.1.1.1" {
+		t.Errorf("target: got %q, want 1.1.1.1", icmpTest.Target)
+	}
+	if icmpTest.ProbeInterval != 5 {
+		t.Errorf("probe-interval: got %d, want 5", icmpTest.ProbeInterval)
+	}
+	if icmpTest.ProbeCount != 3 {
+		t.Errorf("probe-count: got %d, want 3", icmpTest.ProbeCount)
+	}
+	if icmpTest.TestInterval != 30 {
+		t.Errorf("test-interval: got %d, want 30", icmpTest.TestInterval)
+	}
+	if icmpTest.ThresholdSuccessive != 3 {
+		t.Errorf("successive-loss: got %d, want 3", icmpTest.ThresholdSuccessive)
+	}
+
+	httpTest := comcast.Tests["http-check"]
+	if httpTest == nil {
+		t.Fatal("expected test http-check")
+	}
+	if httpTest.ProbeType != "http-get" {
+		t.Errorf("probe type: got %q, want http-get", httpTest.ProbeType)
+	}
+
+	// Check isp-att probe
+	att := cfg.Services.RPM.Probes["isp-att"]
+	if att == nil {
+		t.Fatal("expected probe isp-att")
+	}
+	tcpTest := att.Tests["tcp-check"]
+	if tcpTest == nil {
+		t.Fatal("expected test tcp-check")
+	}
+	if tcpTest.ProbeType != "tcp-ping" {
+		t.Errorf("probe type: got %q, want tcp-ping", tcpTest.ProbeType)
+	}
+	if tcpTest.Target != "8.8.8.8" {
+		t.Errorf("target: got %q, want 8.8.8.8", tcpTest.Target)
+	}
+	if tcpTest.DestPort != 443 {
+		t.Errorf("dest port: got %d, want 443", tcpTest.DestPort)
+	}
+	if tcpTest.SourceAddress != "10.0.1.1" {
+		t.Errorf("source-address: got %q, want 10.0.1.1", tcpTest.SourceAddress)
+	}
+	if tcpTest.RoutingInstance != "att-vr" {
+		t.Errorf("routing-instance: got %q, want att-vr", tcpTest.RoutingInstance)
+	}
+	if tcpTest.ThresholdSuccessive != 5 {
+		t.Errorf("successive-loss: got %d, want 5", tcpTest.ThresholdSuccessive)
+	}
+
+	// Test set-command syntax
+	tree2 := &ConfigTree{}
+	setCommands := []string{
+		"set services rpm probe monitor test ping-test probe-type icmp-ping",
+		"set services rpm probe monitor test ping-test target 8.8.4.4",
+		"set services rpm probe monitor test ping-test probe-interval 10",
+		"set services rpm probe monitor test ping-test test-interval 60",
+	}
+	for _, cmd := range setCommands {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree2.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%q): %v", cmd, err)
+		}
+	}
+
+	cfg2, err := CompileConfig(tree2)
+	if err != nil {
+		t.Fatalf("set-command compile error: %v", err)
+	}
+
+	if cfg2.Services.RPM == nil {
+		t.Fatal("set syntax: expected RPM")
+	}
+	monitor := cfg2.Services.RPM.Probes["monitor"]
+	if monitor == nil {
+		t.Fatal("set syntax: expected probe monitor")
+	}
+	pingTest := monitor.Tests["ping-test"]
+	if pingTest == nil {
+		t.Fatal("set syntax: expected test ping-test")
+	}
+	if pingTest.ProbeType != "icmp-ping" {
+		t.Errorf("set syntax probe type: got %q, want icmp-ping", pingTest.ProbeType)
+	}
+	if pingTest.Target != "8.8.4.4" {
+		t.Errorf("set syntax target: got %q, want 8.8.4.4", pingTest.Target)
+	}
+	if pingTest.ProbeInterval != 10 {
+		t.Errorf("set syntax probe-interval: got %d, want 10", pingTest.ProbeInterval)
+	}
+	if pingTest.TestInterval != 60 {
+		t.Errorf("set syntax test-interval: got %d, want 60", pingTest.TestInterval)
+	}
+}
+
 func TestInterfaceFilterAssignment(t *testing.T) {
 	input := `interfaces {
     enp6s0 {

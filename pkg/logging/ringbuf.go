@@ -16,12 +16,17 @@ import (
 	"github.com/psaab/bpfrx/pkg/dataplane"
 )
 
+// EventCallback is called for each processed event record.
+type EventCallback func(rec EventRecord, raw []byte)
+
 // EventReader reads events from the eBPF ring buffer.
 type EventReader struct {
 	eventsMap     *ebpf.Map
 	buffer        *EventBuffer
 	syslogMu      sync.RWMutex
 	syslogClients []*SyslogClient
+	callbackMu    sync.RWMutex
+	callbacks     []EventCallback
 }
 
 // NewEventReader creates a new event reader for the given events map.
@@ -30,6 +35,21 @@ func NewEventReader(eventsMap *ebpf.Map, buffer *EventBuffer) *EventReader {
 		eventsMap: eventsMap,
 		buffer:    buffer,
 	}
+}
+
+// AddCallback registers a callback that will be invoked for every event.
+// The raw byte slice is the original ring buffer sample data.
+func (er *EventReader) AddCallback(cb EventCallback) {
+	er.callbackMu.Lock()
+	er.callbacks = append(er.callbacks, cb)
+	er.callbackMu.Unlock()
+}
+
+// ClearCallbacks removes all registered callbacks.
+func (er *EventReader) ClearCallbacks() {
+	er.callbackMu.Lock()
+	er.callbacks = nil
+	er.callbackMu.Unlock()
 }
 
 // SetSyslogClients replaces the set of syslog clients (goroutine-safe).
@@ -149,6 +169,14 @@ func (er *EventReader) logEvent(data []byte) {
 	// Store in buffer
 	if er.buffer != nil {
 		er.buffer.Add(rec)
+	}
+
+	// Invoke registered callbacks
+	er.callbackMu.RLock()
+	cbs := er.callbacks
+	er.callbackMu.RUnlock()
+	for _, cb := range cbs {
+		cb(rec, data)
 	}
 
 	// Log to slog (existing behavior)

@@ -490,6 +490,17 @@ struct {
 } flow_timeouts SEC(".maps");
 
 /* ============================================================
+ * Global flow configuration (TCP MSS clamp, etc.)
+ * ============================================================ */
+
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, 1);
+	__type(key, __u32);
+	__type(value, struct flow_config);
+} flow_config_map SEC(".maps");
+
+/* ============================================================
  * NAT64 configuration & state
  * ============================================================ */
 

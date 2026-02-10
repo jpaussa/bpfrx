@@ -168,6 +168,18 @@ int xdp_conntrack_prog(struct xdp_md *ctx)
 	if (!meta)
 		return XDP_DROP;
 
+	/* TCP MSS clamping on SYN packets */
+	if (meta->protocol == PROTO_TCP && (meta->tcp_flags & 0x02)) {
+		struct flow_config *fc = bpf_map_lookup_elem(&flow_config_map, &zero);
+		if (fc) {
+			__u16 mss = fc->tcp_mss_ipsec;
+			if (fc->tcp_mss_gre > 0 && (fc->tcp_mss_gre < mss || mss == 0))
+				mss = fc->tcp_mss_gre;
+			if (mss > 0)
+				tcp_mss_clamp(ctx, meta->l4_offset, mss);
+		}
+	}
+
 	if (meta->addr_family == AF_INET) {
 		/* IPv4 path */
 		struct session_key fwd_key = {};

@@ -702,4 +702,101 @@ evaluate_firewall_filter(struct pkt_meta *meta)
 	return 0;
 }
 
+/* ============================================================
+ * TCP MSS clamping
+ *
+ * Walk TCP options in a SYN packet, find MSS option (kind=2, len=4),
+ * and clamp it to the configured maximum.
+ * ============================================================ */
+
+/* TCP option kinds */
+#define TCPOPT_EOL  0
+#define TCPOPT_NOP  1
+#define TCPOPT_MSS  2
+#define TCPOPT_MSS_LEN 4
+
+/*
+ * Clamp TCP MSS option in a SYN packet.
+ *
+ * The MSS option (kind=2, len=4) in standard SYN packets is found
+ * at one of a few well-known positions in the TCP options area.
+ * We check the first few positions with constant offsets to keep
+ * the verifier happy (avoids loop + variable offset issues).
+ *
+ * Returns 0 on success/no-op.
+ */
+static __always_inline int
+tcp_mss_clamp(struct xdp_md *ctx, __u16 l4_offset, __u16 max_mss)
+{
+	void *data     = (void *)(long)ctx->data;
+	void *data_end = (void *)(long)ctx->data_end;
+
+	/* Sanity limit on l4_offset to help verifier */
+	if (l4_offset > 200)
+		return -1;
+
+	/* Ensure at least TCP header + 40 bytes of options (max) */
+	if (data + l4_offset + 60 > data_end)
+		return 0;
+
+	/*
+	 * Check the first 4 bytes of TCP options (offset 20 from TCP start).
+	 * MSS is almost always the first option in SYN packets.
+	 * Option format: kind(1) len(1) value(2) = {0x02, 0x04, MSS_HI, MSS_LO}
+	 *
+	 * Also check a few other common positions (NOP-padded layouts):
+	 * - offset 0: MSS first (most common)
+	 * - offset 1: after one NOP
+	 * - offset 2: after two NOPs
+	 *
+	 * We use absolute offsets from data to keep the verifier's
+	 * packet range valid throughout.
+	 */
+	__u8 *opt_base = (__u8 *)data + l4_offset + 20;
+	__be16 *mss_ptr = 0;
+	struct tcphdr *tcp = data + l4_offset;
+
+	/* Position 0: MSS at start of options (most common) */
+	if (opt_base[0] == TCPOPT_MSS && opt_base[1] == TCPOPT_MSS_LEN) {
+		mss_ptr = (__be16 *)(opt_base + 2);
+	}
+	/* Position 1: NOP + MSS */
+	else if (opt_base[0] == TCPOPT_NOP &&
+		 opt_base[1] == TCPOPT_MSS && opt_base[2] == TCPOPT_MSS_LEN) {
+		mss_ptr = (__be16 *)(opt_base + 3);
+	}
+	/* Position 2: NOP + NOP + MSS */
+	else if (opt_base[0] == TCPOPT_NOP && opt_base[1] == TCPOPT_NOP &&
+		 opt_base[2] == TCPOPT_MSS && opt_base[3] == TCPOPT_MSS_LEN) {
+		mss_ptr = (__be16 *)(opt_base + 4);
+	}
+	/* Position: after SACK_PERM (kind=4,len=2) + MSS */
+	else if (opt_base[0] == 4 && opt_base[1] == 2 &&
+		 opt_base[2] == TCPOPT_MSS && opt_base[3] == TCPOPT_MSS_LEN) {
+		mss_ptr = (__be16 *)(opt_base + 4);
+	}
+
+	if (!mss_ptr)
+		return 0;
+	if ((void *)(mss_ptr + 1) > data_end)
+		return 0;
+
+	__u16 cur_mss = bpf_ntohs(*mss_ptr);
+	if (cur_mss > max_mss) {
+		__be16 old_mss = *mss_ptr;
+		__be16 new_mss = bpf_htons(max_mss);
+		*mss_ptr = new_mss;
+
+		/* Re-read data pointers after packet write for verifier */
+		data = (void *)(long)ctx->data;
+		data_end = (void *)(long)ctx->data_end;
+		if (data + l4_offset + 20 > data_end)
+			return 0;
+		tcp = data + l4_offset;
+		csum_update_2(&tcp->check, old_mss, new_mss);
+	}
+
+	return 0;
+}
+
 #endif /* __BPFRX_HELPERS_H__ */
