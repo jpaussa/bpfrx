@@ -341,15 +341,16 @@ cmd_deploy() {
 	info "Building bpfrxd and cli..."
 	make -C "$PROJECT_ROOT" build build-ctl
 
-	# Stop running bpfrxd if any (avoids "text file busy")
+	# Stop running bpfrxd and cli if any (avoids "text file busy")
 	incus exec "$INSTANCE_NAME" -- pkill -9 bpfrxd 2>/dev/null || true
+	incus exec "$INSTANCE_NAME" -- pkill -9 cli 2>/dev/null || true
 	sleep 1
 
 	info "Pushing bpfrxd to $INSTANCE_NAME..."
 	incus file push "$PROJECT_ROOT/bpfrxd" "$INSTANCE_NAME/usr/local/sbin/bpfrxd" --mode 0755
 
 	info "Pushing cli to $INSTANCE_NAME..."
-	incus file push "$PROJECT_ROOT/cli" "$INSTANCE_NAME/usr/local/bin/cli" --mode 0755
+	incus file push "$PROJECT_ROOT/cli" "$INSTANCE_NAME/usr/local/sbin/cli" --mode 0755
 
 	# Push test config if it exists
 	if [[ -f "${SCRIPT_DIR}/bpfrx-test.conf" ]]; then
