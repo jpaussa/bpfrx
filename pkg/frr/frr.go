@@ -35,13 +35,44 @@ func New() *Manager {
 	}
 }
 
+// InstanceConfig pairs an OSPF/BGP config with a VRF name for per-instance generation.
+type InstanceConfig struct {
+	VRFName string
+	OSPF    *config.OSPFConfig
+	BGP     *config.BGPConfig
+}
+
 // Apply generates an FRR config from OSPF/BGP settings and reloads FRR.
 func (m *Manager) Apply(ospf *config.OSPFConfig, bgp *config.BGPConfig) error {
-	if ospf == nil && bgp == nil {
+	return m.ApplyWithInstances(ospf, bgp, nil)
+}
+
+// ApplyWithInstances generates FRR config for the global context and per-VRF instances.
+func (m *Manager) ApplyWithInstances(ospf *config.OSPFConfig, bgp *config.BGPConfig, instances []InstanceConfig) error {
+	hasGlobal := ospf != nil || bgp != nil
+	hasInstances := len(instances) > 0
+
+	if !hasGlobal && !hasInstances {
 		return m.Clear()
 	}
 
-	cfg := m.generateConfig(ospf, bgp)
+	var b strings.Builder
+	b.WriteString("! bpfrx managed config - do not edit\n")
+	b.WriteString("!\n")
+
+	// Global context
+	if hasGlobal {
+		b.WriteString(m.generateOSPFBGP(ospf, bgp, ""))
+	}
+
+	// Per-VRF contexts
+	for _, inst := range instances {
+		if inst.OSPF != nil || inst.BGP != nil {
+			b.WriteString(m.generateOSPFBGP(inst.OSPF, inst.BGP, inst.VRFName))
+		}
+	}
+
+	cfg := b.String()
 
 	if err := os.MkdirAll(m.configDir, 0755); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
@@ -71,14 +102,18 @@ func (m *Manager) Clear() error {
 	return nil
 }
 
-func (m *Manager) generateConfig(ospf *config.OSPFConfig, bgp *config.BGPConfig) string {
+// generateOSPFBGP generates FRR CLI config for OSPF and/or BGP.
+// If vrfName is non-empty, generates VRF-scoped commands.
+func (m *Manager) generateOSPFBGP(ospf *config.OSPFConfig, bgp *config.BGPConfig, vrfName string) string {
 	var b strings.Builder
 
-	b.WriteString("! bpfrx managed config - do not edit\n")
-	b.WriteString("!\n")
+	vrfSuffix := ""
+	if vrfName != "" {
+		vrfSuffix = " vrf " + vrfName
+	}
 
 	if ospf != nil {
-		b.WriteString("router ospf\n")
+		fmt.Fprintf(&b, "router ospf%s\n", vrfSuffix)
 		if ospf.RouterID != "" {
 			fmt.Fprintf(&b, " ospf router-id %s\n", ospf.RouterID)
 		}
@@ -95,7 +130,7 @@ func (m *Manager) generateConfig(ospf *config.OSPFConfig, bgp *config.BGPConfig)
 	}
 
 	if bgp != nil && bgp.LocalAS > 0 {
-		fmt.Fprintf(&b, "router bgp %d\n", bgp.LocalAS)
+		fmt.Fprintf(&b, "router bgp %d%s\n", bgp.LocalAS, vrfSuffix)
 		if bgp.RouterID != "" {
 			fmt.Fprintf(&b, " bgp router-id %s\n", bgp.RouterID)
 		}

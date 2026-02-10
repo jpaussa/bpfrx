@@ -12,11 +12,12 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Manager handles static route and tunnel lifecycle.
+// Manager handles static route, tunnel, and VRF lifecycle.
 type Manager struct {
 	nlHandle *netlink.Handle
 	routes   []netlink.Route // currently installed static routes (for cleanup)
 	tunnels  []string        // currently created tunnel interface names
+	vrfs     []string        // currently created VRF device names
 }
 
 // New creates a new routing Manager.
@@ -99,6 +100,173 @@ func (m *Manager) ClearStaticRoutes() error {
 	}
 	m.routes = nil
 	return nil
+}
+
+// ApplyStaticRoutesInTable installs static routes into a specific kernel routing table.
+func (m *Manager) ApplyStaticRoutesInTable(routes []*config.StaticRoute, tableID int) error {
+	for _, sr := range routes {
+		_, dst, err := net.ParseCIDR(sr.Destination)
+		if err != nil {
+			slog.Warn("invalid static route destination", "dst", sr.Destination, "table", tableID, "err", err)
+			continue
+		}
+
+		route := netlink.Route{
+			Dst:      dst,
+			Priority: sr.Preference,
+			Protocol: unix.RTPROT_STATIC,
+			Table:    tableID,
+		}
+
+		if sr.Discard {
+			route.Type = unix.RTN_BLACKHOLE
+		} else if sr.NextHop != "" {
+			gw := net.ParseIP(sr.NextHop)
+			if gw == nil {
+				slog.Warn("invalid static route next-hop", "nh", sr.NextHop, "table", tableID)
+				continue
+			}
+			route.Gw = gw
+		}
+
+		if sr.Interface != "" {
+			link, err := m.nlHandle.LinkByName(sr.Interface)
+			if err != nil {
+				slog.Warn("static route interface not found",
+					"iface", sr.Interface, "table", tableID, "err", err)
+				continue
+			}
+			route.LinkIndex = link.Attrs().Index
+		}
+
+		if err := m.nlHandle.RouteAdd(&route); err != nil {
+			slog.Warn("failed to add static route",
+				"dst", sr.Destination, "table", tableID, "err", err)
+			continue
+		}
+		slog.Info("static route added", "dst", sr.Destination,
+			"nh", sr.NextHop, "iface", sr.Interface, "table", tableID)
+		m.routes = append(m.routes, route)
+	}
+	return nil
+}
+
+// CreateVRF creates a Linux VRF device and assigns it a routing table.
+func (m *Manager) CreateVRF(name string, tableID int) error {
+	vrfName := "vrf-" + name
+
+	// Check if VRF already exists
+	if _, err := m.nlHandle.LinkByName(vrfName); err == nil {
+		// Already exists, ensure it's up
+		link, _ := m.nlHandle.LinkByName(vrfName)
+		m.nlHandle.LinkSetUp(link)
+		slog.Debug("VRF already exists", "name", vrfName, "table", tableID)
+		return nil
+	}
+
+	vrf := &netlink.Vrf{
+		LinkAttrs: netlink.LinkAttrs{Name: vrfName},
+		Table:     uint32(tableID),
+	}
+	if err := m.nlHandle.LinkAdd(vrf); err != nil {
+		return fmt.Errorf("create VRF %s: %w", vrfName, err)
+	}
+	link, err := m.nlHandle.LinkByName(vrfName)
+	if err != nil {
+		return fmt.Errorf("find VRF %s: %w", vrfName, err)
+	}
+	if err := m.nlHandle.LinkSetUp(link); err != nil {
+		return fmt.Errorf("set VRF %s up: %w", vrfName, err)
+	}
+	m.vrfs = append(m.vrfs, vrfName)
+	slog.Info("VRF created", "name", vrfName, "table", tableID)
+	return nil
+}
+
+// BindInterfaceToVRF binds a network interface to a VRF device.
+func (m *Manager) BindInterfaceToVRF(ifaceName, instanceName string) error {
+	vrfName := "vrf-" + instanceName
+
+	iface, err := m.nlHandle.LinkByName(ifaceName)
+	if err != nil {
+		return fmt.Errorf("interface %s not found: %w", ifaceName, err)
+	}
+	vrf, err := m.nlHandle.LinkByName(vrfName)
+	if err != nil {
+		return fmt.Errorf("VRF %s not found: %w", vrfName, err)
+	}
+	if err := m.nlHandle.LinkSetMaster(iface, vrf); err != nil {
+		return fmt.Errorf("bind %s to VRF %s: %w", ifaceName, vrfName, err)
+	}
+	slog.Info("interface bound to VRF", "interface", ifaceName, "vrf", vrfName)
+	return nil
+}
+
+// ClearVRFs removes all previously created VRF devices.
+func (m *Manager) ClearVRFs() error {
+	for _, name := range m.vrfs {
+		link, err := m.nlHandle.LinkByName(name)
+		if err != nil {
+			continue
+		}
+		if err := m.nlHandle.LinkDel(link); err != nil {
+			slog.Warn("failed to delete VRF", "name", name, "err", err)
+		} else {
+			slog.Info("VRF removed", "name", name)
+		}
+	}
+	m.vrfs = nil
+	return nil
+}
+
+// GetRoutesForTable reads routes from a specific kernel routing table.
+func (m *Manager) GetRoutesForTable(tableID int) ([]RouteEntry, error) {
+	var entries []RouteEntry
+
+	for _, family := range []int{netlink.FAMILY_V4, netlink.FAMILY_V6} {
+		filter := &netlink.Route{Table: tableID}
+		routes, err := m.nlHandle.RouteListFiltered(family, filter, netlink.RT_FILTER_TABLE)
+		if err != nil {
+			continue
+		}
+		for _, r := range routes {
+			entry := RouteEntry{
+				Preference: r.Priority,
+				Protocol:   rtProtoName(r.Protocol),
+			}
+
+			if r.Dst != nil {
+				entry.Destination = r.Dst.String()
+			} else {
+				if family == netlink.FAMILY_V6 {
+					entry.Destination = "::/0"
+				} else {
+					entry.Destination = "0.0.0.0/0"
+				}
+			}
+
+			if r.Gw != nil {
+				entry.NextHop = r.Gw.String()
+			} else if r.Type == unix.RTN_BLACKHOLE {
+				entry.NextHop = "discard"
+			} else {
+				entry.NextHop = "direct"
+			}
+
+			if r.LinkIndex > 0 {
+				link, err := m.nlHandle.LinkByIndex(r.LinkIndex)
+				if err == nil {
+					entry.Interface = link.Attrs().Name
+				} else {
+					entry.Interface = strconv.Itoa(r.LinkIndex)
+				}
+			}
+
+			entries = append(entries, entry)
+		}
+	}
+
+	return entries, nil
 }
 
 // ApplyTunnels creates GRE tunnel interfaces, brings them up, and assigns addresses.

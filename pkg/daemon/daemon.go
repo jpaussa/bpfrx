@@ -23,6 +23,7 @@ import (
 	"github.com/psaab/bpfrx/pkg/grpcapi"
 	"github.com/psaab/bpfrx/pkg/ipsec"
 	"github.com/psaab/bpfrx/pkg/logging"
+	"github.com/psaab/bpfrx/pkg/radvd"
 	"github.com/psaab/bpfrx/pkg/routing"
 )
 
@@ -42,6 +43,7 @@ type Daemon struct {
 	routing *routing.Manager
 	frr     *frr.Manager
 	ipsec   *ipsec.Manager
+	radvd   *radvd.Manager
 	dhcp    *dhcp.Manager
 }
 
@@ -81,6 +83,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 		d.frr = frr.New()
 		d.ipsec = ipsec.New()
+		d.radvd = radvd.New()
 	}
 
 	// Load eBPF programs (unless in config-only mode)
@@ -221,6 +224,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 
 	// Clean up routing subsystems.
+	if d.radvd != nil {
+		d.radvd.Clear()
+	}
 	if d.ipsec != nil {
 		d.ipsec.Clear()
 	}
@@ -228,6 +234,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.frr.Clear()
 	}
 	if d.routing != nil {
+		d.routing.ClearVRFs()
 		d.routing.ClearTunnels()
 		d.routing.ClearStaticRoutes()
 		d.routing.Close()
@@ -244,12 +251,33 @@ func (d *Daemon) Run(ctx context.Context) error {
 }
 
 // applyConfig applies a compiled config in the correct order:
+// 0. Create VRF devices and bind interfaces (routing instances)
 // 1. Create tunnels (so interfaces exist for zone binding)
 // 2. Compile eBPF (attaches XDP/TC to interfaces including tunnels)
-// 3. Install static routes
-// 4. Apply FRR config (OSPF/BGP)
+// 3. Install static routes (global + per-instance)
+// 4. Apply FRR config (OSPF/BGP, global + per-VRF)
 // 5. Apply IPsec config (strongSwan)
 func (d *Daemon) applyConfig(cfg *config.Config) {
+	// 0. Create VRF devices for routing instances
+	if d.routing != nil && len(cfg.RoutingInstances) > 0 {
+		if err := d.routing.ClearVRFs(); err != nil {
+			slog.Warn("failed to clear previous VRFs", "err", err)
+		}
+		for _, ri := range cfg.RoutingInstances {
+			if err := d.routing.CreateVRF(ri.Name, ri.TableID); err != nil {
+				slog.Warn("failed to create VRF",
+					"instance", ri.Name, "table", ri.TableID, "err", err)
+				continue
+			}
+			for _, ifaceName := range ri.Interfaces {
+				if err := d.routing.BindInterfaceToVRF(ifaceName, ri.Name); err != nil {
+					slog.Warn("failed to bind interface to VRF",
+						"interface", ifaceName, "instance", ri.Name, "err", err)
+				}
+			}
+		}
+	}
+
 	// 1. Create tunnel interfaces
 	if d.routing != nil {
 		var tunnels []*config.TunnelConfig
@@ -272,21 +300,53 @@ func (d *Daemon) applyConfig(cfg *config.Config) {
 		}
 	}
 
-	// 3. Install static routes
+	// 3. Install static routes (global table)
 	if d.routing != nil && len(cfg.RoutingOptions.StaticRoutes) > 0 {
 		if err := d.routing.ApplyStaticRoutes(cfg.RoutingOptions.StaticRoutes); err != nil {
 			slog.Warn("failed to apply static routes", "err", err)
 		}
 	}
 
-	// 4. Apply FRR config
-	if d.frr != nil && (cfg.Protocols.OSPF != nil || cfg.Protocols.BGP != nil) {
-		if err := d.frr.Apply(cfg.Protocols.OSPF, cfg.Protocols.BGP); err != nil {
-			slog.Warn("failed to apply FRR config", "err", err)
+	// 3b. Install per-instance static routes into VRF tables
+	if d.routing != nil {
+		for _, ri := range cfg.RoutingInstances {
+			if len(ri.StaticRoutes) > 0 {
+				if err := d.routing.ApplyStaticRoutesInTable(ri.StaticRoutes, ri.TableID); err != nil {
+					slog.Warn("failed to apply instance static routes",
+						"instance", ri.Name, "err", err)
+				}
+			}
 		}
 	}
 
-	// 5. Apply IPsec config
+	// 4. Apply FRR config (global + per-VRF)
+	if d.frr != nil {
+		hasGlobal := cfg.Protocols.OSPF != nil || cfg.Protocols.BGP != nil
+		var instances []frr.InstanceConfig
+		for _, ri := range cfg.RoutingInstances {
+			if ri.OSPF != nil || ri.BGP != nil {
+				instances = append(instances, frr.InstanceConfig{
+					VRFName: "vrf-" + ri.Name,
+					OSPF:    ri.OSPF,
+					BGP:     ri.BGP,
+				})
+			}
+		}
+		if hasGlobal || len(instances) > 0 {
+			if err := d.frr.ApplyWithInstances(cfg.Protocols.OSPF, cfg.Protocols.BGP, instances); err != nil {
+				slog.Warn("failed to apply FRR config", "err", err)
+			}
+		}
+	}
+
+	// 5. Apply radvd config (Router Advertisements)
+	if d.radvd != nil && len(cfg.Protocols.RouterAdvertisement) > 0 {
+		if err := d.radvd.Apply(cfg.Protocols.RouterAdvertisement); err != nil {
+			slog.Warn("failed to apply radvd config", "err", err)
+		}
+	}
+
+	// 6. Apply IPsec config
 	if d.ipsec != nil && len(cfg.Security.IPsec.VPNs) > 0 {
 		if err := d.ipsec.Apply(&cfg.Security.IPsec); err != nil {
 			slog.Warn("failed to apply IPsec config", "err", err)

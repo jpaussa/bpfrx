@@ -2,11 +2,12 @@ package config
 
 // Config is the top-level typed configuration, compiled from the AST.
 type Config struct {
-	Security       SecurityConfig
-	Interfaces     InterfacesConfig
-	Applications   ApplicationsConfig
-	RoutingOptions RoutingOptionsConfig
-	Protocols      ProtocolsConfig
+	Security         SecurityConfig
+	Interfaces       InterfacesConfig
+	Applications     ApplicationsConfig
+	RoutingOptions   RoutingOptionsConfig
+	Protocols        ProtocolsConfig
+	RoutingInstances []*RoutingInstanceConfig
 }
 
 // SecurityConfig holds all security-related configuration.
@@ -235,10 +236,11 @@ type Address struct {
 	Value string // CIDR notation
 }
 
-// AddressSet is a named group of addresses.
+// AddressSet is a named group of addresses and/or nested address-sets.
 type AddressSet struct {
-	Name      string
-	Addresses []string // references to Address names
+	Name        string
+	Addresses   []string // references to Address names
+	AddressSets []string // references to other AddressSet names (nested)
 }
 
 // InterfacesConfig holds interface configuration.
@@ -304,8 +306,32 @@ type StaticRoute struct {
 
 // ProtocolsConfig holds dynamic routing protocol configuration.
 type ProtocolsConfig struct {
-	OSPF *OSPFConfig
-	BGP  *BGPConfig
+	OSPF              *OSPFConfig
+	BGP               *BGPConfig
+	RouterAdvertisement []*RAInterfaceConfig
+}
+
+// RAInterfaceConfig configures Router Advertisement on an interface.
+type RAInterfaceConfig struct {
+	Interface          string
+	ManagedConfig      bool     // managed-configuration (M flag)
+	OtherStateful      bool     // other-stateful-configuration (O flag)
+	DefaultLifetime    int      // seconds, 0 = default (1800)
+	MaxAdvInterval     int      // seconds, 0 = default (600)
+	MinAdvInterval     int      // seconds, 0 = default (200)
+	Prefixes           []*RAPrefix
+	DNSServers         []string // recursive DNS server addresses
+	NAT64Prefix        string   // PREF64 prefix (e.g. "64:ff9b::/96")
+	LinkMTU            int      // advertised link MTU, 0 = omit
+}
+
+// RAPrefix defines a prefix advertised via RA.
+type RAPrefix struct {
+	Prefix         string // CIDR notation
+	OnLink         bool   // on-link flag (default true)
+	Autonomous     bool   // SLAAC autonomous flag (default true)
+	ValidLifetime  int    // seconds, 0 = default (2592000 = 30 days)
+	PreferredLife  int    // seconds, 0 = default (604800 = 7 days)
 }
 
 // OSPFConfig holds OSPF routing configuration.
@@ -389,4 +415,15 @@ type IPsecVPN struct {
 	RemoteID    string // remote traffic selector (CIDR)
 	PSK         string // pre-shared key
 	LocalAddr   string // local address
+}
+
+// RoutingInstanceConfig represents a VRF-based routing instance.
+type RoutingInstanceConfig struct {
+	Name         string
+	InstanceType string              // "virtual-router" or "vrf"
+	Interfaces   []string            // interfaces belonging to this instance
+	StaticRoutes []*StaticRoute      // per-instance static routes
+	OSPF         *OSPFConfig         // per-instance OSPF (optional)
+	BGP          *BGPConfig          // per-instance BGP (optional)
+	TableID      int                 // Linux kernel routing table number (auto-assigned)
 }

@@ -201,7 +201,9 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 		}},
 		"address-book": {children: map[string]*schemaNode{
 			"global": {children: map[string]*schemaNode{
-				"address-set": {args: 1, valueHint: ValueHintAddressName, children: nil},
+				"address-set": {args: 1, valueHint: ValueHintAddressName, children: map[string]*schemaNode{
+					"address-set": {args: 1, valueHint: ValueHintAddressName, children: nil},
+				}},
 				// "address <name> <cidr>" not listed → leaf
 			}},
 		}},
@@ -251,7 +253,29 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 		"bgp": {children: map[string]*schemaNode{
 			"group": {args: 1, children: nil}, // group <name>
 		}},
+		"router-advertisement": {children: map[string]*schemaNode{
+			"interface": {args: 1, valueHint: ValueHintInterfaceName, children: map[string]*schemaNode{
+				"prefix": {args: 1, children: nil}, // prefix <prefix/len>
+			}},
+		}},
 	}},
+	"routing-instances": {wildcard: &schemaNode{children: map[string]*schemaNode{
+		// instance-type and interface are NOT listed here → they become leaf nodes
+		// e.g. "instance-type virtual-router;" and "interface enp7s0;"
+		"routing-options": {children: map[string]*schemaNode{
+			"static": {children: map[string]*schemaNode{
+				"route": {args: 1, children: nil},
+			}},
+		}},
+		"protocols": {children: map[string]*schemaNode{
+			"ospf": {children: map[string]*schemaNode{
+				"area": {args: 1, children: nil},
+			}},
+			"bgp": {children: map[string]*schemaNode{
+				"group": {args: 1, children: nil},
+			}},
+		}},
+	}}},
 }}
 
 // SetPath inserts a leaf node at the given path in the tree.

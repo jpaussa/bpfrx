@@ -408,14 +408,20 @@ func (m *Manager) compileAddressBook(cfg *config.Config, result *CompileResult) 
 		addrID++
 	}
 
-	// Process address sets
-	for setName, addrSet := range ab.AddressSets {
+	// Process address sets (with nested set expansion)
+	for setName := range ab.AddressSets {
 		setID := addrID
 		result.AddrIDs[setName] = setID
 		addrID++
 
-		// Write membership entries for each member
-		for _, memberName := range addrSet.Addresses {
+		// Recursively expand nested sets to flat address list
+		allAddresses, err := config.ExpandAddressSet(setName, ab)
+		if err != nil {
+			return fmt.Errorf("address set %q: %w", setName, err)
+		}
+
+		// Write membership entries for each resolved address
+		for _, memberName := range allAddresses {
 			memberID, ok := result.AddrIDs[memberName]
 			if !ok {
 				return fmt.Errorf("address set %q: member %q not found",
@@ -428,7 +434,7 @@ func (m *Manager) compileAddressBook(cfg *config.Config, result *CompileResult) 
 		}
 
 		slog.Debug("address set compiled", "name", setName, "id", setID,
-			"members", len(addrSet.Addresses))
+			"members", len(allAddresses))
 	}
 
 	result.nextAddrID = addrID

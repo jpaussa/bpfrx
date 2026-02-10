@@ -105,3 +105,54 @@ func expandAppSet(name string, apps *ApplicationsConfig, depth int) ([]string, e
 
 	return result, nil
 }
+
+// ExpandAddressSet recursively expands an address-set to individual
+// address names. Handles nested address-sets with cycle detection.
+// Max depth 5.
+func ExpandAddressSet(name string, ab *AddressBook) ([]string, error) {
+	return expandAddrSet(name, ab, make(map[string]bool), 0)
+}
+
+func expandAddrSet(name string, ab *AddressBook, visited map[string]bool, depth int) ([]string, error) {
+	if depth > 5 {
+		return nil, fmt.Errorf("address-set nesting too deep (max 5): %s", name)
+	}
+	if visited[name] {
+		return nil, fmt.Errorf("cycle detected in address-set %q", name)
+	}
+
+	as, ok := ab.AddressSets[name]
+	if !ok {
+		return nil, fmt.Errorf("address-set %q not found", name)
+	}
+
+	visited[name] = true
+	defer delete(visited, name)
+
+	var result []string
+	seen := make(map[string]bool)
+
+	// Direct address members
+	for _, addrName := range as.Addresses {
+		if !seen[addrName] {
+			seen[addrName] = true
+			result = append(result, addrName)
+		}
+	}
+
+	// Nested address-set members
+	for _, setName := range as.AddressSets {
+		expanded, err := expandAddrSet(setName, ab, visited, depth+1)
+		if err != nil {
+			return nil, err
+		}
+		for _, a := range expanded {
+			if !seen[a] {
+				seen[a] = true
+				result = append(result, a)
+			}
+		}
+	}
+
+	return result, nil
+}

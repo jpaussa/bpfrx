@@ -43,6 +43,10 @@ func CompileConfig(tree *ConfigTree) (*Config, error) {
 			if err := compileProtocols(node, &cfg.Protocols); err != nil {
 				return nil, fmt.Errorf("protocols: %w", err)
 			}
+		case "routing-instances":
+			if err := compileRoutingInstances(node, cfg); err != nil {
+				return nil, fmt.Errorf("routing-instances: %w", err)
+			}
 		}
 	}
 
@@ -338,8 +342,15 @@ func compileAddressBook(node *Node, sec *SecurityConfig) error {
 			if len(child.Keys) >= 2 {
 				as := &AddressSet{Name: child.Keys[1]}
 				for _, member := range child.Children {
-					if member.Name() == "address" && len(member.Keys) >= 2 {
-						as.Addresses = append(as.Addresses, member.Keys[1])
+					switch member.Name() {
+					case "address":
+						if len(member.Keys) >= 2 {
+							as.Addresses = append(as.Addresses, member.Keys[1])
+						}
+					case "address-set":
+						if len(member.Keys) >= 2 {
+							as.AddressSets = append(as.AddressSets, member.Keys[1])
+						}
 					}
 				}
 				ab.AddressSets[as.Name] = as
@@ -960,7 +971,102 @@ func compileRoutingOptions(node *Node, ro *RoutingOptionsConfig) error {
 	return nil
 }
 
+func compileRouterAdvertisement(node *Node, proto *ProtocolsConfig) error {
+	for _, ifNode := range node.FindChildren("interface") {
+		if len(ifNode.Keys) < 2 {
+			continue
+		}
+		ra := &RAInterfaceConfig{
+			Interface: ifNode.Keys[1],
+		}
+
+		for _, prop := range ifNode.Children {
+			switch prop.Name() {
+			case "managed-configuration":
+				ra.ManagedConfig = true
+			case "other-stateful-configuration":
+				ra.OtherStateful = true
+			case "default-lifetime":
+				if len(prop.Keys) >= 2 {
+					if v, err := strconv.Atoi(prop.Keys[1]); err == nil {
+						ra.DefaultLifetime = v
+					}
+				}
+			case "max-advertisement-interval":
+				if len(prop.Keys) >= 2 {
+					if v, err := strconv.Atoi(prop.Keys[1]); err == nil {
+						ra.MaxAdvInterval = v
+					}
+				}
+			case "min-advertisement-interval":
+				if len(prop.Keys) >= 2 {
+					if v, err := strconv.Atoi(prop.Keys[1]); err == nil {
+						ra.MinAdvInterval = v
+					}
+				}
+			case "link-mtu":
+				if len(prop.Keys) >= 2 {
+					if v, err := strconv.Atoi(prop.Keys[1]); err == nil {
+						ra.LinkMTU = v
+					}
+				}
+			case "dns-server-address":
+				if len(prop.Keys) >= 2 {
+					ra.DNSServers = append(ra.DNSServers, prop.Keys[1])
+				}
+			case "nat64prefix":
+				if len(prop.Keys) >= 2 {
+					ra.NAT64Prefix = prop.Keys[1]
+				}
+			case "prefix":
+				if len(prop.Keys) >= 2 {
+					pfx := &RAPrefix{
+						Prefix:     prop.Keys[1],
+						OnLink:     true, // defaults
+						Autonomous: true,
+					}
+					for _, child := range prop.Children {
+						switch child.Name() {
+						case "on-link":
+							pfx.OnLink = true
+						case "autonomous":
+							pfx.Autonomous = true
+						case "no-onlink":
+							pfx.OnLink = false
+						case "no-autonomous":
+							pfx.Autonomous = false
+						case "valid-lifetime":
+							if len(child.Keys) >= 2 {
+								if v, err := strconv.Atoi(child.Keys[1]); err == nil {
+									pfx.ValidLifetime = v
+								}
+							}
+						case "preferred-lifetime":
+							if len(child.Keys) >= 2 {
+								if v, err := strconv.Atoi(child.Keys[1]); err == nil {
+									pfx.PreferredLife = v
+								}
+							}
+						}
+					}
+					ra.Prefixes = append(ra.Prefixes, pfx)
+				}
+			}
+		}
+
+		proto.RouterAdvertisement = append(proto.RouterAdvertisement, ra)
+	}
+	return nil
+}
+
 func compileProtocols(node *Node, proto *ProtocolsConfig) error {
+	raNode := node.FindChild("router-advertisement")
+	if raNode != nil {
+		if err := compileRouterAdvertisement(raNode, proto); err != nil {
+			return fmt.Errorf("router-advertisement: %w", err)
+		}
+	}
+
 	ospfNode := node.FindChild("ospf")
 	if ospfNode != nil {
 		proto.OSPF = &OSPFConfig{}
@@ -1143,5 +1249,51 @@ func compileIPsec(node *Node, sec *SecurityConfig) error {
 		sec.IPsec.VPNs[vpn.Name] = vpn
 	}
 
+	return nil
+}
+
+func compileRoutingInstances(node *Node, cfg *Config) error {
+	// Auto-assign VRF table IDs starting from 100
+	tableID := 100
+
+	for _, child := range node.Children {
+		if child.IsLeaf || len(child.Keys) == 0 {
+			continue
+		}
+		instanceName := child.Keys[0]
+		ri := &RoutingInstanceConfig{
+			Name:    instanceName,
+			TableID: tableID,
+		}
+		tableID++
+
+		for _, prop := range child.Children {
+			switch prop.Name() {
+			case "instance-type":
+				if len(prop.Keys) >= 2 {
+					ri.InstanceType = prop.Keys[1]
+				}
+			case "interface":
+				if len(prop.Keys) >= 2 {
+					ri.Interfaces = append(ri.Interfaces, prop.Keys[1])
+				}
+			case "routing-options":
+				var ro RoutingOptionsConfig
+				if err := compileRoutingOptions(prop, &ro); err != nil {
+					return fmt.Errorf("instance %s routing-options: %w", instanceName, err)
+				}
+				ri.StaticRoutes = ro.StaticRoutes
+			case "protocols":
+				var proto ProtocolsConfig
+				if err := compileProtocols(prop, &proto); err != nil {
+					return fmt.Errorf("instance %s protocols: %w", instanceName, err)
+				}
+				ri.OSPF = proto.OSPF
+				ri.BGP = proto.BGP
+			}
+		}
+
+		cfg.RoutingInstances = append(cfg.RoutingInstances, ri)
+	}
 	return nil
 }

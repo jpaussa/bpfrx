@@ -79,7 +79,9 @@ var operationalTree = map[string]*completionNode{
 			"leases":            {desc: "Show DHCP leases"},
 			"client-identifier": {desc: "Show DHCPv6 DUID(s)"},
 		}},
-		"route": {desc: "Show routing table"},
+		"route": {desc: "Show routing table [instance <name>]", children: map[string]*completionNode{
+			"instance": {desc: "Show routes for a routing instance"},
+		}},
 		"security": {desc: "Show security information", children: map[string]*completionNode{
 			"zones":    {desc: "Show security zones"},
 			"policies": {desc: "Show security policies"},
@@ -517,7 +519,7 @@ func (c *CLI) handleShow(args []string) error {
 		return nil
 
 	case "route":
-		return c.showRoutes()
+		return c.handleShowRoute(args[1:])
 
 	case "security":
 		return c.handleShowSecurity(args[1:])
@@ -1541,7 +1543,14 @@ func (c *CLI) showAddressBook() error {
 	if len(ab.AddressSets) > 0 {
 		fmt.Println("Address sets:")
 		for _, as := range ab.AddressSets {
-			fmt.Printf("  %-24s members: %s\n", as.Name, strings.Join(as.Addresses, ", "))
+			var parts []string
+			for _, a := range as.Addresses {
+				parts = append(parts, a)
+			}
+			for _, s := range as.AddressSets {
+				parts = append(parts, "set:"+s)
+			}
+			fmt.Printf("  %-24s members: %s\n", as.Name, strings.Join(parts, ", "))
 		}
 	}
 
@@ -1590,6 +1599,13 @@ func (c *CLI) showApplications() error {
 	return nil
 }
 
+func (c *CLI) handleShowRoute(args []string) error {
+	if len(args) >= 2 && args[0] == "instance" {
+		return c.showRoutesForInstance(args[1])
+	}
+	return c.showRoutes()
+}
+
 func (c *CLI) showRoutes() error {
 	if c.routing == nil {
 		fmt.Println("Routing manager not available")
@@ -1602,6 +1618,46 @@ func (c *CLI) showRoutes() error {
 	}
 
 	fmt.Println("Routing table:")
+	fmt.Printf("  %-24s %-20s %-14s %-12s %s\n",
+		"Destination", "Next-hop", "Interface", "Proto", "Pref")
+	for _, e := range entries {
+		fmt.Printf("  %-24s %-20s %-14s %-12s %d\n",
+			e.Destination, e.NextHop, e.Interface, e.Protocol, e.Preference)
+	}
+	return nil
+}
+
+func (c *CLI) showRoutesForInstance(instanceName string) error {
+	if c.routing == nil {
+		fmt.Println("Routing manager not available")
+		return nil
+	}
+
+	cfg := c.store.ActiveConfig()
+	if cfg == nil {
+		fmt.Println("No active configuration")
+		return nil
+	}
+
+	var tableID int
+	found := false
+	for _, ri := range cfg.RoutingInstances {
+		if ri.Name == instanceName {
+			tableID = ri.TableID
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("routing instance %q not found", instanceName)
+	}
+
+	entries, err := c.routing.GetRoutesForTable(tableID)
+	if err != nil {
+		return fmt.Errorf("get routes for instance %s: %w", instanceName, err)
+	}
+
+	fmt.Printf("Routing table for instance %s (table %d):\n", instanceName, tableID)
 	fmt.Printf("  %-24s %-20s %-14s %-12s %s\n",
 		"Destination", "Next-hop", "Interface", "Proto", "Pref")
 	for _, e := range entries {

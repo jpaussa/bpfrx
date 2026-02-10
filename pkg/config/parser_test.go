@@ -842,6 +842,353 @@ func TestRoutingConfigParsing(t *testing.T) {
 	}
 }
 
+func TestNestedAddressSets(t *testing.T) {
+	// Test hierarchical syntax with nested address-sets
+	input := `security {
+    address-book {
+        global {
+            address srv1 10.0.1.10/32;
+            address srv2 10.0.1.20/32;
+            address srv3 10.0.2.10/32;
+            address-set servers {
+                address srv1;
+                address srv2;
+            }
+            address-set all-servers {
+                address srv3;
+                address-set servers;
+            }
+        }
+    }
+}`
+	parser := NewParser(input)
+	tree, errs := parser.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	ab := cfg.Security.AddressBook
+	if ab == nil {
+		t.Fatal("missing address book")
+	}
+
+	// Verify individual addresses
+	if len(ab.Addresses) != 3 {
+		t.Fatalf("expected 3 addresses, got %d", len(ab.Addresses))
+	}
+
+	// Verify "servers" set has 2 direct address members
+	servers := ab.AddressSets["servers"]
+	if servers == nil {
+		t.Fatal("missing address-set servers")
+	}
+	if len(servers.Addresses) != 2 {
+		t.Errorf("servers: expected 2 address members, got %d", len(servers.Addresses))
+	}
+	if len(servers.AddressSets) != 0 {
+		t.Errorf("servers: expected 0 address-set members, got %d", len(servers.AddressSets))
+	}
+
+	// Verify "all-servers" set has 1 address + 1 nested set
+	allServers := ab.AddressSets["all-servers"]
+	if allServers == nil {
+		t.Fatal("missing address-set all-servers")
+	}
+	if len(allServers.Addresses) != 1 {
+		t.Errorf("all-servers: expected 1 address member, got %d", len(allServers.Addresses))
+	}
+	if len(allServers.AddressSets) != 1 {
+		t.Errorf("all-servers: expected 1 address-set member, got %d", len(allServers.AddressSets))
+	}
+	if len(allServers.AddressSets) > 0 && allServers.AddressSets[0] != "servers" {
+		t.Errorf("all-servers nested set: expected 'servers', got %q", allServers.AddressSets[0])
+	}
+
+	// Verify recursive expansion
+	expanded, err := ExpandAddressSet("all-servers", ab)
+	if err != nil {
+		t.Fatalf("expand error: %v", err)
+	}
+	if len(expanded) != 3 {
+		t.Errorf("expected 3 expanded addresses, got %d: %v", len(expanded), expanded)
+	}
+	// Should contain srv3 (direct), srv1, srv2 (from nested "servers")
+	expandedMap := make(map[string]bool)
+	for _, a := range expanded {
+		expandedMap[a] = true
+	}
+	for _, expected := range []string{"srv1", "srv2", "srv3"} {
+		if !expandedMap[expected] {
+			t.Errorf("expanded set missing %q", expected)
+		}
+	}
+
+	// Test set-command syntax for nested address-sets
+	tree2 := &ConfigTree{}
+	setCommands := []string{
+		"set security address-book global address srv1 10.0.1.10/32",
+		"set security address-book global address srv2 10.0.1.20/32",
+		"set security address-book global address srv3 10.0.2.10/32",
+		"set security address-book global address-set servers address srv1",
+		"set security address-book global address-set servers address srv2",
+		"set security address-book global address-set all-servers address srv3",
+		"set security address-book global address-set all-servers address-set servers",
+	}
+	for _, cmd := range setCommands {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree2.SetPath(path); err != nil {
+			t.Fatalf("SetPath: %v", err)
+		}
+	}
+
+	cfg2, err := CompileConfig(tree2)
+	if err != nil {
+		t.Fatalf("compile set syntax: %v", err)
+	}
+
+	allServers2 := cfg2.Security.AddressBook.AddressSets["all-servers"]
+	if allServers2 == nil {
+		t.Fatal("missing all-servers from set syntax")
+	}
+	if len(allServers2.Addresses) != 1 || len(allServers2.AddressSets) != 1 {
+		t.Errorf("all-servers from set syntax: addresses=%d sets=%d",
+			len(allServers2.Addresses), len(allServers2.AddressSets))
+	}
+
+	expanded2, err := ExpandAddressSet("all-servers", cfg2.Security.AddressBook)
+	if err != nil {
+		t.Fatalf("expand set syntax error: %v", err)
+	}
+	if len(expanded2) != 3 {
+		t.Errorf("expected 3 expanded from set syntax, got %d: %v", len(expanded2), expanded2)
+	}
+}
+
+func TestNestedAddressSetCycleDetection(t *testing.T) {
+	ab := &AddressBook{
+		Addresses: map[string]*Address{
+			"a1": {Name: "a1", Value: "10.0.0.1/32"},
+		},
+		AddressSets: map[string]*AddressSet{
+			"set-a": {Name: "set-a", Addresses: []string{"a1"}, AddressSets: []string{"set-b"}},
+			"set-b": {Name: "set-b", AddressSets: []string{"set-a"}},
+		},
+	}
+
+	_, err := ExpandAddressSet("set-a", ab)
+	if err == nil {
+		t.Fatal("expected cycle detection error")
+	}
+	if !strings.Contains(err.Error(), "cycle") {
+		t.Errorf("expected cycle error, got: %v", err)
+	}
+}
+
+func TestRoutingInstances(t *testing.T) {
+	// Test set-command syntax for routing instances
+	tree := &ConfigTree{}
+	setCommands := []string{
+		"set routing-instances Comcast-GigabitPro instance-type virtual-router",
+		"set routing-instances Comcast-GigabitPro interface enp7s0.100",
+		"set routing-instances Comcast-GigabitPro interface enp7s0.200",
+		"set routing-instances Comcast-GigabitPro routing-options static route 0.0.0.0/0 next-hop 74.93.96.1",
+		"set routing-instances Comcast-GigabitPro routing-options static route 0.0.0.0/0 preference 10",
+		"set routing-instances ATT instance-type virtual-router",
+		"set routing-instances ATT interface enp8s0",
+		"set routing-instances ATT routing-options static route 0.0.0.0/0 next-hop 192.168.1.254",
+		"set routing-instances ATT protocols bgp local-as 65001",
+		"set routing-instances ATT protocols bgp group upstream peer-as 7018",
+		"set routing-instances ATT protocols bgp group upstream neighbor 192.168.1.254",
+	}
+
+	for _, cmd := range setCommands {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree.SetPath(path); err != nil {
+			t.Fatalf("SetPath: %v", err)
+		}
+	}
+
+	output := tree.Format()
+	t.Logf("Formatted tree:\n%s", output)
+
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig failed: %v", err)
+	}
+
+	if len(cfg.RoutingInstances) != 2 {
+		t.Fatalf("expected 2 routing instances, got %d", len(cfg.RoutingInstances))
+	}
+
+	// Find the two instances (order not guaranteed)
+	var comcast, att *RoutingInstanceConfig
+	for _, ri := range cfg.RoutingInstances {
+		switch ri.Name {
+		case "Comcast-GigabitPro":
+			comcast = ri
+		case "ATT":
+			att = ri
+		}
+	}
+
+	if comcast == nil {
+		t.Fatal("missing routing instance Comcast-GigabitPro")
+	}
+	if comcast.InstanceType != "virtual-router" {
+		t.Errorf("Comcast instance-type: %s", comcast.InstanceType)
+	}
+	if len(comcast.Interfaces) != 2 {
+		t.Errorf("Comcast interfaces: expected 2, got %d", len(comcast.Interfaces))
+	}
+	if len(comcast.StaticRoutes) != 1 {
+		t.Fatalf("Comcast static routes: expected 1, got %d", len(comcast.StaticRoutes))
+	}
+	if comcast.StaticRoutes[0].NextHop != "74.93.96.1" {
+		t.Errorf("Comcast route next-hop: %s", comcast.StaticRoutes[0].NextHop)
+	}
+	if comcast.StaticRoutes[0].Preference != 10 {
+		t.Errorf("Comcast route preference: %d", comcast.StaticRoutes[0].Preference)
+	}
+	if comcast.TableID < 100 {
+		t.Errorf("Comcast table ID should be >= 100, got %d", comcast.TableID)
+	}
+
+	if att == nil {
+		t.Fatal("missing routing instance ATT")
+	}
+	if len(att.Interfaces) != 1 || att.Interfaces[0] != "enp8s0" {
+		t.Errorf("ATT interfaces: %v", att.Interfaces)
+	}
+	if len(att.StaticRoutes) != 1 {
+		t.Fatalf("ATT static routes: expected 1, got %d", len(att.StaticRoutes))
+	}
+	if att.BGP == nil {
+		t.Fatal("ATT BGP config is nil")
+	}
+	if att.BGP.LocalAS != 65001 {
+		t.Errorf("ATT BGP local-as: %d", att.BGP.LocalAS)
+	}
+	if len(att.BGP.Neighbors) != 1 {
+		t.Fatalf("ATT BGP neighbors: expected 1, got %d", len(att.BGP.Neighbors))
+	}
+	if att.BGP.Neighbors[0].Address != "192.168.1.254" || att.BGP.Neighbors[0].PeerAS != 7018 {
+		t.Errorf("ATT BGP neighbor: addr=%s as=%d",
+			att.BGP.Neighbors[0].Address, att.BGP.Neighbors[0].PeerAS)
+	}
+
+	// Test hierarchical syntax
+	hierInput := `routing-instances {
+    Comcast-GigabitPro {
+        instance-type virtual-router;
+        interface enp7s0.100;
+        routing-options {
+            static {
+                route 0.0.0.0/0 {
+                    next-hop 74.93.96.1;
+                }
+            }
+        }
+    }
+}`
+	parser := NewParser(hierInput)
+	hierTree, errs := parser.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("hierarchical parse errors: %v", errs)
+	}
+	hierCfg, err := CompileConfig(hierTree)
+	if err != nil {
+		t.Fatalf("hierarchical compile error: %v", err)
+	}
+	if len(hierCfg.RoutingInstances) != 1 {
+		t.Fatalf("hierarchical: expected 1 instance, got %d", len(hierCfg.RoutingInstances))
+	}
+	if hierCfg.RoutingInstances[0].Name != "Comcast-GigabitPro" {
+		t.Errorf("hierarchical instance name: %s", hierCfg.RoutingInstances[0].Name)
+	}
+}
+
+func TestRouterAdvertisement(t *testing.T) {
+	tree := &ConfigTree{}
+	setCommands := []string{
+		"set protocols router-advertisement interface vlan100 managed-configuration",
+		"set protocols router-advertisement interface vlan100 other-stateful-configuration",
+		"set protocols router-advertisement interface vlan100 default-lifetime 1800",
+		"set protocols router-advertisement interface vlan100 max-advertisement-interval 600",
+		"set protocols router-advertisement interface vlan100 link-mtu 1500",
+		"set protocols router-advertisement interface vlan100 prefix 2001:db8:1::/64 on-link",
+		"set protocols router-advertisement interface vlan100 prefix 2001:db8:1::/64 autonomous",
+		"set protocols router-advertisement interface vlan100 dns-server-address 2001:db8::53",
+		"set protocols router-advertisement interface vlan100 dns-server-address 2001:db8::54",
+		"set protocols router-advertisement interface vlan100 nat64prefix 64:ff9b::/96",
+		"set protocols router-advertisement interface vlan200 prefix 2001:db8:2::/64",
+	}
+
+	for _, cmd := range setCommands {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree.SetPath(path); err != nil {
+			t.Fatalf("SetPath: %v", err)
+		}
+	}
+
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig failed: %v", err)
+	}
+
+	if len(cfg.Protocols.RouterAdvertisement) != 2 {
+		t.Fatalf("expected 2 RA interfaces, got %d", len(cfg.Protocols.RouterAdvertisement))
+	}
+
+	// Find vlan100 config
+	var ra100 *RAInterfaceConfig
+	for _, ra := range cfg.Protocols.RouterAdvertisement {
+		if ra.Interface == "vlan100" {
+			ra100 = ra
+		}
+	}
+	if ra100 == nil {
+		t.Fatal("missing RA config for vlan100")
+	}
+	if !ra100.ManagedConfig {
+		t.Error("vlan100: managed-configuration should be true")
+	}
+	if !ra100.OtherStateful {
+		t.Error("vlan100: other-stateful should be true")
+	}
+	if ra100.DefaultLifetime != 1800 {
+		t.Errorf("vlan100: default-lifetime = %d", ra100.DefaultLifetime)
+	}
+	if ra100.LinkMTU != 1500 {
+		t.Errorf("vlan100: link-mtu = %d", ra100.LinkMTU)
+	}
+	if len(ra100.Prefixes) != 1 || ra100.Prefixes[0].Prefix != "2001:db8:1::/64" {
+		t.Errorf("vlan100: prefixes = %+v", ra100.Prefixes)
+	}
+	if !ra100.Prefixes[0].OnLink || !ra100.Prefixes[0].Autonomous {
+		t.Error("vlan100: prefix flags should default to on-link+autonomous")
+	}
+	if len(ra100.DNSServers) != 2 {
+		t.Errorf("vlan100: dns-servers = %v", ra100.DNSServers)
+	}
+	if ra100.NAT64Prefix != "64:ff9b::/96" {
+		t.Errorf("vlan100: nat64prefix = %s", ra100.NAT64Prefix)
+	}
+}
+
 func TestFormatSet(t *testing.T) {
 	input := `security {
     zones {
