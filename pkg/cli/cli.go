@@ -21,6 +21,7 @@ import (
 	"github.com/psaab/bpfrx/pkg/ipsec"
 	"github.com/psaab/bpfrx/pkg/logging"
 	"github.com/psaab/bpfrx/pkg/routing"
+	"github.com/vishvananda/netlink"
 )
 
 // CLI is the interactive command-line interface.
@@ -1915,46 +1916,36 @@ func (c *CLI) showInterfaces(args []string) error {
 		filterName = args[0]
 	}
 
-	// Build interface -> zone name mapping from config
-	ifaceZone := make(map[string]string)
+	// Build interface -> zone mapping
+	ifaceZone := make(map[string]*config.ZoneConfig)
+	ifaceZoneName := make(map[string]string)
 	for name, zone := range cfg.Security.Zones {
 		for _, ifaceName := range zone.Interfaces {
-			ifaceZone[ifaceName] = name
+			ifaceZone[ifaceName] = zone
+			ifaceZoneName[ifaceName] = name
 		}
 	}
 
-	// Collect unique interface names from all zones
-	var ifaceNames []string
-	for ifaceName := range ifaceZone {
-		if filterName != "" && ifaceName != filterName {
-			continue
-		}
-		ifaceNames = append(ifaceNames, ifaceName)
-	}
-
-	if len(ifaceNames) == 0 && filterName != "" {
-		return fmt.Errorf("interface %s not found in configuration", filterName)
-	}
-
-	// Build physical interface -> VLAN info from config
+	// Collect logical interfaces
 	type logicalIface struct {
 		zoneName string
+		zone     *config.ZoneConfig
 		physName string
 		unitNum  int
 		vlanID   int
 	}
 	var logicals []logicalIface
 
-	for _, ifaceName := range ifaceNames {
-		zoneName := ifaceZone[ifaceName]
-		// Parse "enp6s0.100" into physical + unit
+	for ifaceName, zone := range ifaceZone {
+		if filterName != "" && !strings.HasPrefix(ifaceName, filterName) {
+			continue
+		}
 		parts := strings.SplitN(ifaceName, ".", 2)
 		physName := parts[0]
 		unitNum := 0
 		if len(parts) == 2 {
 			unitNum, _ = strconv.Atoi(parts[1])
 		}
-		// Resolve VLAN ID from interface config
 		vlanID := 0
 		if ifCfg, ok := cfg.Interfaces.Interfaces[physName]; ok {
 			if unit, ok := ifCfg.Units[unitNum]; ok {
@@ -1962,14 +1953,19 @@ func (c *CLI) showInterfaces(args []string) error {
 			}
 		}
 		logicals = append(logicals, logicalIface{
-			zoneName: zoneName,
+			zoneName: ifaceZoneName[ifaceName],
+			zone:     zone,
 			physName: physName,
 			unitNum:  unitNum,
 			vlanID:   vlanID,
 		})
 	}
 
-	// Group logicals by physical interface
+	if len(logicals) == 0 && filterName != "" {
+		return fmt.Errorf("interface %s not found in configuration", filterName)
+	}
+
+	// Group by physical interface
 	physGroups := make(map[string][]logicalIface)
 	var physOrder []string
 	for _, li := range logicals {
@@ -1978,53 +1974,108 @@ func (c *CLI) showInterfaces(args []string) error {
 		}
 		physGroups[li.physName] = append(physGroups[li.physName], li)
 	}
+	sort.Strings(physOrder)
 
 	for _, physName := range physOrder {
 		group := physGroups[physName]
 
-		// Query live system for link info
-		iface, err := net.InterfaceByName(physName)
-		if err != nil {
-			fmt.Printf("Physical interface: %s, Not present\n", physName)
-			for _, li := range group {
-				fmt.Printf("  Security zone: %s (unit %d", li.zoneName, li.unitNum)
-				if li.vlanID > 0 {
-					fmt.Printf(", vlan-id %d", li.vlanID)
-				}
-				fmt.Println(")")
-			}
-			fmt.Println()
+		// Get netlink link for richer info
+		link, nlErr := netlink.LinkByName(physName)
+
+		// Fallback to net.InterfaceByName if netlink fails
+		iface, stdErr := net.InterfaceByName(physName)
+		if stdErr != nil && nlErr != nil {
+			fmt.Printf("Physical interface: %s, Not present\n\n", physName)
 			continue
 		}
 
-		upDown := "Down"
-		if iface.Flags&net.FlagUp != 0 {
-			upDown = "Up"
-		}
+		// Determine link state
+		linkUp := "Down"
 		enabled := "Enabled"
-		if iface.Flags&net.FlagUp == 0 {
-			enabled = "Disabled"
-		}
-
-		// Check if vlan-tagging is enabled
-		vlanTagging := false
-		if ifCfg, ok := cfg.Interfaces.Interfaces[physName]; ok {
-			vlanTagging = ifCfg.VlanTagging
+		if nlErr == nil {
+			attrs := link.Attrs()
+			if attrs.OperState == netlink.OperUp {
+				linkUp = "Up"
+			}
+			if attrs.Flags&net.FlagUp == 0 {
+				enabled = "Disabled"
+			}
+		} else if iface != nil {
+			if iface.Flags&net.FlagUp != 0 {
+				linkUp = "Up"
+			}
 		}
 
 		fmt.Printf("Physical interface: %s, %s, Physical link is %s\n",
-			physName, enabled, upDown)
-		fmt.Printf("  Link-level type: Ethernet, MTU: %d, MAC: %s\n",
-			iface.MTU, iface.HardwareAddr)
-		if vlanTagging {
+			physName, enabled, linkUp)
+
+		// Link-level details
+		mtu := 0
+		var hwAddr net.HardwareAddr
+		if nlErr == nil {
+			attrs := link.Attrs()
+			mtu = attrs.MTU
+			hwAddr = attrs.HardwareAddr
+		} else if iface != nil {
+			mtu = iface.MTU
+			hwAddr = iface.HardwareAddr
+		}
+
+		linkType := "Ethernet"
+		speedStr := ""
+		if speed := readLinkSpeed(physName); speed > 0 {
+			speedStr = fmt.Sprintf(", Speed: %s", formatSpeed(speed))
+		}
+
+		fmt.Printf("  Link-level type: %s, MTU: %d%s\n", linkType, mtu, speedStr)
+
+		if len(hwAddr) > 0 {
+			fmt.Printf("  Current address: %s, Hardware address: %s\n", hwAddr, hwAddr)
+		}
+
+		// Device flags
+		if nlErr == nil {
+			attrs := link.Attrs()
+			var flags []string
+			flags = append(flags, "Present")
+			if attrs.OperState == netlink.OperUp {
+				flags = append(flags, "Running")
+			}
+			if linkUp == "Down" {
+				flags = append(flags, "Down")
+			}
+			fmt.Printf("  Device flags   : %s\n", strings.Join(flags, " "))
+		}
+
+		// VLAN tagging
+		if ifCfg, ok := cfg.Interfaces.Interfaces[physName]; ok && ifCfg.VlanTagging {
 			fmt.Println("  VLAN tagging: Enabled")
 		}
 
-		// Traffic counters from BPF map
-		if c.dp != nil && c.dp.IsLoaded() {
+		// Kernel link statistics
+		if nlErr == nil {
+			attrs := link.Attrs()
+			if s := attrs.Statistics; s != nil {
+				fmt.Printf("  Input rate     : %d packets, %d bytes\n",
+					s.RxPackets, s.RxBytes)
+				fmt.Printf("  Output rate    : %d packets, %d bytes\n",
+					s.TxPackets, s.TxBytes)
+				if s.RxErrors > 0 || s.TxErrors > 0 {
+					fmt.Printf("  Errors         : %d input, %d output\n",
+						s.RxErrors, s.TxErrors)
+				}
+				if s.RxDropped > 0 || s.TxDropped > 0 {
+					fmt.Printf("  Drops          : %d input, %d output\n",
+						s.RxDropped, s.TxDropped)
+				}
+			}
+		}
+
+		// BPF traffic counters (XDP/TC level)
+		if c.dp != nil && c.dp.IsLoaded() && iface != nil {
 			counters, err := c.dp.ReadInterfaceCounters(iface.Index)
-			if err == nil {
-				fmt.Println("  Traffic statistics:")
+			if err == nil && (counters.RxPackets > 0 || counters.TxPackets > 0) {
+				fmt.Println("  BPF statistics:")
 				fmt.Printf("    Input:  %d packets, %d bytes\n",
 					counters.RxPackets, counters.RxBytes)
 				fmt.Printf("    Output: %d packets, %d bytes\n",
@@ -2041,41 +2092,91 @@ func (c *CLI) showInterfaces(args []string) error {
 
 			fmt.Printf("\n  Logical interface %s.%d", physName, li.unitNum)
 			if li.vlanID > 0 {
-				fmt.Printf(" (vlan-id %d)", li.vlanID)
+				fmt.Printf(" VLAN-Tag [ 0x8100.%d ]", li.vlanID)
 			}
-			fmt.Printf(", Zone: %s\n", li.zoneName)
+			fmt.Println()
 
-			// Show DHCP annotations
+			fmt.Printf("    Security: Zone: %s\n", li.zoneName)
+
+			// Host-inbound traffic services
+			if li.zone != nil && li.zone.HostInboundTraffic != nil {
+				hit := li.zone.HostInboundTraffic
+				if len(hit.SystemServices) > 0 {
+					fmt.Printf("    Allowed host-inbound traffic : %s\n",
+						strings.Join(hit.SystemServices, " "))
+				}
+				if len(hit.Protocols) > 0 {
+					fmt.Printf("    Allowed host-inbound protocols: %s\n",
+						strings.Join(hit.Protocols, " "))
+				}
+			}
+
+			// DHCP annotations
+			var unit *config.InterfaceUnit
 			if ifCfg, ok := cfg.Interfaces.Interfaces[physName]; ok {
-				if unit, ok := ifCfg.Units[li.unitNum]; ok {
-					if unit.DHCP {
-						fmt.Println("    DHCPv4: enabled")
+				if u, ok := ifCfg.Units[li.unitNum]; ok {
+					unit = u
+				}
+			}
+			if unit != nil {
+				if unit.DHCP {
+					fmt.Println("    DHCPv4: enabled")
+					if lease := c.dhcpLease(physName, dhcp.AFInet); lease != nil {
+						fmt.Printf("      Address: %s, Gateway: %s\n",
+							lease.Address, lease.Gateway)
 					}
-					if unit.DHCPv6 {
-						fmt.Println("    DHCPv6: enabled")
+				}
+				if unit.DHCPv6 {
+					duidInfo := ""
+					if unit.DHCPv6Client != nil && unit.DHCPv6Client.DUIDType != "" {
+						duidInfo = fmt.Sprintf(" (DUID type: %s)", unit.DHCPv6Client.DUIDType)
+					}
+					fmt.Printf("    DHCPv6: enabled%s\n", duidInfo)
+					if lease := c.dhcpLease(physName, dhcp.AFInet6); lease != nil {
+						fmt.Printf("      Address: %s, Gateway: %s\n",
+							lease.Address, lease.Gateway)
 					}
 				}
 			}
 
-			// Look up addresses from the logical/sub-interface
+			// Addresses grouped by protocol
 			liface, err := net.InterfaceByName(lookupName)
-			if err != nil {
-				// Fall back to physical interface
+			if err != nil && iface != nil {
 				liface = iface
 			}
-			addrs, err := liface.Addrs()
-			if err == nil && len(addrs) > 0 {
-				fmt.Println("    Addresses:")
-				for _, addr := range addrs {
-					ipNet, ok := addr.(*net.IPNet)
-					if !ok {
-						continue
+			if liface != nil {
+				addrs, err := liface.Addrs()
+				if err == nil && len(addrs) > 0 {
+					var v4Addrs, v6Addrs []string
+					for _, addr := range addrs {
+						ipNet, ok := addr.(*net.IPNet)
+						if !ok {
+							continue
+						}
+						ones, _ := ipNet.Mask.Size()
+						if ipNet.IP.To4() != nil {
+							v4Addrs = append(v4Addrs, fmt.Sprintf("%s/%d", ipNet.IP, ones))
+						} else {
+							v6Addrs = append(v6Addrs, fmt.Sprintf("%s/%d", ipNet.IP, ones))
+						}
 					}
-					ones, _ := ipNet.Mask.Size()
-					if ipNet.IP.To4() != nil {
-						fmt.Printf("      inet  %s/%d\n", ipNet.IP, ones)
-					} else {
-						fmt.Printf("      inet6 %s/%d\n", ipNet.IP, ones)
+					if len(v4Addrs) > 0 {
+						fmt.Printf("    Protocol inet, MTU: %d\n", mtu)
+						for _, a := range v4Addrs {
+							fmt.Printf("      Addresses, Flags: Is-Preferred Is-Primary\n")
+							fmt.Printf("        Local: %s\n", a)
+						}
+					}
+					if len(v6Addrs) > 0 {
+						fmt.Printf("    Protocol inet6, MTU: %d\n", mtu)
+						for _, a := range v6Addrs {
+							flags := "Is-Preferred Is-Primary"
+							if strings.HasPrefix(a, "fe80:") {
+								flags = "Is-Preferred"
+							}
+							fmt.Printf("      Addresses, Flags: %s\n", flags)
+							fmt.Printf("        Local: %s\n", a)
+						}
 					}
 				}
 			}
@@ -2085,6 +2186,35 @@ func (c *CLI) showInterfaces(args []string) error {
 	}
 
 	return nil
+}
+
+// dhcpLease returns the DHCP lease for an interface/family, or nil.
+func (c *CLI) dhcpLease(ifaceName string, af dhcp.AddressFamily) *dhcp.Lease {
+	if c.dhcp == nil {
+		return nil
+	}
+	return c.dhcp.LeaseFor(ifaceName, af)
+}
+
+// readLinkSpeed reads the link speed in Mbps from sysfs. Returns 0 on error.
+func readLinkSpeed(ifaceName string) int {
+	data, err := os.ReadFile("/sys/class/net/" + ifaceName + "/speed")
+	if err != nil {
+		return 0
+	}
+	speed, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || speed <= 0 {
+		return 0
+	}
+	return speed
+}
+
+// formatSpeed formats a link speed in Mbps to a human-readable string.
+func formatSpeed(mbps int) string {
+	if mbps >= 1000 {
+		return fmt.Sprintf("%dGbps", mbps/1000)
+	}
+	return fmt.Sprintf("%dMbps", mbps)
 }
 
 func (c *CLI) handleShowSystem(args []string) error {

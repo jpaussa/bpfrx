@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -661,6 +662,286 @@ func (s *Server) GetInterfaces(_ context.Context, _ *pb.GetInterfacesRequest) (*
 	}
 	sort.Slice(resp.Interfaces, func(i, j int) bool { return resp.Interfaces[i].Name < resp.Interfaces[j].Name })
 	return resp, nil
+}
+
+func (s *Server) ShowInterfacesDetail(_ context.Context, req *pb.ShowInterfacesDetailRequest) (*pb.ShowInterfacesDetailResponse, error) {
+	cfg := s.store.ActiveConfig()
+	if cfg == nil {
+		return &pb.ShowInterfacesDetailResponse{Output: "no active configuration\n"}, nil
+	}
+
+	filterName := req.Filter
+
+	// Build interface -> zone mapping
+	ifaceZone := make(map[string]*config.ZoneConfig)
+	ifaceZoneName := make(map[string]string)
+	for name, zone := range cfg.Security.Zones {
+		for _, ifName := range zone.Interfaces {
+			ifaceZone[ifName] = zone
+			ifaceZoneName[ifName] = name
+		}
+	}
+
+	// Collect logical interfaces
+	type logicalIface struct {
+		zoneName string
+		zone     *config.ZoneConfig
+		physName string
+		unitNum  int
+		vlanID   int
+	}
+	var logicals []logicalIface
+
+	for ifName, zone := range ifaceZone {
+		if filterName != "" && !strings.HasPrefix(ifName, filterName) {
+			continue
+		}
+		parts := strings.SplitN(ifName, ".", 2)
+		physName := parts[0]
+		unitNum := 0
+		if len(parts) == 2 {
+			fmt.Sscanf(parts[1], "%d", &unitNum)
+		}
+		vlanID := 0
+		if ifCfg, ok := cfg.Interfaces.Interfaces[physName]; ok {
+			if unit, ok := ifCfg.Units[unitNum]; ok {
+				vlanID = unit.VlanID
+			}
+		}
+		logicals = append(logicals, logicalIface{
+			zoneName: ifaceZoneName[ifName],
+			zone:     zone,
+			physName: physName,
+			unitNum:  unitNum,
+			vlanID:   vlanID,
+		})
+	}
+
+	if len(logicals) == 0 && filterName != "" {
+		return &pb.ShowInterfacesDetailResponse{Output: fmt.Sprintf("interface %s not found in configuration\n", filterName)}, nil
+	}
+
+	// Group by physical interface
+	physGroups := make(map[string][]logicalIface)
+	var physOrder []string
+	for _, li := range logicals {
+		if _, seen := physGroups[li.physName]; !seen {
+			physOrder = append(physOrder, li.physName)
+		}
+		physGroups[li.physName] = append(physGroups[li.physName], li)
+	}
+	sort.Strings(physOrder)
+
+	var buf strings.Builder
+	for _, physName := range physOrder {
+		group := physGroups[physName]
+
+		iface, ifErr := net.InterfaceByName(physName)
+		if ifErr != nil {
+			fmt.Fprintf(&buf, "Physical interface: %s, Not present\n\n", physName)
+			continue
+		}
+
+		// Determine link state
+		linkUp := "Down"
+		enabled := "Enabled"
+		if iface.Flags&net.FlagUp != 0 {
+			linkUp = "Up"
+		}
+		if iface.Flags&net.FlagUp == 0 {
+			enabled = "Disabled"
+		}
+		// Try /sys/class/net for operstate
+		if data, err := os.ReadFile("/sys/class/net/" + physName + "/operstate"); err == nil {
+			state := strings.TrimSpace(string(data))
+			if state == "up" {
+				linkUp = "Up"
+			} else if state == "down" {
+				linkUp = "Down"
+			}
+		}
+
+		fmt.Fprintf(&buf, "Physical interface: %s, %s, Physical link is %s\n", physName, enabled, linkUp)
+
+		// Link-level details
+		mtu := iface.MTU
+		linkType := "Ethernet"
+		speedStr := ""
+		if raw, err := os.ReadFile("/sys/class/net/" + physName + "/speed"); err == nil {
+			var mbps int
+			if _, err := fmt.Sscanf(strings.TrimSpace(string(raw)), "%d", &mbps); err == nil && mbps > 0 {
+				if mbps >= 1000 {
+					speedStr = fmt.Sprintf(", Speed: %dGbps", mbps/1000)
+				} else {
+					speedStr = fmt.Sprintf(", Speed: %dMbps", mbps)
+				}
+			}
+		}
+		fmt.Fprintf(&buf, "  Link-level type: %s, MTU: %d%s\n", linkType, mtu, speedStr)
+
+		if len(iface.HardwareAddr) > 0 {
+			fmt.Fprintf(&buf, "  Current address: %s, Hardware address: %s\n", iface.HardwareAddr, iface.HardwareAddr)
+		}
+
+		// Device flags
+		var flags []string
+		flags = append(flags, "Present")
+		if linkUp == "Up" {
+			flags = append(flags, "Running")
+		}
+		if linkUp == "Down" {
+			flags = append(flags, "Down")
+		}
+		fmt.Fprintf(&buf, "  Device flags   : %s\n", strings.Join(flags, " "))
+
+		// VLAN tagging
+		if ifCfg, ok := cfg.Interfaces.Interfaces[physName]; ok && ifCfg.VlanTagging {
+			fmt.Fprintln(&buf, "  VLAN tagging: Enabled")
+		}
+
+		// Kernel link statistics via /sys/class/net
+		s.writeKernelStats(&buf, physName)
+
+		// BPF traffic counters
+		if s.dp != nil && s.dp.IsLoaded() {
+			if ctrs, err := s.dp.ReadInterfaceCounters(iface.Index); err == nil && (ctrs.RxPackets > 0 || ctrs.TxPackets > 0) {
+				fmt.Fprintln(&buf, "  BPF statistics:")
+				fmt.Fprintf(&buf, "    Input:  %d packets, %d bytes\n", ctrs.RxPackets, ctrs.RxBytes)
+				fmt.Fprintf(&buf, "    Output: %d packets, %d bytes\n", ctrs.TxPackets, ctrs.TxBytes)
+			}
+		}
+
+		// Show each logical unit
+		for _, li := range group {
+			lookupName := physName
+			if li.vlanID > 0 {
+				lookupName = fmt.Sprintf("%s.%d", physName, li.vlanID)
+			}
+
+			fmt.Fprintf(&buf, "\n  Logical interface %s.%d", physName, li.unitNum)
+			if li.vlanID > 0 {
+				fmt.Fprintf(&buf, " VLAN-Tag [ 0x8100.%d ]", li.vlanID)
+			}
+			fmt.Fprintln(&buf)
+
+			fmt.Fprintf(&buf, "    Security: Zone: %s\n", li.zoneName)
+
+			// Host-inbound traffic services
+			if li.zone != nil && li.zone.HostInboundTraffic != nil {
+				hit := li.zone.HostInboundTraffic
+				if len(hit.SystemServices) > 0 {
+					fmt.Fprintf(&buf, "    Allowed host-inbound traffic : %s\n", strings.Join(hit.SystemServices, " "))
+				}
+				if len(hit.Protocols) > 0 {
+					fmt.Fprintf(&buf, "    Allowed host-inbound protocols: %s\n", strings.Join(hit.Protocols, " "))
+				}
+			}
+
+			// DHCP annotations
+			var unit *config.InterfaceUnit
+			if ifCfg, ok := cfg.Interfaces.Interfaces[physName]; ok {
+				if u, ok := ifCfg.Units[li.unitNum]; ok {
+					unit = u
+				}
+			}
+			if unit != nil {
+				if unit.DHCP {
+					fmt.Fprintln(&buf, "    DHCPv4: enabled")
+					if s.dhcp != nil {
+						if lease := s.dhcp.LeaseFor(physName, dhcp.AFInet); lease != nil {
+							fmt.Fprintf(&buf, "      Address: %s, Gateway: %s\n", lease.Address, lease.Gateway)
+						}
+					}
+				}
+				if unit.DHCPv6 {
+					duidInfo := ""
+					if unit.DHCPv6Client != nil && unit.DHCPv6Client.DUIDType != "" {
+						duidInfo = fmt.Sprintf(" (DUID type: %s)", unit.DHCPv6Client.DUIDType)
+					}
+					fmt.Fprintf(&buf, "    DHCPv6: enabled%s\n", duidInfo)
+					if s.dhcp != nil {
+						if lease := s.dhcp.LeaseFor(physName, dhcp.AFInet6); lease != nil {
+							fmt.Fprintf(&buf, "      Address: %s, Gateway: %s\n", lease.Address, lease.Gateway)
+						}
+					}
+				}
+			}
+
+			// Addresses grouped by protocol
+			liface, _ := net.InterfaceByName(lookupName)
+			if liface == nil {
+				liface = iface
+			}
+			if liface != nil {
+				addrs, err := liface.Addrs()
+				if err == nil && len(addrs) > 0 {
+					var v4Addrs, v6Addrs []string
+					for _, addr := range addrs {
+						a := addr.String()
+						ip, _, err := net.ParseCIDR(a)
+						if err != nil {
+							continue
+						}
+						if ip.To4() != nil {
+							v4Addrs = append(v4Addrs, a)
+						} else {
+							v6Addrs = append(v6Addrs, a)
+						}
+					}
+					if len(v4Addrs) > 0 {
+						fmt.Fprintf(&buf, "    Protocol inet, MTU: %d\n", mtu)
+						for _, a := range v4Addrs {
+							fmt.Fprintln(&buf, "      Addresses, Flags: Is-Preferred Is-Primary")
+							fmt.Fprintf(&buf, "        Local: %s\n", a)
+						}
+					}
+					if len(v6Addrs) > 0 {
+						fmt.Fprintf(&buf, "    Protocol inet6, MTU: %d\n", mtu)
+						for _, a := range v6Addrs {
+							fl := "Is-Preferred Is-Primary"
+							if strings.HasPrefix(a, "fe80:") {
+								fl = "Is-Preferred"
+							}
+							fmt.Fprintf(&buf, "      Addresses, Flags: %s\n", fl)
+							fmt.Fprintf(&buf, "        Local: %s\n", a)
+						}
+					}
+				}
+			}
+		}
+
+		fmt.Fprintln(&buf)
+	}
+
+	return &pb.ShowInterfacesDetailResponse{Output: buf.String()}, nil
+}
+
+func (s *Server) writeKernelStats(buf *strings.Builder, ifaceName string) {
+	readStat := func(name string) uint64 {
+		data, err := os.ReadFile(fmt.Sprintf("/sys/class/net/%s/statistics/%s", ifaceName, name))
+		if err != nil {
+			return 0
+		}
+		var v uint64
+		fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &v)
+		return v
+	}
+	rxPkts := readStat("rx_packets")
+	rxBytes := readStat("rx_bytes")
+	txPkts := readStat("tx_packets")
+	txBytes := readStat("tx_bytes")
+	fmt.Fprintf(buf, "  Input rate     : %d packets, %d bytes\n", rxPkts, rxBytes)
+	fmt.Fprintf(buf, "  Output rate    : %d packets, %d bytes\n", txPkts, txBytes)
+	rxErr := readStat("rx_errors")
+	txErr := readStat("tx_errors")
+	if rxErr > 0 || txErr > 0 {
+		fmt.Fprintf(buf, "  Errors         : %d input, %d output\n", rxErr, txErr)
+	}
+	rxDrop := readStat("rx_dropped")
+	txDrop := readStat("tx_dropped")
+	if rxDrop > 0 || txDrop > 0 {
+		fmt.Fprintf(buf, "  Drops          : %d input, %d output\n", rxDrop, txDrop)
+	}
 }
 
 func (s *Server) GetDHCPLeases(_ context.Context, _ *pb.GetDHCPLeasesRequest) (*pb.GetDHCPLeasesResponse, error) {

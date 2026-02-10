@@ -44,6 +44,7 @@ const (
 	BpfrxService_GetScreen_FullMethodName                 = "/bpfrx.v1.BpfrxService/GetScreen"
 	BpfrxService_GetEvents_FullMethodName                 = "/bpfrx.v1.BpfrxService/GetEvents"
 	BpfrxService_GetInterfaces_FullMethodName             = "/bpfrx.v1.BpfrxService/GetInterfaces"
+	BpfrxService_ShowInterfacesDetail_FullMethodName      = "/bpfrx.v1.BpfrxService/ShowInterfacesDetail"
 	BpfrxService_GetDHCPLeases_FullMethodName             = "/bpfrx.v1.BpfrxService/GetDHCPLeases"
 	BpfrxService_GetDHCPClientIdentifiers_FullMethodName  = "/bpfrx.v1.BpfrxService/GetDHCPClientIdentifiers"
 	BpfrxService_GetRoutes_FullMethodName                 = "/bpfrx.v1.BpfrxService/GetRoutes"
@@ -89,6 +90,7 @@ type BpfrxServiceClient interface {
 	GetScreen(ctx context.Context, in *GetScreenRequest, opts ...grpc.CallOption) (*GetScreenResponse, error)
 	GetEvents(ctx context.Context, in *GetEventsRequest, opts ...grpc.CallOption) (*GetEventsResponse, error)
 	GetInterfaces(ctx context.Context, in *GetInterfacesRequest, opts ...grpc.CallOption) (*GetInterfacesResponse, error)
+	ShowInterfacesDetail(ctx context.Context, in *ShowInterfacesDetailRequest, opts ...grpc.CallOption) (*ShowInterfacesDetailResponse, error)
 	GetDHCPLeases(ctx context.Context, in *GetDHCPLeasesRequest, opts ...grpc.CallOption) (*GetDHCPLeasesResponse, error)
 	GetDHCPClientIdentifiers(ctx context.Context, in *GetDHCPClientIdentifiersRequest, opts ...grpc.CallOption) (*GetDHCPClientIdentifiersResponse, error)
 	GetRoutes(ctx context.Context, in *GetRoutesRequest, opts ...grpc.CallOption) (*GetRoutesResponse, error)
@@ -361,6 +363,16 @@ func (c *bpfrxServiceClient) GetInterfaces(ctx context.Context, in *GetInterface
 	return out, nil
 }
 
+func (c *bpfrxServiceClient) ShowInterfacesDetail(ctx context.Context, in *ShowInterfacesDetailRequest, opts ...grpc.CallOption) (*ShowInterfacesDetailResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ShowInterfacesDetailResponse)
+	err := c.cc.Invoke(ctx, BpfrxService_ShowInterfacesDetail_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *bpfrxServiceClient) GetDHCPLeases(ctx context.Context, in *GetDHCPLeasesRequest, opts ...grpc.CallOption) (*GetDHCPLeasesResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetDHCPLeasesResponse)
@@ -494,6 +506,7 @@ type BpfrxServiceServer interface {
 	GetScreen(context.Context, *GetScreenRequest) (*GetScreenResponse, error)
 	GetEvents(context.Context, *GetEventsRequest) (*GetEventsResponse, error)
 	GetInterfaces(context.Context, *GetInterfacesRequest) (*GetInterfacesResponse, error)
+	ShowInterfacesDetail(context.Context, *ShowInterfacesDetailRequest) (*ShowInterfacesDetailResponse, error)
 	GetDHCPLeases(context.Context, *GetDHCPLeasesRequest) (*GetDHCPLeasesResponse, error)
 	GetDHCPClientIdentifiers(context.Context, *GetDHCPClientIdentifiersRequest) (*GetDHCPClientIdentifiersResponse, error)
 	GetRoutes(context.Context, *GetRoutesRequest) (*GetRoutesResponse, error)
@@ -590,6 +603,9 @@ func (UnimplementedBpfrxServiceServer) GetEvents(context.Context, *GetEventsRequ
 }
 func (UnimplementedBpfrxServiceServer) GetInterfaces(context.Context, *GetInterfacesRequest) (*GetInterfacesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetInterfaces not implemented")
+}
+func (UnimplementedBpfrxServiceServer) ShowInterfacesDetail(context.Context, *ShowInterfacesDetailRequest) (*ShowInterfacesDetailResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ShowInterfacesDetail not implemented")
 }
 func (UnimplementedBpfrxServiceServer) GetDHCPLeases(context.Context, *GetDHCPLeasesRequest) (*GetDHCPLeasesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetDHCPLeases not implemented")
@@ -1092,6 +1108,24 @@ func _BpfrxService_GetInterfaces_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BpfrxService_ShowInterfacesDetail_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ShowInterfacesDetailRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BpfrxServiceServer).ShowInterfacesDetail(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BpfrxService_ShowInterfacesDetail_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BpfrxServiceServer).ShowInterfacesDetail(ctx, req.(*ShowInterfacesDetailRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _BpfrxService_GetDHCPLeases_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetDHCPLeasesRequest)
 	if err := dec(in); err != nil {
@@ -1378,6 +1412,10 @@ var BpfrxService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetInterfaces",
 			Handler:    _BpfrxService_GetInterfaces_Handler,
+		},
+		{
+			MethodName: "ShowInterfacesDetail",
+			Handler:    _BpfrxService_ShowInterfacesDetail_Handler,
 		},
 		{
 			MethodName: "GetDHCPLeases",

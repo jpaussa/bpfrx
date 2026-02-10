@@ -601,17 +601,11 @@ func (c *ctl) showIPsec(args []string) error {
 }
 
 func (c *ctl) showInterfaces() error {
-	resp, err := c.client.GetInterfaces(context.Background(), &pb.GetInterfacesRequest{})
+	resp, err := c.client.ShowInterfacesDetail(context.Background(), &pb.ShowInterfacesDetailRequest{})
 	if err != nil {
 		return fmt.Errorf("%v", err)
 	}
-	fmt.Printf("  %-16s %-8s %-12s %12s %12s %12s %12s\n",
-		"Interface", "Ifindex", "Zone", "RxPackets", "RxBytes", "TxPackets", "TxBytes")
-	for _, ii := range resp.Interfaces {
-		fmt.Printf("  %-16s %-8d %-12s %12d %12d %12d %12d\n",
-			ii.Name, ii.Ifindex, ii.Zone,
-			ii.RxPackets, ii.RxBytes, ii.TxPackets, ii.TxBytes)
-	}
+	fmt.Print(resp.Output)
 	return nil
 }
 

@@ -34,6 +34,7 @@ service BpfrxService {
   rpc GetScreen(GetScreenRequest) returns (GetScreenResponse);
   rpc GetEvents(GetEventsRequest) returns (GetEventsResponse);
   rpc GetInterfaces(GetInterfacesRequest) returns (GetInterfacesResponse);
+  rpc ShowInterfacesDetail(ShowInterfacesDetailRequest) returns (ShowInterfacesDetailResponse);
   rpc GetDHCPLeases(GetDHCPLeasesRequest) returns (GetDHCPLeasesResponse);
   rpc GetDHCPClientIdentifiers(GetDHCPClientIdentifiersRequest) returns (GetDHCPClientIdentifiersResponse);
   rpc GetRoutes(GetRoutesRequest) returns (GetRoutesResponse);
@@ -295,6 +296,11 @@ message InterfaceInfo {
   uint64 tx_packets = 6;
   uint64 tx_bytes = 7;
 }
+
+message ShowInterfacesDetailRequest {
+  string filter = 1;  // optional interface name filter
+}
+message ShowInterfacesDetailResponse { string output = 1; }
 
 message GetDHCPLeasesRequest {}
 message GetDHCPLeasesResponse {
