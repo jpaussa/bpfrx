@@ -141,11 +141,6 @@ devices:
     name: enp9s0
     network: bpfrx-tunnel
     type: nic
-  eth5:
-    name: enp10s0
-    nictype: macvlan
-    parent: ge3
-    type: nic
 YAML
 }
 
@@ -212,6 +207,17 @@ cmd_create_vm() {
 			die "VM agent did not become ready after 60 seconds"
 		fi
 	done
+
+	# Hot-add SR-IOV VF via PCI passthrough after boot
+	# (NIC type fails with agent race; PCI type does raw VFIO passthrough)
+	local vf_pci
+	vf_pci=$(readlink -f /sys/class/net/enp101s0f0v0/device 2>/dev/null | xargs basename 2>/dev/null)
+	if [[ -n "$vf_pci" ]]; then
+		info "Adding SR-IOV VF ($vf_pci) to VM via PCI passthrough..."
+		incus config device add "$INSTANCE_NAME" internet pci address="$vf_pci"
+	else
+		warn "SR-IOV VF enp101s0f0v0 not found, skipping internet interface"
+	fi
 
 	provision_instance vm
 	info "VM ready. Run '$0 deploy' to push bpfrxd binary."
