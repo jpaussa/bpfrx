@@ -492,6 +492,12 @@ func compileInterfaces(node *Node, ifaces *InterfacesConfig) error {
 								unit.FilterInputV4 = inputNode.Keys[1]
 							}
 						}
+						if relayNode := afNode.FindChild("dhcp-relay"); relayNode != nil {
+							unit.DHCPRelay = &InterfaceUnitDHCPRelay{}
+							if sgNode := relayNode.FindChild("server-group"); sgNode != nil && len(sgNode.Keys) >= 2 {
+								unit.DHCPRelay.ServerGroup = sgNode.Keys[1]
+							}
+						}
 					case "inet6":
 						for _, addrNode := range afNode.FindChildren("address") {
 							if len(addrNode.Keys) >= 2 {
@@ -513,6 +519,12 @@ func compileInterfaces(node *Node, ifaces *InterfacesConfig) error {
 								if dtNode := ciNode.FindChild("duid-type"); dtNode != nil && len(dtNode.Keys) >= 2 {
 									unit.DHCPv6Client.DUIDType = dtNode.Keys[1]
 								}
+							}
+						}
+						if relayNode := afNode.FindChild("dhcp-relay"); relayNode != nil {
+							unit.DHCPRelayV6 = &InterfaceUnitDHCPRelay{}
+							if sgNode := relayNode.FindChild("server-group"); sgNode != nil && len(sgNode.Keys) >= 2 {
+								unit.DHCPRelayV6.ServerGroup = sgNode.Keys[1]
 							}
 						}
 					}
@@ -1863,10 +1875,20 @@ func compileFlowMonitoring(node *Node, svc *ServicesConfig) error {
 
 func compileForwardingOptions(node *Node, fo *ForwardingOptionsConfig) error {
 	sampNode := node.FindChild("sampling")
-	if sampNode == nil {
-		return nil
+	if sampNode != nil {
+		if err := compileSampling(sampNode, fo); err != nil {
+			return err
+		}
 	}
-	return compileSampling(sampNode, fo)
+
+	relayNode := node.FindChild("dhcp-relay")
+	if relayNode != nil {
+		if err := compileDHCPRelay(relayNode, fo); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func compileSampling(node *Node, fo *ForwardingOptionsConfig) error {
@@ -1960,4 +1982,32 @@ func compileSamplingFamily(node *Node) *SamplingFamily {
 	}
 
 	return sf
+}
+
+func compileDHCPRelay(node *Node, fo *ForwardingOptionsConfig) error {
+	fo.DHCPRelay = &DHCPRelayConfig{
+		ServerGroups: make(map[string]*DHCPRelayServerGroup),
+	}
+
+	for _, sgNode := range node.FindChildren("server-group") {
+		if len(sgNode.Keys) < 2 {
+			continue
+		}
+		groupName := sgNode.Keys[1]
+		group := &DHCPRelayServerGroup{
+			Name:    groupName,
+			Servers: []string{},
+		}
+
+		// Each child is a leaf node representing a server IP address
+		for _, serverNode := range sgNode.Children {
+			if serverNode.IsLeaf && len(serverNode.Keys) > 0 {
+				group.Servers = append(group.Servers, serverNode.Keys[0])
+			}
+		}
+
+		fo.DHCPRelay.ServerGroups[groupName] = group
+	}
+
+	return nil
 }

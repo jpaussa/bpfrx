@@ -519,6 +519,20 @@ type VlanIfaceInfo struct {
 	Pad           uint16
 }
 
+// DHCPRelayKey mirrors the C struct dhcp_relay_key.
+type DHCPRelayKey struct {
+	Ifindex uint32
+	VlanID  uint16
+	Family  uint8
+	Pad     uint8
+}
+
+// DHCPRelayConfig mirrors the C struct dhcp_relay_config.
+type DHCPRelayConfig struct {
+	Enabled uint8
+	Pad     [7]uint8
+}
+
 // Protocol number constants.
 const (
 	ProtoICMPv6 = 58

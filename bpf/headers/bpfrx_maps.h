@@ -3,6 +3,7 @@
 
 #include "bpfrx_common.h"
 #include "bpfrx_conntrack.h"
+#include "bpfrx_dhcprelay.h"
 
 /* ============================================================
  * Tail call program arrays
@@ -94,6 +95,15 @@ struct {
 	__type(key, __u32);
 	__type(value, struct zone_config);
 } zone_configs SEC(".maps");
+
+/* {ifindex, vlan_id, family} -> dhcp_relay_config */
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, MAX_LOGICAL_INTERFACES);
+	__type(key, struct dhcp_relay_key);
+	__type(value, struct dhcp_relay_config);
+	__uint(map_flags, BPF_F_NO_PREALLOC);
+} dhcp_relay_map SEC(".maps");
 
 /* ============================================================
  * Policy lookup

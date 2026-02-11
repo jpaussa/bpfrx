@@ -26,6 +26,15 @@ int xdp_forward_prog(struct xdp_md *ctx)
 		return XDP_DROP;
 
 	/*
+	 * DHCP relay: if the dhcp_relay flag is set, pass the packet
+	 * to userspace for relay processing.
+	 */
+	if (meta->dhcp_relay) {
+		inc_counter(GLOBAL_CTR_DHCP_RELAY);
+		return XDP_PASS;
+	}
+
+	/*
 	 * If no egress interface was resolved, the packet is locally
 	 * destined. Check host-inbound-traffic policy before passing
 	 * to the kernel stack.

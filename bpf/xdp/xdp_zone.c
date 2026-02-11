@@ -34,6 +34,44 @@ int xdp_zone_prog(struct xdp_md *ctx)
 	inc_zone_ingress((__u32)*zone_id, meta->pkt_len);
 
 	/*
+	 * DHCP relay detection: if this interface is configured for
+	 * DHCP relay, check if the packet is DHCP traffic and set
+	 * the relay flag to pass it to userspace.
+	 */
+	if (meta->protocol == PROTO_UDP) {
+		__u16 dport = bpf_ntohs(meta->dst_port);
+		__u16 sport = bpf_ntohs(meta->src_port);
+
+		/* DHCPv4: client→server (68→67) or server→client (67→68) */
+		if ((dport == 67 || sport == 67 || dport == 68 || sport == 68) &&
+		    meta->addr_family == AF_INET) {
+			struct dhcp_relay_key rkey = {
+				.ifindex = meta->ingress_ifindex,
+				.vlan_id = meta->ingress_vlan_id,
+				.family = AF_INET,
+			};
+			struct dhcp_relay_config *rcfg = bpf_map_lookup_elem(&dhcp_relay_map, &rkey);
+			if (rcfg && rcfg->enabled) {
+				meta->dhcp_relay = 1;
+			}
+		}
+
+		/* DHCPv6: client→server (546→547) or server→client (547→546) */
+		if ((dport == 547 || sport == 547 || dport == 546 || sport == 546) &&
+		    meta->addr_family == AF_INET6) {
+			struct dhcp_relay_key rkey = {
+				.ifindex = meta->ingress_ifindex,
+				.vlan_id = meta->ingress_vlan_id,
+				.family = AF_INET6,
+			};
+			struct dhcp_relay_config *rcfg = bpf_map_lookup_elem(&dhcp_relay_map, &rkey);
+			if (rcfg && rcfg->enabled) {
+				meta->dhcp_relay = 1;
+			}
+		}
+	}
+
+	/*
 	 * Pre-routing NAT: check dnat_table before FIB lookup.
 	 * This handles both static DNAT entries (from config) and
 	 * dynamic SNAT return entries (from xdp_policy).

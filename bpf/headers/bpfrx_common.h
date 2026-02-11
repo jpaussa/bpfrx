@@ -223,7 +223,8 @@ struct icmp6hdr {
 #define GLOBAL_CTR_HOST_INBOUND_DENY   8
 #define GLOBAL_CTR_TC_EGRESS_PACKETS   9
 #define GLOBAL_CTR_NAT64_XLATE        10
-#define GLOBAL_CTR_MAX                 11
+#define GLOBAL_CTR_DHCP_RELAY         11
+#define GLOBAL_CTR_MAX                12
 
 /* Flow timeout indices for flow_timeouts ARRAY map */
 #define FLOW_TIMEOUT_TCP_ESTABLISHED   0
@@ -362,6 +363,10 @@ struct pkt_meta {
 	__u32 fwd_ifindex;
 	__u8  fwd_dmac[ETH_ALEN];
 	__u8  fwd_smac[ETH_ALEN];
+
+	/* DHCP relay flag */
+	__u8  dhcp_relay;     /* 1 = pass DHCP to userspace relay */
+	__u8  pad_relay[3];   /* alignment */
 
 	/* Policy-based routing (set by firewall filter) */
 	__u32 routing_table;  /* VRF table ID, 0 = main table */

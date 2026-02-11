@@ -22,6 +22,7 @@ import (
 	"github.com/psaab/bpfrx/pkg/conntrack"
 	"github.com/psaab/bpfrx/pkg/dataplane"
 	"github.com/psaab/bpfrx/pkg/dhcp"
+	"github.com/psaab/bpfrx/pkg/dhcprelay"
 	"github.com/psaab/bpfrx/pkg/dhcpserver"
 	"github.com/psaab/bpfrx/pkg/feeds"
 	"github.com/psaab/bpfrx/pkg/flowexport"
@@ -53,6 +54,7 @@ type Daemon struct {
 	radvd        *radvd.Manager
 	dhcp         *dhcp.Manager
 	dhcpServer   *dhcpserver.Manager
+	dhcpRelay    *dhcprelay.Agent
 	feeds        *feeds.Manager
 	rpm          *rpm.Manager
 	flowExporter *flowexport.Exporter
@@ -98,6 +100,14 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.ipsec = ipsec.New()
 		d.radvd = radvd.New()
 		d.dhcpServer = dhcpserver.New()
+
+		// Initialize DHCP relay agent
+		relayAgent, err := dhcprelay.New()
+		if err != nil {
+			slog.Warn("failed to create DHCP relay agent", "err", err)
+		} else {
+			d.dhcpRelay = relayAgent
+		}
 	}
 
 	// Load eBPF programs (unless in config-only mode)
@@ -283,6 +293,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.dhcpServer.Clear()
 	}
 
+	// Clean up DHCP relay.
+	if d.dhcpRelay != nil {
+		d.dhcpRelay.StopAll()
+	}
+
 	// Clean up routing subsystems.
 	if d.radvd != nil {
 		d.radvd.Clear()
@@ -404,6 +419,13 @@ func (d *Daemon) applyConfig(cfg *config.Config) {
 	if d.dhcpServer != nil && cfg.System.DHCPServer.DHCPLocalServer != nil {
 		if err := d.dhcpServer.Apply(&cfg.System.DHCPServer); err != nil {
 			slog.Warn("failed to apply DHCP server config", "err", err)
+		}
+	}
+
+	// 8. Configure DHCP relay agent
+	if d.dhcpRelay != nil {
+		if err := d.dhcpRelay.Configure(cfg); err != nil {
+			slog.Warn("failed to configure DHCP relay", "err", err)
 		}
 	}
 }

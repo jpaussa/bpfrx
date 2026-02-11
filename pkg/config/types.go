@@ -70,7 +70,8 @@ type NetFlowV9Template struct {
 
 // ForwardingOptionsConfig holds forwarding/sampling configuration.
 type ForwardingOptionsConfig struct {
-	Sampling *SamplingConfig
+	Sampling  *SamplingConfig
+	DHCPRelay *DHCPRelayConfig
 }
 
 // SamplingConfig holds sampling instance definitions.
@@ -98,6 +99,17 @@ type FlowServer struct {
 	Address          string
 	Port             int
 	Version9Template string
+}
+
+// DHCPRelayConfig holds DHCP relay configuration.
+type DHCPRelayConfig struct {
+	ServerGroups map[string]*DHCPRelayServerGroup
+}
+
+// DHCPRelayServerGroup defines a named group of DHCP servers for relay.
+type DHCPRelayServerGroup struct {
+	Name    string
+	Servers []string // IP addresses of DHCP servers
 }
 
 // FirewallConfig holds firewall filter definitions.
@@ -446,13 +458,20 @@ type InterfaceUnit struct {
 	DHCP          bool     // family inet { dhcp; }
 	DHCPv6        bool     // family inet6 { dhcpv6; }
 	DHCPv6Client  *DHCPv6ClientConfig
-	FilterInputV4 string // family inet { filter { input NAME; } }
-	FilterInputV6 string // family inet6 { filter { input NAME; } }
+	DHCPRelay     *InterfaceUnitDHCPRelay // family inet { dhcp-relay { ... } }
+	DHCPRelayV6   *InterfaceUnitDHCPRelay // family inet6 { dhcp-relay { ... } }
+	FilterInputV4 string                  // family inet { filter { input NAME; } }
+	FilterInputV6 string                  // family inet6 { filter { input NAME; } }
 }
 
 // DHCPv6ClientConfig holds DHCPv6 client options (dhcpv6-client stanza).
 type DHCPv6ClientConfig struct {
 	DUIDType string // "duid-ll" or "duid-llt"
+}
+
+// InterfaceUnitDHCPRelay configures DHCP relay on an interface unit.
+type InterfaceUnitDHCPRelay struct {
+	ServerGroup string // reference to DHCPRelayServerGroup name
 }
 
 // ApplicationsConfig holds application definitions.

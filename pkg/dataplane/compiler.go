@@ -118,6 +118,11 @@ func (m *Manager) Compile(cfg *config.Config) (*CompileResult, error) {
 		return nil, fmt.Errorf("compile firewall filters: %w", err)
 	}
 
+	// Phase 11: Compile DHCP relay
+	if err := m.compileDHCPRelay(cfg); err != nil {
+		return nil, fmt.Errorf("compile dhcp relay: %w", err)
+	}
+
 	slog.Info("config compiled to dataplane",
 		"zones", len(result.ZoneIDs),
 		"addresses", len(result.AddrIDs),
@@ -1808,6 +1813,114 @@ func setFilterAddr(addr, mask *[16]byte, cidr string, family uint8) {
 		copy(addr[:], ip16)
 		copy(mask[:], ipNet.Mask)
 	}
+}
+
+// compileDHCPRelay populates the dhcp_relay_map based on interface configuration.
+func (m *Manager) compileDHCPRelay(cfg *config.Config) error {
+	relayMap := m.Map("dhcp_relay_map")
+	if relayMap == nil {
+		return fmt.Errorf("dhcp_relay_map not found")
+	}
+
+	// Clear existing entries
+	var key DHCPRelayKey
+	var val DHCPRelayConfig
+	iter := relayMap.Iterate()
+	for iter.Next(&key, &val) {
+		if err := relayMap.Delete(&key); err != nil {
+			return fmt.Errorf("clear dhcp_relay_map: %w", err)
+		}
+	}
+	if err := iter.Err(); err != nil {
+		return fmt.Errorf("iterate dhcp_relay_map: %w", err)
+	}
+
+	// Validate server groups exist
+	serverGroupsExist := make(map[string]bool)
+	if cfg.ForwardingOptions.DHCPRelay != nil {
+		for name := range cfg.ForwardingOptions.DHCPRelay.ServerGroups {
+			serverGroupsExist[name] = true
+		}
+	}
+
+	// Populate map from interface configuration
+	for ifaceName, ifaceCfg := range cfg.Interfaces.Interfaces {
+		for unitNum, unit := range ifaceCfg.Units {
+			// Construct logical interface name
+			logicalName := ifaceName
+			if unitNum != 0 {
+				logicalName = fmt.Sprintf("%s.%d", ifaceName, unitNum)
+			}
+
+			// Get interface index
+			link, err := netlink.LinkByName(logicalName)
+			if err != nil {
+				slog.Debug("interface not found, skipping DHCP relay",
+					"interface", logicalName,
+					"err", err)
+				continue
+			}
+			ifindex := uint32(link.Attrs().Index)
+
+			// DHCPv4 relay
+			if unit.DHCPRelay != nil {
+				// Validate server group exists
+				if !serverGroupsExist[unit.DHCPRelay.ServerGroup] {
+					return fmt.Errorf("interface %s references non-existent DHCP relay server-group: %s",
+						logicalName, unit.DHCPRelay.ServerGroup)
+				}
+
+				key := DHCPRelayKey{
+					Ifindex: ifindex,
+					VlanID:  uint16(unit.VlanID),
+					Family:  AFInet,
+				}
+				val := DHCPRelayConfig{
+					Enabled: 1,
+				}
+
+				if err := relayMap.Put(&key, &val); err != nil {
+					return fmt.Errorf("put dhcp_relay_map (v4) for %s: %w", logicalName, err)
+				}
+
+				slog.Debug("configured DHCPv4 relay",
+					"interface", logicalName,
+					"ifindex", ifindex,
+					"vlan_id", unit.VlanID,
+					"server-group", unit.DHCPRelay.ServerGroup)
+			}
+
+			// DHCPv6 relay
+			if unit.DHCPRelayV6 != nil {
+				// Validate server group exists
+				if !serverGroupsExist[unit.DHCPRelayV6.ServerGroup] {
+					return fmt.Errorf("interface %s references non-existent DHCPv6 relay server-group: %s",
+						logicalName, unit.DHCPRelayV6.ServerGroup)
+				}
+
+				key := DHCPRelayKey{
+					Ifindex: ifindex,
+					VlanID:  uint16(unit.VlanID),
+					Family:  AFInet6,
+				}
+				val := DHCPRelayConfig{
+					Enabled: 1,
+				}
+
+				if err := relayMap.Put(&key, &val); err != nil {
+					return fmt.Errorf("put dhcp_relay_map (v6) for %s: %w", logicalName, err)
+				}
+
+				slog.Debug("configured DHCPv6 relay",
+					"interface", logicalName,
+					"ifindex", ifindex,
+					"vlan_id", unit.VlanID,
+					"server-group", unit.DHCPRelayV6.ServerGroup)
+			}
+		}
+	}
+
+	return nil
 }
 
 // resolvePortName maps well-known port names to numbers.

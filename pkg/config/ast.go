@@ -245,10 +245,12 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 			"vlan-id": {args: 1, children: nil},
 			"family": {children: map[string]*schemaNode{
 				"inet": {children: map[string]*schemaNode{
-					"filter": {children: nil},
+					"filter":     {children: nil},
+					"dhcp-relay": {children: nil},
 				}},
 				"inet6": {children: map[string]*schemaNode{
 					"filter":        {children: nil},
+					"dhcp-relay":    {children: nil},
 					"dhcpv6-client": {children: map[string]*schemaNode{
 						"client-identifier": {children: map[string]*schemaNode{
 							"duid-type": {args: 1, children: nil},
@@ -344,6 +346,9 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 					}},
 				}},
 			}},
+		}},
+		"dhcp-relay": {children: map[string]*schemaNode{
+			"server-group": {args: 1, children: nil},
 		}},
 	}},
 	"routing-instances": {wildcard: &schemaNode{children: map[string]*schemaNode{
