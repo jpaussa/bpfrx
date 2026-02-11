@@ -42,6 +42,10 @@ service BpfrxService {
   rpc GetBGPStatus(GetBGPStatusRequest) returns (GetBGPStatusResponse);
   rpc GetIPsecSA(GetIPsecSARequest) returns (GetIPsecSAResponse);
 
+  // Diagnostics
+  rpc Ping(PingRequest) returns (PingResponse);
+  rpc Traceroute(TracerouteRequest) returns (TracerouteResponse);
+
   // Mutations
   rpc ClearSessions(ClearSessionsRequest) returns (ClearSessionsResponse);
   rpc ClearCounters(ClearCountersRequest) returns (ClearCountersResponse);
@@ -354,6 +358,24 @@ message GetBGPStatusResponse { string output = 1; }
 
 message GetIPsecSARequest {}
 message GetIPsecSAResponse { string output = 1; }
+
+// --- Diagnostic messages ---
+
+message PingRequest {
+  string target = 1;
+  int32 count = 2;
+  string source = 3;
+  int32 size = 4;
+  string routing_instance = 5;
+}
+message PingResponse { string output = 1; }
+
+message TracerouteRequest {
+  string target = 1;
+  string source = 2;
+  string routing_instance = 3;
+}
+message TracerouteResponse { string output = 1; }
 
 // --- Mutation messages ---
 

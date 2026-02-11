@@ -123,7 +123,8 @@ type PolicyRule struct {
 	DstPortLow  uint16
 	DstPortHigh uint16
 	Protocol   uint8
-	Pad        [3]byte
+	Active     uint8
+	Pad        [2]byte
 
 	AppID     uint32
 	NATRuleID uint32

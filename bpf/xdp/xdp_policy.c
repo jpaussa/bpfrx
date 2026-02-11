@@ -652,6 +652,10 @@ int xdp_policy_prog(struct xdp_md *ctx)
 		if (!rule)
 			continue;
 
+		/* Skip inactive rules (scheduler) */
+		if (!rule->active)
+			continue;
+
 		/* Check source address (AF-aware) */
 		if (meta->addr_family == AF_INET) {
 			if (!addr_matches(meta->src_ip.v4, rule->src_addr_id))

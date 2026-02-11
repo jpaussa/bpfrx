@@ -708,6 +708,7 @@ func (m *Manager) compilePolicies(cfg *config.Config, result *CompileResult) err
 				PolicySetID: policySetID,
 				Sequence:    uint16(i),
 				AppID:       er.appID,
+				Active:      1, // default active; scheduler may toggle to 0
 			}
 
 			// Map action

@@ -27,22 +27,24 @@ import (
 
 // Manager manages the eBPF dataplane: programs, maps, and attachments.
 type Manager struct {
-	loaded      bool
-	programs    map[string]*ebpf.Program
-	maps        map[string]*ebpf.Map
-	colls       []*ebpf.Collection
-	xdpLinks    map[int]link.Link
-	tcLinks     map[int]link.Link
-	lastCompile *CompileResult
+	loaded        bool
+	programs      map[string]*ebpf.Program
+	maps          map[string]*ebpf.Map
+	colls         []*ebpf.Collection
+	xdpLinks      map[int]link.Link
+	tcLinks       map[int]link.Link
+	lastCompile   *CompileResult
+	PersistentNAT *PersistentNATTable
 }
 
 // New creates a new dataplane Manager.
 func New() *Manager {
 	return &Manager{
-		programs: make(map[string]*ebpf.Program),
-		maps:     make(map[string]*ebpf.Map),
-		xdpLinks: make(map[int]link.Link),
-		tcLinks:  make(map[int]link.Link),
+		programs:      make(map[string]*ebpf.Program),
+		maps:          make(map[string]*ebpf.Map),
+		xdpLinks:      make(map[int]link.Link),
+		tcLinks:       make(map[int]link.Link),
+		PersistentNAT: NewPersistentNATTable(),
 	}
 }
 

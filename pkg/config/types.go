@@ -12,11 +12,44 @@ type Config struct {
 	Services          ServicesConfig
 	ForwardingOptions ForwardingOptionsConfig
 	System            SystemConfig
+	Schedulers        map[string]*SchedulerConfig
+}
+
+// SchedulerConfig defines a time-based policy scheduler.
+type SchedulerConfig struct {
+	Name      string
+	StartTime string // "HH:MM:SS"
+	StopTime  string // "HH:MM:SS"
+	StartDate string // "YYYY-MM-DD" (optional)
+	StopDate  string // "YYYY-MM-DD" (optional)
+	Daily     bool   // recur daily
 }
 
 // SystemConfig holds system-level configuration.
 type SystemConfig struct {
 	DHCPServer DHCPServerConfig
+	SNMP       *SNMPConfig
+}
+
+// SNMPConfig holds SNMP agent configuration.
+type SNMPConfig struct {
+	Location    string
+	Contact     string
+	Description string
+	Communities map[string]*SNMPCommunity
+	TrapGroups  map[string]*SNMPTrapGroup
+}
+
+// SNMPCommunity defines an SNMP community string.
+type SNMPCommunity struct {
+	Name          string
+	Authorization string // "read-only" or "read-write"
+}
+
+// SNMPTrapGroup defines an SNMP trap destination group.
+type SNMPTrapGroup struct {
+	Name    string
+	Targets []string // IP addresses
 }
 
 // ServicesConfig holds service configuration (flow-monitoring, RPM, etc.).
@@ -70,7 +103,27 @@ type NetFlowV9Template struct {
 
 // ForwardingOptionsConfig holds forwarding/sampling configuration.
 type ForwardingOptionsConfig struct {
-	Sampling *SamplingConfig
+	Sampling  *SamplingConfig
+	DHCPRelay *DHCPRelayConfig
+}
+
+// DHCPRelayConfig holds DHCP relay agent configuration.
+type DHCPRelayConfig struct {
+	ServerGroups map[string]*DHCPRelayServerGroup
+	Groups       map[string]*DHCPRelayGroup
+}
+
+// DHCPRelayServerGroup defines a group of DHCP servers.
+type DHCPRelayServerGroup struct {
+	Name    string
+	Servers []string // server IPs
+}
+
+// DHCPRelayGroup defines a DHCP relay group bound to interfaces.
+type DHCPRelayGroup struct {
+	Name              string
+	Interfaces        []string
+	ActiveServerGroup string // reference to server group name
 }
 
 // SamplingConfig holds sampling instance definitions.
@@ -247,11 +300,12 @@ type ZonePairPolicies struct {
 
 // Policy is a single security policy rule.
 type Policy struct {
-	Name   string
-	Match  PolicyMatch
-	Action PolicyAction
-	Log    *PolicyLog
-	Count  bool
+	Name          string
+	Match         PolicyMatch
+	Action        PolicyAction
+	Log           *PolicyLog
+	Count         bool
+	SchedulerName string // reference to SchedulerConfig name
 }
 
 // PolicyMatch defines what traffic a policy matches.
@@ -346,12 +400,19 @@ const (
 
 // NATPool is a pool of addresses for NAT.
 type NATPool struct {
-	Name      string
-	Address   string   // single address (DNAT compat)
-	Addresses []string // multiple addresses (source NAT pools)
-	Port      int      // optional port mapping (DNAT)
-	PortLow   int      // source pool port range low (default 1024)
-	PortHigh  int      // source pool port range high (default 65535)
+	Name          string
+	Address       string   // single address (DNAT compat)
+	Addresses     []string // multiple addresses (source NAT pools)
+	Port          int      // optional port mapping (DNAT)
+	PortLow       int      // source pool port range low (default 1024)
+	PortHigh      int      // source pool port range high (default 65535)
+	PersistentNAT *PersistentNATConfig
+}
+
+// PersistentNATConfig configures persistent NAT bindings for a pool.
+type PersistentNATConfig struct {
+	PermitAnyRemoteHost bool
+	InactivityTimeout   int // seconds (default 300)
 }
 
 // StaticNATRule is a 1:1 bidirectional NAT rule.
@@ -490,9 +551,33 @@ type StaticRoute struct {
 
 // ProtocolsConfig holds dynamic routing protocol configuration.
 type ProtocolsConfig struct {
-	OSPF              *OSPFConfig
-	BGP               *BGPConfig
+	OSPF                *OSPFConfig
+	BGP                 *BGPConfig
+	RIP                 *RIPConfig
+	ISIS                *ISISConfig
 	RouterAdvertisement []*RAInterfaceConfig
+}
+
+// RIPConfig holds RIP routing configuration.
+type RIPConfig struct {
+	Interfaces   []string // interfaces participating in RIP
+	Passive      []string // passive interfaces (receive only)
+	Redistribute []string // "connected", "static", "ospf"
+}
+
+// ISISConfig holds IS-IS routing configuration.
+type ISISConfig struct {
+	NET        string // ISO NET address (e.g. "49.0001.0100.0000.0001.00")
+	Level      string // "level-1", "level-2", "level-1-2" (default "level-2")
+	Interfaces []*ISISInterface
+}
+
+// ISISInterface defines an interface participating in IS-IS.
+type ISISInterface struct {
+	Name    string
+	Level   string // override per-interface
+	Passive bool
+	Metric  int // 0 = default
 }
 
 // RAInterfaceConfig configures Router Advertisement on an interface.
@@ -609,5 +694,7 @@ type RoutingInstanceConfig struct {
 	StaticRoutes []*StaticRoute      // per-instance static routes
 	OSPF         *OSPFConfig         // per-instance OSPF (optional)
 	BGP          *BGPConfig          // per-instance BGP (optional)
+	RIP          *RIPConfig          // per-instance RIP (optional)
+	ISIS         *ISISConfig         // per-instance IS-IS (optional)
 	TableID      int                 // Linux kernel routing table number (auto-assigned)
 }

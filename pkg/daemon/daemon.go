@@ -22,6 +22,7 @@ import (
 	"github.com/psaab/bpfrx/pkg/conntrack"
 	"github.com/psaab/bpfrx/pkg/dataplane"
 	"github.com/psaab/bpfrx/pkg/dhcp"
+	"github.com/psaab/bpfrx/pkg/dhcprelay"
 	"github.com/psaab/bpfrx/pkg/dhcpserver"
 	"github.com/psaab/bpfrx/pkg/feeds"
 	"github.com/psaab/bpfrx/pkg/flowexport"
@@ -32,6 +33,8 @@ import (
 	"github.com/psaab/bpfrx/pkg/radvd"
 	"github.com/psaab/bpfrx/pkg/routing"
 	"github.com/psaab/bpfrx/pkg/rpm"
+	"github.com/psaab/bpfrx/pkg/scheduler"
+	"github.com/psaab/bpfrx/pkg/snmp"
 )
 
 // Options configures the daemon.
@@ -58,6 +61,9 @@ type Daemon struct {
 	flowExporter *flowexport.Exporter
 	flowCancel   context.CancelFunc
 	flowWg       sync.WaitGroup
+	dhcpRelay    *dhcprelay.Manager
+	snmpAgent    *snmp.Agent
+	scheduler    *scheduler.Scheduler
 }
 
 // New creates a new Daemon.
@@ -184,6 +190,37 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.rpm.Apply(ctx, cfg.Services.RPM)
 	}
 
+	// Start DHCP relay if configured.
+	if cfg := d.store.ActiveConfig(); cfg != nil && cfg.ForwardingOptions.DHCPRelay != nil {
+		d.dhcpRelay = dhcprelay.NewManager()
+		d.dhcpRelay.Apply(ctx, cfg.ForwardingOptions.DHCPRelay)
+	}
+
+	// Start SNMP agent if configured.
+	if cfg := d.store.ActiveConfig(); cfg != nil && cfg.System.SNMP != nil && len(cfg.System.SNMP.Communities) > 0 {
+		d.snmpAgent = snmp.NewAgent(cfg.System.SNMP)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			d.snmpAgent.Start(ctx)
+		}()
+	}
+
+	// Start policy scheduler if configured.
+	if cfg := d.store.ActiveConfig(); cfg != nil && len(cfg.Schedulers) > 0 && d.dp != nil {
+		d.scheduler = scheduler.New(cfg.Schedulers, func(activeState map[string]bool) {
+			slog.Info("scheduler state changed, updating policy rules")
+			if activeCfg := d.store.ActiveConfig(); activeCfg != nil {
+				d.dp.UpdatePolicyScheduleState(activeCfg, activeState)
+			}
+		})
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			d.scheduler.Run(ctx)
+		}()
+	}
+
 	// Start HTTP API server if configured.
 	if d.opts.APIAddr != "" {
 		srv := api.NewServer(api.Config{
@@ -278,6 +315,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.dhcp.Close()
 	}
 
+	// Clean up DHCP relay.
+	if d.dhcpRelay != nil {
+		d.dhcpRelay.Stop()
+	}
+
 	// Clean up DHCP server.
 	if d.dhcpServer != nil {
 		d.dhcpServer.Clear()
@@ -370,6 +412,8 @@ func (d *Daemon) applyConfig(cfg *config.Config) {
 		fc := &frr.FullConfig{
 			OSPF:         cfg.Protocols.OSPF,
 			BGP:          cfg.Protocols.BGP,
+			RIP:          cfg.Protocols.RIP,
+			ISIS:         cfg.Protocols.ISIS,
 			StaticRoutes: cfg.RoutingOptions.StaticRoutes,
 			DHCPRoutes:   d.collectDHCPRoutes(),
 		}
@@ -378,6 +422,8 @@ func (d *Daemon) applyConfig(cfg *config.Config) {
 				VRFName:      "vrf-" + ri.Name,
 				OSPF:         ri.OSPF,
 				BGP:          ri.BGP,
+				RIP:          ri.RIP,
+				ISIS:         ri.ISIS,
 				StaticRoutes: ri.StaticRoutes,
 			})
 		}

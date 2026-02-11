@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -122,7 +123,15 @@ var operationalTree = map[string]*completionNode{
 				"summary": {desc: "Show BGP peer summary"},
 				"routes":  {desc: "Show BGP routes"},
 			}},
+			"rip":  {desc: "Show RIP information"},
+			"isis": {desc: "Show IS-IS information", children: map[string]*completionNode{
+				"adjacency": {desc: "Show IS-IS adjacencies"},
+				"routes":    {desc: "Show IS-IS routes"},
+			}},
 		}},
+		"schedulers":  {desc: "Show policy schedulers"},
+		"dhcp-relay":  {desc: "Show DHCP relay status"},
+		"snmp":        {desc: "Show SNMP statistics"},
 		"system": {desc: "Show system information", children: map[string]*completionNode{
 			"rollback": {desc: "Show rollback history"},
 		}},
@@ -138,8 +147,10 @@ var operationalTree = map[string]*completionNode{
 			"client-identifier": {desc: "Clear DHCPv6 DUID(s)"},
 		}},
 	}},
-	"quit": {desc: "Exit CLI"},
-	"exit": {desc: "Exit CLI"},
+	"ping":       {desc: "Ping remote host"},
+	"traceroute": {desc: "Trace route to remote host"},
+	"quit":       {desc: "Exit CLI"},
+	"exit":       {desc: "Exit CLI"},
 }
 
 // configTopLevel defines tab completion for config mode top-level commands.
@@ -417,6 +428,12 @@ func (c *CLI) dispatchOperational(line string) error {
 	case "clear":
 		return c.handleClear(parts[1:])
 
+	case "ping":
+		return c.handlePing(parts[1:])
+
+	case "traceroute":
+		return c.handleTraceroute(parts[1:])
+
 	case "quit", "exit":
 		return errExit
 
@@ -494,11 +511,14 @@ func (c *CLI) handleShow(args []string) error {
 		fmt.Println("show: specify what to show")
 		fmt.Println("  configuration    Show active configuration")
 		fmt.Println("  dhcp             Show DHCP information")
+		fmt.Println("  dhcp-relay       Show DHCP relay status")
 		fmt.Println("  firewall         Show firewall filters")
 		fmt.Println("  flow-monitoring  Show flow monitoring/NetFlow configuration")
 		fmt.Println("  route            Show routing table")
+		fmt.Println("  schedulers       Show policy schedulers")
 		fmt.Println("  security         Show security information")
 		fmt.Println("  services         Show services information")
+		fmt.Println("  snmp             Show SNMP statistics")
 		fmt.Println("  interfaces       Show interface status")
 		fmt.Println("  protocols        Show protocol information")
 		fmt.Println("  system           Show system information")
@@ -552,6 +572,15 @@ func (c *CLI) handleShow(args []string) error {
 
 	case "system":
 		return c.handleShowSystem(args[1:])
+
+	case "schedulers":
+		return c.showSchedulers()
+
+	case "dhcp-relay":
+		return c.showDHCPRelay()
+
+	case "snmp":
+		return c.showSNMP()
 
 	default:
 		return fmt.Errorf("unknown show target: %s", args[0])
@@ -1343,12 +1372,18 @@ func (c *CLI) handleClear(args []string) error {
 func (c *CLI) handleClearSecurity(args []string) error {
 	if len(args) < 1 {
 		fmt.Println("clear security:")
-		fmt.Println("  flow session    Clear all sessions")
-		fmt.Println("  counters        Clear all counters")
+		fmt.Println("  flow session                         Clear all sessions")
+		fmt.Println("  counters                             Clear all counters")
+		fmt.Println("  nat source persistent-nat-table      Clear persistent NAT bindings")
 		return nil
 	}
 
 	switch args[0] {
+	case "nat":
+		if len(args) >= 3 && args[1] == "source" && args[2] == "persistent-nat-table" {
+			return c.clearPersistentNAT()
+		}
+		return fmt.Errorf("usage: clear security nat source persistent-nat-table")
 	case "flow":
 		if len(args) < 2 || args[1] != "session" {
 			return fmt.Errorf("usage: clear security flow session")
@@ -1415,14 +1450,18 @@ func (c *CLI) handleShowNAT(args []string) error {
 
 	if len(args) == 0 {
 		fmt.Println("show security nat:")
-		fmt.Println("  source           Show source NAT rules and sessions")
-		fmt.Println("  destination      Show destination NAT rules")
-		fmt.Println("  static           Show static 1:1 NAT rules")
+		fmt.Println("  source                     Show source NAT rules and sessions")
+		fmt.Println("  destination                Show destination NAT rules")
+		fmt.Println("  static                     Show static 1:1 NAT rules")
+		fmt.Println("  source persistent-nat-table Show persistent NAT bindings")
 		return nil
 	}
 
 	switch args[0] {
 	case "source":
+		if len(args) >= 2 && args[1] == "persistent-nat-table" {
+			return c.showPersistentNAT()
+		}
 		return c.showNATSource(cfg, args[1:])
 	case "destination":
 		return c.showNATDestination(cfg)
@@ -1742,6 +1781,8 @@ func (c *CLI) handleShowProtocols(args []string) error {
 		fmt.Println("show protocols:")
 		fmt.Println("  ospf             Show OSPF information")
 		fmt.Println("  bgp              Show BGP information")
+		fmt.Println("  rip              Show RIP information")
+		fmt.Println("  isis             Show IS-IS information")
 		return nil
 	}
 
@@ -1750,6 +1791,10 @@ func (c *CLI) handleShowProtocols(args []string) error {
 		return c.showOSPF(args[1:])
 	case "bgp":
 		return c.showBGP(args[1:])
+	case "rip":
+		return c.showRIP()
+	case "isis":
+		return c.showISIS(args[1:])
 	default:
 		return fmt.Errorf("unknown show protocols target: %s", args[0])
 	}
@@ -2959,5 +3004,285 @@ func (c *CLI) showRPMProbeResults() error {
 			}
 		}
 	}
+	return nil
+}
+
+func (c *CLI) handlePing(args []string) error {
+	if len(args) == 0 {
+		fmt.Println("usage: ping <target> [count <N>] [source <IP>] [size <N>] [routing-instance <name>]")
+		return nil
+	}
+
+	target := args[0]
+	count := "5"
+	source := ""
+	size := ""
+	vrfName := ""
+
+	for i := 1; i < len(args)-1; i++ {
+		switch args[i] {
+		case "count":
+			count = args[i+1]
+			i++
+		case "source":
+			source = args[i+1]
+			i++
+		case "size":
+			size = args[i+1]
+			i++
+		case "routing-instance":
+			vrfName = args[i+1]
+			i++
+		}
+	}
+
+	var cmdArgs []string
+	if vrfName != "" {
+		cmdArgs = append(cmdArgs, "ip", "vrf", "exec", "vrf-"+vrfName, "ping")
+	} else {
+		cmdArgs = append(cmdArgs, "ping")
+	}
+
+	cmdArgs = append(cmdArgs, "-c", count)
+	if source != "" {
+		cmdArgs = append(cmdArgs, "-I", source)
+	}
+	if size != "" {
+		cmdArgs = append(cmdArgs, "-s", size)
+	}
+	cmdArgs = append(cmdArgs, target)
+
+	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func (c *CLI) handleTraceroute(args []string) error {
+	if len(args) == 0 {
+		fmt.Println("usage: traceroute <target> [source <IP>] [routing-instance <name>]")
+		return nil
+	}
+
+	target := args[0]
+	source := ""
+	vrfName := ""
+
+	for i := 1; i < len(args)-1; i++ {
+		switch args[i] {
+		case "source":
+			source = args[i+1]
+			i++
+		case "routing-instance":
+			vrfName = args[i+1]
+			i++
+		}
+	}
+
+	var cmdArgs []string
+	if vrfName != "" {
+		cmdArgs = append(cmdArgs, "ip", "vrf", "exec", "vrf-"+vrfName, "traceroute")
+	} else {
+		cmdArgs = append(cmdArgs, "traceroute")
+	}
+
+	if source != "" {
+		cmdArgs = append(cmdArgs, "-s", source)
+	}
+	cmdArgs = append(cmdArgs, target)
+
+	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func (c *CLI) showRIP() error {
+	if c.frr == nil {
+		fmt.Println("FRR manager not available")
+		return nil
+	}
+
+	routes, err := c.frr.GetRIPRoutes()
+	if err != nil {
+		return fmt.Errorf("RIP routes: %w", err)
+	}
+	if len(routes) == 0 {
+		fmt.Println("No RIP routes")
+		return nil
+	}
+	fmt.Printf("  %-20s %-18s %-8s %s\n", "Network", "Next Hop", "Metric", "Interface")
+	for _, r := range routes {
+		fmt.Printf("  %-20s %-18s %-8s %s\n", r.Network, r.NextHop, r.Metric, r.Interface)
+	}
+	return nil
+}
+
+func (c *CLI) showISIS(args []string) error {
+	if c.frr == nil {
+		fmt.Println("FRR manager not available")
+		return nil
+	}
+
+	if len(args) == 0 {
+		fmt.Println("show protocols isis:")
+		fmt.Println("  adjacency        Show IS-IS adjacencies")
+		fmt.Println("  routes           Show IS-IS routes")
+		return nil
+	}
+
+	switch args[0] {
+	case "adjacency":
+		adjs, err := c.frr.GetISISAdjacency()
+		if err != nil {
+			return fmt.Errorf("IS-IS adjacency: %w", err)
+		}
+		if len(adjs) == 0 {
+			fmt.Println("No IS-IS adjacencies")
+			return nil
+		}
+		fmt.Printf("  %-20s %-14s %-10s %-10s %s\n",
+			"System ID", "Interface", "Level", "State", "Hold Time")
+		for _, a := range adjs {
+			fmt.Printf("  %-20s %-14s %-10s %-10s %s\n",
+				a.SystemID, a.Interface, a.Level, a.State, a.HoldTime)
+		}
+		return nil
+
+	case "routes":
+		output, err := c.frr.GetISISRoutes()
+		if err != nil {
+			return fmt.Errorf("IS-IS routes: %w", err)
+		}
+		fmt.Print(output)
+		return nil
+
+	default:
+		return fmt.Errorf("unknown show protocols isis target: %s", args[0])
+	}
+}
+
+func (c *CLI) showSchedulers() error {
+	cfg := c.store.ActiveConfig()
+	if cfg == nil || len(cfg.Schedulers) == 0 {
+		fmt.Println("No schedulers configured")
+		return nil
+	}
+
+	for name, sched := range cfg.Schedulers {
+		fmt.Printf("Scheduler: %s\n", name)
+		if sched.StartTime != "" {
+			fmt.Printf("  Start time: %s\n", sched.StartTime)
+		}
+		if sched.StopTime != "" {
+			fmt.Printf("  Stop time:  %s\n", sched.StopTime)
+		}
+		if sched.StartDate != "" {
+			fmt.Printf("  Start date: %s\n", sched.StartDate)
+		}
+		if sched.StopDate != "" {
+			fmt.Printf("  Stop date:  %s\n", sched.StopDate)
+		}
+		if sched.Daily {
+			fmt.Println("  Recurrence: daily")
+		}
+		fmt.Println()
+	}
+	return nil
+}
+
+func (c *CLI) showDHCPRelay() error {
+	cfg := c.store.ActiveConfig()
+	if cfg == nil || cfg.ForwardingOptions.DHCPRelay == nil {
+		fmt.Println("No DHCP relay configured")
+		return nil
+	}
+	relay := cfg.ForwardingOptions.DHCPRelay
+
+	if len(relay.ServerGroups) > 0 {
+		fmt.Println("Server groups:")
+		for name, sg := range relay.ServerGroups {
+			fmt.Printf("  %s: %s\n", name, strings.Join(sg.Servers, ", "))
+		}
+	}
+
+	if len(relay.Groups) > 0 {
+		fmt.Println("Relay groups:")
+		for name, g := range relay.Groups {
+			fmt.Printf("  %s:\n", name)
+			fmt.Printf("    Interfaces: %s\n", strings.Join(g.Interfaces, ", "))
+			fmt.Printf("    Active server group: %s\n", g.ActiveServerGroup)
+		}
+	}
+	return nil
+}
+
+func (c *CLI) showSNMP() error {
+	cfg := c.store.ActiveConfig()
+	if cfg == nil || cfg.System.SNMP == nil {
+		fmt.Println("No SNMP configured")
+		return nil
+	}
+	snmpCfg := cfg.System.SNMP
+
+	if snmpCfg.Location != "" {
+		fmt.Printf("Location:    %s\n", snmpCfg.Location)
+	}
+	if snmpCfg.Contact != "" {
+		fmt.Printf("Contact:     %s\n", snmpCfg.Contact)
+	}
+	if snmpCfg.Description != "" {
+		fmt.Printf("Description: %s\n", snmpCfg.Description)
+	}
+
+	if len(snmpCfg.Communities) > 0 {
+		fmt.Println("Communities:")
+		for name, comm := range snmpCfg.Communities {
+			fmt.Printf("  %s: %s\n", name, comm.Authorization)
+		}
+	}
+
+	if len(snmpCfg.TrapGroups) > 0 {
+		fmt.Println("Trap groups:")
+		for name, tg := range snmpCfg.TrapGroups {
+			fmt.Printf("  %s: %s\n", name, strings.Join(tg.Targets, ", "))
+		}
+	}
+	return nil
+}
+
+func (c *CLI) showPersistentNAT() error {
+	if c.dp == nil || c.dp.PersistentNAT == nil {
+		fmt.Println("Persistent NAT table not available")
+		return nil
+	}
+	bindings := c.dp.PersistentNAT.All()
+	if len(bindings) == 0 {
+		fmt.Println("No persistent NAT bindings")
+		return nil
+	}
+	fmt.Printf("Total persistent NAT bindings: %d\n\n", len(bindings))
+	fmt.Printf("%-20s %-8s %-20s %-8s %-15s %-10s\n",
+		"Source IP", "SrcPort", "NAT IP", "NATPort", "Pool", "Timeout")
+	for _, b := range bindings {
+		remaining := time.Until(b.LastSeen.Add(b.Timeout))
+		if remaining < 0 {
+			remaining = 0
+		}
+		fmt.Printf("%-20s %-8d %-20s %-8d %-15s %-10s\n",
+			b.SrcIP, b.SrcPort, b.NatIP, b.NatPort, b.PoolName,
+			remaining.Truncate(time.Second))
+	}
+	return nil
+}
+
+func (c *CLI) clearPersistentNAT() error {
+	if c.dp == nil || c.dp.PersistentNAT == nil {
+		fmt.Println("Persistent NAT table not available")
+		return nil
+	}
+	count := c.dp.PersistentNAT.Len()
+	c.dp.PersistentNAT.Clear()
+	fmt.Printf("Cleared %d persistent NAT bindings\n", count)
 	return nil
 }

@@ -127,7 +127,8 @@ struct policy_rule {
 	__u16 dst_port_low;
 	__u16 dst_port_high;
 	__u8  protocol;   /* 0 = any */
-	__u8  pad[3];
+	__u8  active;     /* 1=active, 0=inactive (scheduler) */
+	__u8  pad[2];
 
 	__u32 app_id;
 	__u32 nat_rule_id;

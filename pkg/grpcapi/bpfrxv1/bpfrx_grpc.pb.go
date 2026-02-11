@@ -51,6 +51,8 @@ const (
 	BpfrxService_GetOSPFStatus_FullMethodName             = "/bpfrx.v1.BpfrxService/GetOSPFStatus"
 	BpfrxService_GetBGPStatus_FullMethodName              = "/bpfrx.v1.BpfrxService/GetBGPStatus"
 	BpfrxService_GetIPsecSA_FullMethodName                = "/bpfrx.v1.BpfrxService/GetIPsecSA"
+	BpfrxService_Ping_FullMethodName                      = "/bpfrx.v1.BpfrxService/Ping"
+	BpfrxService_Traceroute_FullMethodName                = "/bpfrx.v1.BpfrxService/Traceroute"
 	BpfrxService_ClearSessions_FullMethodName             = "/bpfrx.v1.BpfrxService/ClearSessions"
 	BpfrxService_ClearCounters_FullMethodName             = "/bpfrx.v1.BpfrxService/ClearCounters"
 	BpfrxService_ClearDHCPClientIdentifier_FullMethodName = "/bpfrx.v1.BpfrxService/ClearDHCPClientIdentifier"
@@ -97,6 +99,9 @@ type BpfrxServiceClient interface {
 	GetOSPFStatus(ctx context.Context, in *GetOSPFStatusRequest, opts ...grpc.CallOption) (*GetOSPFStatusResponse, error)
 	GetBGPStatus(ctx context.Context, in *GetBGPStatusRequest, opts ...grpc.CallOption) (*GetBGPStatusResponse, error)
 	GetIPsecSA(ctx context.Context, in *GetIPsecSARequest, opts ...grpc.CallOption) (*GetIPsecSAResponse, error)
+	// Diagnostics
+	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
+	Traceroute(ctx context.Context, in *TracerouteRequest, opts ...grpc.CallOption) (*TracerouteResponse, error)
 	// Mutations
 	ClearSessions(ctx context.Context, in *ClearSessionsRequest, opts ...grpc.CallOption) (*ClearSessionsResponse, error)
 	ClearCounters(ctx context.Context, in *ClearCountersRequest, opts ...grpc.CallOption) (*ClearCountersResponse, error)
@@ -433,6 +438,26 @@ func (c *bpfrxServiceClient) GetIPsecSA(ctx context.Context, in *GetIPsecSAReque
 	return out, nil
 }
 
+func (c *bpfrxServiceClient) Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PingResponse)
+	err := c.cc.Invoke(ctx, BpfrxService_Ping_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *bpfrxServiceClient) Traceroute(ctx context.Context, in *TracerouteRequest, opts ...grpc.CallOption) (*TracerouteResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TracerouteResponse)
+	err := c.cc.Invoke(ctx, BpfrxService_Traceroute_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *bpfrxServiceClient) ClearSessions(ctx context.Context, in *ClearSessionsRequest, opts ...grpc.CallOption) (*ClearSessionsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ClearSessionsResponse)
@@ -513,6 +538,9 @@ type BpfrxServiceServer interface {
 	GetOSPFStatus(context.Context, *GetOSPFStatusRequest) (*GetOSPFStatusResponse, error)
 	GetBGPStatus(context.Context, *GetBGPStatusRequest) (*GetBGPStatusResponse, error)
 	GetIPsecSA(context.Context, *GetIPsecSARequest) (*GetIPsecSAResponse, error)
+	// Diagnostics
+	Ping(context.Context, *PingRequest) (*PingResponse, error)
+	Traceroute(context.Context, *TracerouteRequest) (*TracerouteResponse, error)
 	// Mutations
 	ClearSessions(context.Context, *ClearSessionsRequest) (*ClearSessionsResponse, error)
 	ClearCounters(context.Context, *ClearCountersRequest) (*ClearCountersResponse, error)
@@ -624,6 +652,12 @@ func (UnimplementedBpfrxServiceServer) GetBGPStatus(context.Context, *GetBGPStat
 }
 func (UnimplementedBpfrxServiceServer) GetIPsecSA(context.Context, *GetIPsecSARequest) (*GetIPsecSAResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetIPsecSA not implemented")
+}
+func (UnimplementedBpfrxServiceServer) Ping(context.Context, *PingRequest) (*PingResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Ping not implemented")
+}
+func (UnimplementedBpfrxServiceServer) Traceroute(context.Context, *TracerouteRequest) (*TracerouteResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Traceroute not implemented")
 }
 func (UnimplementedBpfrxServiceServer) ClearSessions(context.Context, *ClearSessionsRequest) (*ClearSessionsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ClearSessions not implemented")
@@ -1234,6 +1268,42 @@ func _BpfrxService_GetIPsecSA_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BpfrxService_Ping_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BpfrxServiceServer).Ping(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BpfrxService_Ping_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BpfrxServiceServer).Ping(ctx, req.(*PingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BpfrxService_Traceroute_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TracerouteRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BpfrxServiceServer).Traceroute(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BpfrxService_Traceroute_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BpfrxServiceServer).Traceroute(ctx, req.(*TracerouteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _BpfrxService_ClearSessions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ClearSessionsRequest)
 	if err := dec(in); err != nil {
@@ -1440,6 +1510,14 @@ var BpfrxService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetIPsecSA",
 			Handler:    _BpfrxService_GetIPsecSA_Handler,
+		},
+		{
+			MethodName: "Ping",
+			Handler:    _BpfrxService_Ping_Handler,
+		},
+		{
+			MethodName: "Traceroute",
+			Handler:    _BpfrxService_Traceroute_Handler,
 		},
 		{
 			MethodName: "ClearSessions",

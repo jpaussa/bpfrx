@@ -175,24 +175,36 @@ func (m *Manager) ApplyTunnels(tunnels []*config.TunnelConfig) error {
 			ttl = 64
 		}
 
-		link := &netlink.Gretun{
-			LinkAttrs: netlink.LinkAttrs{Name: tc.Name},
-			Local:     localIP,
-			Remote:    remoteIP,
-			Ttl:       uint8(ttl),
-		}
-		if tc.Key > 0 {
-			link.IKey = tc.Key
-			link.OKey = tc.Key
+		var tunnelLink netlink.Link
+		switch tc.Mode {
+		case "ipip":
+			tunnelLink = &netlink.Iptun{
+				LinkAttrs: netlink.LinkAttrs{Name: tc.Name},
+				Local:     localIP,
+				Remote:    remoteIP,
+				Ttl:       uint8(ttl),
+			}
+		default: // "gre" or ""
+			greLink := &netlink.Gretun{
+				LinkAttrs: netlink.LinkAttrs{Name: tc.Name},
+				Local:     localIP,
+				Remote:    remoteIP,
+				Ttl:       uint8(ttl),
+			}
+			if tc.Key > 0 {
+				greLink.IKey = tc.Key
+				greLink.OKey = tc.Key
+			}
+			tunnelLink = greLink
 		}
 
-		if err := m.nlHandle.LinkAdd(link); err != nil {
+		if err := m.nlHandle.LinkAdd(tunnelLink); err != nil {
 			slog.Warn("failed to create tunnel",
-				"name", tc.Name, "err", err)
+				"name", tc.Name, "mode", tc.Mode, "err", err)
 			continue
 		}
 
-		if err := m.nlHandle.LinkSetUp(link); err != nil {
+		if err := m.nlHandle.LinkSetUp(tunnelLink); err != nil {
 			slog.Warn("failed to bring up tunnel",
 				"name", tc.Name, "err", err)
 		}
@@ -205,7 +217,7 @@ func (m *Manager) ApplyTunnels(tunnels []*config.TunnelConfig) error {
 					"name", tc.Name, "addr", addrStr, "err", err)
 				continue
 			}
-			if err := m.nlHandle.AddrAdd(link, addr); err != nil {
+			if err := m.nlHandle.AddrAdd(tunnelLink, addr); err != nil {
 				slog.Warn("failed to add tunnel address",
 					"name", tc.Name, "addr", addrStr, "err", err)
 			}
@@ -262,9 +274,13 @@ func (m *Manager) GetTunnelStatus() ([]TunnelStatus, error) {
 			ts.State = "up"
 		}
 
-		if gre, ok := link.(*netlink.Gretun); ok {
-			ts.Source = gre.Local.String()
-			ts.Destination = gre.Remote.String()
+		switch tun := link.(type) {
+		case *netlink.Gretun:
+			ts.Source = tun.Local.String()
+			ts.Destination = tun.Remote.String()
+		case *netlink.Iptun:
+			ts.Source = tun.Local.String()
+			ts.Destination = tun.Remote.String()
 		}
 
 		addrs, err := m.nlHandle.AddrList(link, netlink.FAMILY_ALL)

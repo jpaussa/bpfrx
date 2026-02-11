@@ -39,6 +39,8 @@ type InstanceConfig struct {
 	VRFName      string
 	OSPF         *config.OSPFConfig
 	BGP          *config.BGPConfig
+	RIP          *config.RIPConfig
+	ISIS         *config.ISISConfig
 	StaticRoutes []*config.StaticRoute
 }
 
@@ -53,6 +55,8 @@ type DHCPRoute struct {
 type FullConfig struct {
 	OSPF         *config.OSPFConfig
 	BGP          *config.BGPConfig
+	RIP          *config.RIPConfig
+	ISIS         *config.ISISConfig
 	StaticRoutes []*config.StaticRoute
 	DHCPRoutes   []DHCPRoute
 	Instances    []InstanceConfig
@@ -60,7 +64,10 @@ type FullConfig struct {
 
 // Apply generates an FRR config from OSPF/BGP settings and reloads FRR.
 func (m *Manager) Apply(ospf *config.OSPFConfig, bgp *config.BGPConfig) error {
-	return m.ApplyWithInstances(ospf, bgp, nil)
+	return m.ApplyFull(&FullConfig{
+		OSPF: ospf,
+		BGP:  bgp,
+	})
 }
 
 // ApplyWithInstances generates FRR config for the global context and per-VRF instances.
@@ -72,6 +79,96 @@ func (m *Manager) ApplyWithInstances(ospf *config.OSPFConfig, bgp *config.BGPCon
 	})
 }
 
+// RIPRouteEntry represents a RIP route.
+type RIPRouteEntry struct {
+	Network  string
+	NextHop  string
+	Metric   string
+	Interface string
+}
+
+// GetRIPRoutes queries FRR for RIP routes.
+func (m *Manager) GetRIPRoutes() ([]RIPRouteEntry, error) {
+	output, err := vtyshCmd("show ip rip")
+	if err != nil {
+		return nil, err
+	}
+	var routes []RIPRouteEntry
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		// Skip headers
+		if fields[0] == "Network" || strings.HasPrefix(line, "Codes") || strings.HasPrefix(line, " ") && len(fields) < 3 {
+			continue
+		}
+		r := RIPRouteEntry{Network: fields[0]}
+		if len(fields) >= 2 {
+			r.NextHop = fields[1]
+		}
+		if len(fields) >= 3 {
+			r.Metric = fields[2]
+		}
+		if len(fields) >= 4 {
+			r.Interface = fields[3]
+		}
+		routes = append(routes, r)
+	}
+	return routes, nil
+}
+
+// ISISAdjacency represents an IS-IS adjacency.
+type ISISAdjacency struct {
+	SystemID  string
+	Interface string
+	Level     string
+	State     string
+	HoldTime  string
+}
+
+// GetISISAdjacency queries FRR for IS-IS adjacencies.
+func (m *Manager) GetISISAdjacency() ([]ISISAdjacency, error) {
+	output, err := vtyshCmd("show isis neighbor")
+	if err != nil {
+		return nil, err
+	}
+	var adjs []ISISAdjacency
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 4 {
+			continue
+		}
+		if fields[0] == "System" || strings.HasPrefix(line, "Area") {
+			continue
+		}
+		adj := ISISAdjacency{
+			SystemID: fields[0],
+		}
+		if len(fields) >= 2 {
+			adj.Interface = fields[1]
+		}
+		if len(fields) >= 3 {
+			adj.Level = fields[2]
+		}
+		if len(fields) >= 4 {
+			adj.State = fields[3]
+		}
+		if len(fields) >= 5 {
+			adj.HoldTime = fields[4]
+		}
+		adjs = append(adjs, adj)
+	}
+	return adjs, nil
+}
+
+// GetISISRoutes returns raw IS-IS route output.
+func (m *Manager) GetISISRoutes() (string, error) {
+	return vtyshCmd("show isis route")
+}
+
 // ApplyFull generates the complete FRR config including static routes,
 // DHCP-learned defaults, per-VRF routes, and dynamic protocols, then reloads FRR.
 func (m *Manager) ApplyFull(fc *FullConfig) error {
@@ -79,10 +176,10 @@ func (m *Manager) ApplyFull(fc *FullConfig) error {
 		return m.Clear()
 	}
 
-	hasContent := fc.OSPF != nil || fc.BGP != nil ||
+	hasContent := fc.OSPF != nil || fc.BGP != nil || fc.RIP != nil || fc.ISIS != nil ||
 		len(fc.StaticRoutes) > 0 || len(fc.DHCPRoutes) > 0
 	for _, inst := range fc.Instances {
-		if inst.OSPF != nil || inst.BGP != nil || len(inst.StaticRoutes) > 0 {
+		if inst.OSPF != nil || inst.BGP != nil || inst.RIP != nil || inst.ISIS != nil || len(inst.StaticRoutes) > 0 {
 			hasContent = true
 			break
 		}
@@ -130,14 +227,14 @@ func (m *Manager) ApplyFull(fc *FullConfig) error {
 	}
 
 	// Global dynamic protocols
-	if fc.OSPF != nil || fc.BGP != nil {
-		b.WriteString(m.generateOSPFBGP(fc.OSPF, fc.BGP, ""))
+	if fc.OSPF != nil || fc.BGP != nil || fc.RIP != nil || fc.ISIS != nil {
+		b.WriteString(m.generateProtocols(fc.OSPF, fc.BGP, fc.RIP, fc.ISIS, ""))
 	}
 
 	// Per-VRF dynamic protocols
 	for _, inst := range fc.Instances {
-		if inst.OSPF != nil || inst.BGP != nil {
-			b.WriteString(m.generateOSPFBGP(inst.OSPF, inst.BGP, inst.VRFName))
+		if inst.OSPF != nil || inst.BGP != nil || inst.RIP != nil || inst.ISIS != nil {
+			b.WriteString(m.generateProtocols(inst.OSPF, inst.BGP, inst.RIP, inst.ISIS, inst.VRFName))
 		}
 	}
 
@@ -243,7 +340,7 @@ func (m *Manager) writeManagedSection(section string) error {
 
 // generateOSPFBGP generates FRR CLI config for OSPF and/or BGP.
 // If vrfName is non-empty, generates VRF-scoped commands.
-func (m *Manager) generateOSPFBGP(ospf *config.OSPFConfig, bgp *config.BGPConfig, vrfName string) string {
+func (m *Manager) generateProtocols(ospf *config.OSPFConfig, bgp *config.BGPConfig, rip *config.RIPConfig, isis *config.ISISConfig, vrfName string) string {
 	var b strings.Builder
 
 	vrfSuffix := ""
@@ -283,6 +380,51 @@ func (m *Manager) generateOSPFBGP(ospf *config.OSPFConfig, bgp *config.BGPConfig
 			}
 		}
 		b.WriteString("exit\n!\n")
+	}
+
+	if rip != nil {
+		fmt.Fprintf(&b, "router rip%s\n", vrfSuffix)
+		for _, iface := range rip.Interfaces {
+			fmt.Fprintf(&b, " network %s\n", iface)
+		}
+		for _, iface := range rip.Passive {
+			fmt.Fprintf(&b, " passive-interface %s\n", iface)
+		}
+		for _, r := range rip.Redistribute {
+			fmt.Fprintf(&b, " redistribute %s\n", r)
+		}
+		b.WriteString("exit\n!\n")
+	}
+
+	if isis != nil {
+		fmt.Fprintf(&b, "router isis bpfrx%s\n", vrfSuffix)
+		if isis.NET != "" {
+			fmt.Fprintf(&b, " net %s\n", isis.NET)
+		}
+		level := isis.Level
+		if level == "" {
+			level = "level-2"
+		}
+		switch level {
+		case "level-1":
+			b.WriteString(" is-type level-1\n")
+		case "level-2":
+			b.WriteString(" is-type level-2-only\n")
+		case "level-1-2":
+			b.WriteString(" is-type level-1-2\n")
+		}
+		b.WriteString("exit\n!\n")
+		for _, iface := range isis.Interfaces {
+			fmt.Fprintf(&b, "interface %s\n", iface.Name)
+			fmt.Fprintf(&b, " ip router isis bpfrx\n")
+			if iface.Passive {
+				b.WriteString(" isis passive\n")
+			}
+			if iface.Metric > 0 {
+				fmt.Fprintf(&b, " isis metric %d\n", iface.Metric)
+			}
+			b.WriteString("exit\n!\n")
+		}
 	}
 
 	return b.String()

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"os/exec"
 	"sort"
 	"strings"
 	"time"
@@ -1110,6 +1111,74 @@ func (s *Server) GetIPsecSA(_ context.Context, _ *pb.GetIPsecSARequest) (*pb.Get
 	return &pb.GetIPsecSAResponse{Output: b.String()}, nil
 }
 
+// --- Diagnostic RPCs ---
+
+func (s *Server) Ping(ctx context.Context, req *pb.PingRequest) (*pb.PingResponse, error) {
+	if req.Target == "" {
+		return nil, status.Error(codes.InvalidArgument, "target required")
+	}
+	count := int(req.Count)
+	if count <= 0 {
+		count = 5
+	}
+	if count > 100 {
+		count = 100
+	}
+	args := []string{"-c", fmt.Sprintf("%d", count)}
+	if req.Source != "" {
+		args = append(args, "-I", req.Source)
+	}
+	if req.Size > 0 {
+		args = append(args, "-s", fmt.Sprintf("%d", req.Size))
+	}
+	args = append(args, req.Target)
+
+	var cmd []string
+	if req.RoutingInstance != "" {
+		cmd = append(cmd, "ip", "vrf", "exec", req.RoutingInstance)
+	}
+	cmd = append(cmd, "ping")
+	cmd = append(cmd, args...)
+
+	out, err := execDiagCmd(ctx, cmd)
+	if err != nil {
+		return &pb.PingResponse{Output: out + "\n" + err.Error()}, nil
+	}
+	return &pb.PingResponse{Output: out}, nil
+}
+
+func (s *Server) Traceroute(ctx context.Context, req *pb.TracerouteRequest) (*pb.TracerouteResponse, error) {
+	if req.Target == "" {
+		return nil, status.Error(codes.InvalidArgument, "target required")
+	}
+	args := []string{}
+	if req.Source != "" {
+		args = append(args, "-s", req.Source)
+	}
+	args = append(args, req.Target)
+
+	var cmd []string
+	if req.RoutingInstance != "" {
+		cmd = append(cmd, "ip", "vrf", "exec", req.RoutingInstance)
+	}
+	cmd = append(cmd, "traceroute")
+	cmd = append(cmd, args...)
+
+	out, err := execDiagCmd(ctx, cmd)
+	if err != nil {
+		return &pb.TracerouteResponse{Output: out + "\n" + err.Error()}, nil
+	}
+	return &pb.TracerouteResponse{Output: out}, nil
+}
+
+func execDiagCmd(ctx context.Context, cmd []string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	c := exec.CommandContext(ctx, cmd[0], cmd[1:]...)
+	out, err := c.CombinedOutput()
+	return string(out), err
+}
+
 // --- Mutation RPCs ---
 
 func (s *Server) ClearSessions(_ context.Context, _ *pb.ClearSessionsRequest) (*pb.ClearSessionsResponse, error) {
@@ -1275,13 +1344,18 @@ type completionNode struct {
 
 var operationalTree = map[string]*completionNode{
 	"configure": {desc: "Enter configuration mode"},
+	"ping":       {desc: "Ping remote host"},
+	"traceroute": {desc: "Trace route to remote host"},
 	"show": {desc: "Show information", children: map[string]*completionNode{
 		"configuration": {desc: "Show active configuration"},
 		"dhcp": {desc: "Show DHCP information", children: map[string]*completionNode{
 			"leases":            {desc: "Show DHCP leases"},
 			"client-identifier": {desc: "Show DHCPv6 DUID(s)"},
+			"relay":             {desc: "Show DHCP relay status"},
 		}},
-		"route": {desc: "Show routing table"},
+		"route":      {desc: "Show routing table"},
+		"schedulers": {desc: "Show policy schedulers"},
+		"snmp":       {desc: "Show SNMP statistics"},
 		"security": {desc: "Show security information", children: map[string]*completionNode{
 			"zones":    {desc: "Show security zones"},
 			"policies": {desc: "Show security policies"},
@@ -1314,6 +1388,11 @@ var operationalTree = map[string]*completionNode{
 				"summary": {desc: "Show BGP peer summary"},
 				"routes":  {desc: "Show BGP routes"},
 			}},
+			"rip":  {desc: "Show RIP routes"},
+			"isis": {desc: "Show IS-IS information", children: map[string]*completionNode{
+				"adjacency": {desc: "Show IS-IS adjacencies"},
+				"routes":    {desc: "Show IS-IS routes"},
+			}},
 		}},
 		"system": {desc: "Show system information", children: map[string]*completionNode{
 			"rollback": {desc: "Show rollback history"},
@@ -1325,6 +1404,11 @@ var operationalTree = map[string]*completionNode{
 				"session": {desc: "Clear all sessions"},
 			}},
 			"counters": {desc: "Clear all counters"},
+			"nat": {desc: "Clear NAT information", children: map[string]*completionNode{
+				"source": {desc: "Clear source NAT", children: map[string]*completionNode{
+					"persistent-nat-table": {desc: "Clear persistent NAT bindings"},
+				}},
+			}},
 		}},
 		"dhcp": {desc: "Clear DHCP information", children: map[string]*completionNode{
 			"client-identifier": {desc: "Clear DHCPv6 DUID(s)"},

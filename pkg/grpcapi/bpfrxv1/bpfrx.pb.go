@@ -4189,6 +4189,230 @@ func (x *GetIPsecSAResponse) GetOutput() string {
 	return ""
 }
 
+type PingRequest struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Target          string                 `protobuf:"bytes,1,opt,name=target,proto3" json:"target,omitempty"`
+	Count           int32                  `protobuf:"varint,2,opt,name=count,proto3" json:"count,omitempty"`
+	Source          string                 `protobuf:"bytes,3,opt,name=source,proto3" json:"source,omitempty"`
+	Size            int32                  `protobuf:"varint,4,opt,name=size,proto3" json:"size,omitempty"`
+	RoutingInstance string                 `protobuf:"bytes,5,opt,name=routing_instance,json=routingInstance,proto3" json:"routing_instance,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *PingRequest) Reset() {
+	*x = PingRequest{}
+	mi := &file_bpfrx_proto_msgTypes[79]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PingRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PingRequest) ProtoMessage() {}
+
+func (x *PingRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_bpfrx_proto_msgTypes[79]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PingRequest.ProtoReflect.Descriptor instead.
+func (*PingRequest) Descriptor() ([]byte, []int) {
+	return file_bpfrx_proto_rawDescGZIP(), []int{79}
+}
+
+func (x *PingRequest) GetTarget() string {
+	if x != nil {
+		return x.Target
+	}
+	return ""
+}
+
+func (x *PingRequest) GetCount() int32 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
+func (x *PingRequest) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
+func (x *PingRequest) GetSize() int32 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
+}
+
+func (x *PingRequest) GetRoutingInstance() string {
+	if x != nil {
+		return x.RoutingInstance
+	}
+	return ""
+}
+
+type PingResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Output        string                 `protobuf:"bytes,1,opt,name=output,proto3" json:"output,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PingResponse) Reset() {
+	*x = PingResponse{}
+	mi := &file_bpfrx_proto_msgTypes[80]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PingResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PingResponse) ProtoMessage() {}
+
+func (x *PingResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_bpfrx_proto_msgTypes[80]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PingResponse.ProtoReflect.Descriptor instead.
+func (*PingResponse) Descriptor() ([]byte, []int) {
+	return file_bpfrx_proto_rawDescGZIP(), []int{80}
+}
+
+func (x *PingResponse) GetOutput() string {
+	if x != nil {
+		return x.Output
+	}
+	return ""
+}
+
+type TracerouteRequest struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Target          string                 `protobuf:"bytes,1,opt,name=target,proto3" json:"target,omitempty"`
+	Source          string                 `protobuf:"bytes,2,opt,name=source,proto3" json:"source,omitempty"`
+	RoutingInstance string                 `protobuf:"bytes,3,opt,name=routing_instance,json=routingInstance,proto3" json:"routing_instance,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *TracerouteRequest) Reset() {
+	*x = TracerouteRequest{}
+	mi := &file_bpfrx_proto_msgTypes[81]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TracerouteRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TracerouteRequest) ProtoMessage() {}
+
+func (x *TracerouteRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_bpfrx_proto_msgTypes[81]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TracerouteRequest.ProtoReflect.Descriptor instead.
+func (*TracerouteRequest) Descriptor() ([]byte, []int) {
+	return file_bpfrx_proto_rawDescGZIP(), []int{81}
+}
+
+func (x *TracerouteRequest) GetTarget() string {
+	if x != nil {
+		return x.Target
+	}
+	return ""
+}
+
+func (x *TracerouteRequest) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
+func (x *TracerouteRequest) GetRoutingInstance() string {
+	if x != nil {
+		return x.RoutingInstance
+	}
+	return ""
+}
+
+type TracerouteResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Output        string                 `protobuf:"bytes,1,opt,name=output,proto3" json:"output,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TracerouteResponse) Reset() {
+	*x = TracerouteResponse{}
+	mi := &file_bpfrx_proto_msgTypes[82]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TracerouteResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TracerouteResponse) ProtoMessage() {}
+
+func (x *TracerouteResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_bpfrx_proto_msgTypes[82]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TracerouteResponse.ProtoReflect.Descriptor instead.
+func (*TracerouteResponse) Descriptor() ([]byte, []int) {
+	return file_bpfrx_proto_rawDescGZIP(), []int{82}
+}
+
+func (x *TracerouteResponse) GetOutput() string {
+	if x != nil {
+		return x.Output
+	}
+	return ""
+}
+
 type ClearSessionsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -4197,7 +4421,7 @@ type ClearSessionsRequest struct {
 
 func (x *ClearSessionsRequest) Reset() {
 	*x = ClearSessionsRequest{}
-	mi := &file_bpfrx_proto_msgTypes[79]
+	mi := &file_bpfrx_proto_msgTypes[83]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4209,7 +4433,7 @@ func (x *ClearSessionsRequest) String() string {
 func (*ClearSessionsRequest) ProtoMessage() {}
 
 func (x *ClearSessionsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_bpfrx_proto_msgTypes[79]
+	mi := &file_bpfrx_proto_msgTypes[83]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4222,7 +4446,7 @@ func (x *ClearSessionsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClearSessionsRequest.ProtoReflect.Descriptor instead.
 func (*ClearSessionsRequest) Descriptor() ([]byte, []int) {
-	return file_bpfrx_proto_rawDescGZIP(), []int{79}
+	return file_bpfrx_proto_rawDescGZIP(), []int{83}
 }
 
 type ClearSessionsResponse struct {
@@ -4235,7 +4459,7 @@ type ClearSessionsResponse struct {
 
 func (x *ClearSessionsResponse) Reset() {
 	*x = ClearSessionsResponse{}
-	mi := &file_bpfrx_proto_msgTypes[80]
+	mi := &file_bpfrx_proto_msgTypes[84]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4247,7 +4471,7 @@ func (x *ClearSessionsResponse) String() string {
 func (*ClearSessionsResponse) ProtoMessage() {}
 
 func (x *ClearSessionsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_bpfrx_proto_msgTypes[80]
+	mi := &file_bpfrx_proto_msgTypes[84]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4260,7 +4484,7 @@ func (x *ClearSessionsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClearSessionsResponse.ProtoReflect.Descriptor instead.
 func (*ClearSessionsResponse) Descriptor() ([]byte, []int) {
-	return file_bpfrx_proto_rawDescGZIP(), []int{80}
+	return file_bpfrx_proto_rawDescGZIP(), []int{84}
 }
 
 func (x *ClearSessionsResponse) GetIpv4Cleared() int32 {
@@ -4285,7 +4509,7 @@ type ClearCountersRequest struct {
 
 func (x *ClearCountersRequest) Reset() {
 	*x = ClearCountersRequest{}
-	mi := &file_bpfrx_proto_msgTypes[81]
+	mi := &file_bpfrx_proto_msgTypes[85]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4297,7 +4521,7 @@ func (x *ClearCountersRequest) String() string {
 func (*ClearCountersRequest) ProtoMessage() {}
 
 func (x *ClearCountersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_bpfrx_proto_msgTypes[81]
+	mi := &file_bpfrx_proto_msgTypes[85]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4310,7 +4534,7 @@ func (x *ClearCountersRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClearCountersRequest.ProtoReflect.Descriptor instead.
 func (*ClearCountersRequest) Descriptor() ([]byte, []int) {
-	return file_bpfrx_proto_rawDescGZIP(), []int{81}
+	return file_bpfrx_proto_rawDescGZIP(), []int{85}
 }
 
 type ClearCountersResponse struct {
@@ -4321,7 +4545,7 @@ type ClearCountersResponse struct {
 
 func (x *ClearCountersResponse) Reset() {
 	*x = ClearCountersResponse{}
-	mi := &file_bpfrx_proto_msgTypes[82]
+	mi := &file_bpfrx_proto_msgTypes[86]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4333,7 +4557,7 @@ func (x *ClearCountersResponse) String() string {
 func (*ClearCountersResponse) ProtoMessage() {}
 
 func (x *ClearCountersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_bpfrx_proto_msgTypes[82]
+	mi := &file_bpfrx_proto_msgTypes[86]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4346,7 +4570,7 @@ func (x *ClearCountersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClearCountersResponse.ProtoReflect.Descriptor instead.
 func (*ClearCountersResponse) Descriptor() ([]byte, []int) {
-	return file_bpfrx_proto_rawDescGZIP(), []int{82}
+	return file_bpfrx_proto_rawDescGZIP(), []int{86}
 }
 
 type CompleteRequest struct {
@@ -4360,7 +4584,7 @@ type CompleteRequest struct {
 
 func (x *CompleteRequest) Reset() {
 	*x = CompleteRequest{}
-	mi := &file_bpfrx_proto_msgTypes[83]
+	mi := &file_bpfrx_proto_msgTypes[87]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4372,7 +4596,7 @@ func (x *CompleteRequest) String() string {
 func (*CompleteRequest) ProtoMessage() {}
 
 func (x *CompleteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_bpfrx_proto_msgTypes[83]
+	mi := &file_bpfrx_proto_msgTypes[87]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4385,7 +4609,7 @@ func (x *CompleteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CompleteRequest.ProtoReflect.Descriptor instead.
 func (*CompleteRequest) Descriptor() ([]byte, []int) {
-	return file_bpfrx_proto_rawDescGZIP(), []int{83}
+	return file_bpfrx_proto_rawDescGZIP(), []int{87}
 }
 
 func (x *CompleteRequest) GetLine() string {
@@ -4418,7 +4642,7 @@ type CompleteResponse struct {
 
 func (x *CompleteResponse) Reset() {
 	*x = CompleteResponse{}
-	mi := &file_bpfrx_proto_msgTypes[84]
+	mi := &file_bpfrx_proto_msgTypes[88]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4430,7 +4654,7 @@ func (x *CompleteResponse) String() string {
 func (*CompleteResponse) ProtoMessage() {}
 
 func (x *CompleteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_bpfrx_proto_msgTypes[84]
+	mi := &file_bpfrx_proto_msgTypes[88]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4443,7 +4667,7 @@ func (x *CompleteResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CompleteResponse.ProtoReflect.Descriptor instead.
 func (*CompleteResponse) Descriptor() ([]byte, []int) {
-	return file_bpfrx_proto_rawDescGZIP(), []int{84}
+	return file_bpfrx_proto_rawDescGZIP(), []int{88}
 }
 
 func (x *CompleteResponse) GetCandidates() []string {
@@ -4717,6 +4941,20 @@ const file_bpfrx_proto_rawDesc = "" +
 	"\x06output\x18\x01 \x01(\tR\x06output\"\x13\n" +
 	"\x11GetIPsecSARequest\",\n" +
 	"\x12GetIPsecSAResponse\x12\x16\n" +
+	"\x06output\x18\x01 \x01(\tR\x06output\"\x92\x01\n" +
+	"\vPingRequest\x12\x16\n" +
+	"\x06target\x18\x01 \x01(\tR\x06target\x12\x14\n" +
+	"\x05count\x18\x02 \x01(\x05R\x05count\x12\x16\n" +
+	"\x06source\x18\x03 \x01(\tR\x06source\x12\x12\n" +
+	"\x04size\x18\x04 \x01(\x05R\x04size\x12)\n" +
+	"\x10routing_instance\x18\x05 \x01(\tR\x0froutingInstance\"&\n" +
+	"\fPingResponse\x12\x16\n" +
+	"\x06output\x18\x01 \x01(\tR\x06output\"n\n" +
+	"\x11TracerouteRequest\x12\x16\n" +
+	"\x06target\x18\x01 \x01(\tR\x06target\x12\x16\n" +
+	"\x06source\x18\x02 \x01(\tR\x06source\x12)\n" +
+	"\x10routing_instance\x18\x03 \x01(\tR\x0froutingInstance\",\n" +
+	"\x12TracerouteResponse\x12\x16\n" +
 	"\x06output\x18\x01 \x01(\tR\x06output\"\x16\n" +
 	"\x14ClearSessionsRequest\"]\n" +
 	"\x15ClearSessionsResponse\x12!\n" +
@@ -4739,7 +4977,7 @@ const file_bpfrx_proto_rawDesc = "" +
 	"\fConfigTarget\x12\r\n" +
 	"\tCANDIDATE\x10\x00\x12\n" +
 	"\n" +
-	"\x06ACTIVE\x10\x012\xc8\x16\n" +
+	"\x06ACTIVE\x10\x012\xc8\x17\n" +
 	"\fBpfrxService\x12S\n" +
 	"\x0eEnterConfigure\x12\x1f.bpfrx.v1.EnterConfigureRequest\x1a .bpfrx.v1.EnterConfigureResponse\x12P\n" +
 	"\rExitConfigure\x12\x1e.bpfrx.v1.ExitConfigureRequest\x1a\x1f.bpfrx.v1.ExitConfigureResponse\x12b\n" +
@@ -4774,7 +5012,10 @@ const file_bpfrx_proto_rawDesc = "" +
 	"\rGetOSPFStatus\x12\x1e.bpfrx.v1.GetOSPFStatusRequest\x1a\x1f.bpfrx.v1.GetOSPFStatusResponse\x12M\n" +
 	"\fGetBGPStatus\x12\x1d.bpfrx.v1.GetBGPStatusRequest\x1a\x1e.bpfrx.v1.GetBGPStatusResponse\x12G\n" +
 	"\n" +
-	"GetIPsecSA\x12\x1b.bpfrx.v1.GetIPsecSARequest\x1a\x1c.bpfrx.v1.GetIPsecSAResponse\x12P\n" +
+	"GetIPsecSA\x12\x1b.bpfrx.v1.GetIPsecSARequest\x1a\x1c.bpfrx.v1.GetIPsecSAResponse\x125\n" +
+	"\x04Ping\x12\x15.bpfrx.v1.PingRequest\x1a\x16.bpfrx.v1.PingResponse\x12G\n" +
+	"\n" +
+	"Traceroute\x12\x1b.bpfrx.v1.TracerouteRequest\x1a\x1c.bpfrx.v1.TracerouteResponse\x12P\n" +
 	"\rClearSessions\x12\x1e.bpfrx.v1.ClearSessionsRequest\x1a\x1f.bpfrx.v1.ClearSessionsResponse\x12P\n" +
 	"\rClearCounters\x12\x1e.bpfrx.v1.ClearCountersRequest\x1a\x1f.bpfrx.v1.ClearCountersResponse\x12t\n" +
 	"\x19ClearDHCPClientIdentifier\x12*.bpfrx.v1.ClearDHCPClientIdentifierRequest\x1a+.bpfrx.v1.ClearDHCPClientIdentifierResponse\x12A\n" +
@@ -4793,7 +5034,7 @@ func file_bpfrx_proto_rawDescGZIP() []byte {
 }
 
 var file_bpfrx_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_bpfrx_proto_msgTypes = make([]protoimpl.MessageInfo, 85)
+var file_bpfrx_proto_msgTypes = make([]protoimpl.MessageInfo, 89)
 var file_bpfrx_proto_goTypes = []any{
 	(ConfigFormat)(0),                         // 0: bpfrx.v1.ConfigFormat
 	(ConfigTarget)(0),                         // 1: bpfrx.v1.ConfigTarget
@@ -4876,12 +5117,16 @@ var file_bpfrx_proto_goTypes = []any{
 	(*GetBGPStatusResponse)(nil),              // 78: bpfrx.v1.GetBGPStatusResponse
 	(*GetIPsecSARequest)(nil),                 // 79: bpfrx.v1.GetIPsecSARequest
 	(*GetIPsecSAResponse)(nil),                // 80: bpfrx.v1.GetIPsecSAResponse
-	(*ClearSessionsRequest)(nil),              // 81: bpfrx.v1.ClearSessionsRequest
-	(*ClearSessionsResponse)(nil),             // 82: bpfrx.v1.ClearSessionsResponse
-	(*ClearCountersRequest)(nil),              // 83: bpfrx.v1.ClearCountersRequest
-	(*ClearCountersResponse)(nil),             // 84: bpfrx.v1.ClearCountersResponse
-	(*CompleteRequest)(nil),                   // 85: bpfrx.v1.CompleteRequest
-	(*CompleteResponse)(nil),                  // 86: bpfrx.v1.CompleteResponse
+	(*PingRequest)(nil),                       // 81: bpfrx.v1.PingRequest
+	(*PingResponse)(nil),                      // 82: bpfrx.v1.PingResponse
+	(*TracerouteRequest)(nil),                 // 83: bpfrx.v1.TracerouteRequest
+	(*TracerouteResponse)(nil),                // 84: bpfrx.v1.TracerouteResponse
+	(*ClearSessionsRequest)(nil),              // 85: bpfrx.v1.ClearSessionsRequest
+	(*ClearSessionsResponse)(nil),             // 86: bpfrx.v1.ClearSessionsResponse
+	(*ClearCountersRequest)(nil),              // 87: bpfrx.v1.ClearCountersRequest
+	(*ClearCountersResponse)(nil),             // 88: bpfrx.v1.ClearCountersResponse
+	(*CompleteRequest)(nil),                   // 89: bpfrx.v1.CompleteRequest
+	(*CompleteResponse)(nil),                  // 90: bpfrx.v1.CompleteResponse
 }
 var file_bpfrx_proto_depIdxs = []int32{
 	0,  // 0: bpfrx.v1.ShowConfigRequest.format:type_name -> bpfrx.v1.ConfigFormat
@@ -4932,48 +5177,52 @@ var file_bpfrx_proto_depIdxs = []int32{
 	75, // 45: bpfrx.v1.BpfrxService.GetOSPFStatus:input_type -> bpfrx.v1.GetOSPFStatusRequest
 	77, // 46: bpfrx.v1.BpfrxService.GetBGPStatus:input_type -> bpfrx.v1.GetBGPStatusRequest
 	79, // 47: bpfrx.v1.BpfrxService.GetIPsecSA:input_type -> bpfrx.v1.GetIPsecSARequest
-	81, // 48: bpfrx.v1.BpfrxService.ClearSessions:input_type -> bpfrx.v1.ClearSessionsRequest
-	83, // 49: bpfrx.v1.BpfrxService.ClearCounters:input_type -> bpfrx.v1.ClearCountersRequest
-	70, // 50: bpfrx.v1.BpfrxService.ClearDHCPClientIdentifier:input_type -> bpfrx.v1.ClearDHCPClientIdentifierRequest
-	85, // 51: bpfrx.v1.BpfrxService.Complete:input_type -> bpfrx.v1.CompleteRequest
-	3,  // 52: bpfrx.v1.BpfrxService.EnterConfigure:output_type -> bpfrx.v1.EnterConfigureResponse
-	5,  // 53: bpfrx.v1.BpfrxService.ExitConfigure:output_type -> bpfrx.v1.ExitConfigureResponse
-	7,  // 54: bpfrx.v1.BpfrxService.GetConfigModeStatus:output_type -> bpfrx.v1.GetConfigModeStatusResponse
-	9,  // 55: bpfrx.v1.BpfrxService.Set:output_type -> bpfrx.v1.SetResponse
-	11, // 56: bpfrx.v1.BpfrxService.Delete:output_type -> bpfrx.v1.DeleteResponse
-	13, // 57: bpfrx.v1.BpfrxService.Commit:output_type -> bpfrx.v1.CommitResponse
-	15, // 58: bpfrx.v1.BpfrxService.CommitCheck:output_type -> bpfrx.v1.CommitCheckResponse
-	17, // 59: bpfrx.v1.BpfrxService.CommitConfirmed:output_type -> bpfrx.v1.CommitConfirmedResponse
-	19, // 60: bpfrx.v1.BpfrxService.ConfirmCommit:output_type -> bpfrx.v1.ConfirmCommitResponse
-	21, // 61: bpfrx.v1.BpfrxService.Rollback:output_type -> bpfrx.v1.RollbackResponse
-	23, // 62: bpfrx.v1.BpfrxService.ShowConfig:output_type -> bpfrx.v1.ShowConfigResponse
-	25, // 63: bpfrx.v1.BpfrxService.ShowCompare:output_type -> bpfrx.v1.ShowCompareResponse
-	27, // 64: bpfrx.v1.BpfrxService.ShowRollback:output_type -> bpfrx.v1.ShowRollbackResponse
-	29, // 65: bpfrx.v1.BpfrxService.ListHistory:output_type -> bpfrx.v1.ListHistoryResponse
-	32, // 66: bpfrx.v1.BpfrxService.GetStatus:output_type -> bpfrx.v1.GetStatusResponse
-	34, // 67: bpfrx.v1.BpfrxService.GetGlobalStats:output_type -> bpfrx.v1.GetGlobalStatsResponse
-	36, // 68: bpfrx.v1.BpfrxService.GetZones:output_type -> bpfrx.v1.GetZonesResponse
-	39, // 69: bpfrx.v1.BpfrxService.GetPolicies:output_type -> bpfrx.v1.GetPoliciesResponse
-	43, // 70: bpfrx.v1.BpfrxService.GetSessions:output_type -> bpfrx.v1.GetSessionsResponse
-	46, // 71: bpfrx.v1.BpfrxService.GetSessionSummary:output_type -> bpfrx.v1.GetSessionSummaryResponse
-	48, // 72: bpfrx.v1.BpfrxService.GetNATSource:output_type -> bpfrx.v1.GetNATSourceResponse
-	51, // 73: bpfrx.v1.BpfrxService.GetNATDestination:output_type -> bpfrx.v1.GetNATDestinationResponse
-	54, // 74: bpfrx.v1.BpfrxService.GetScreen:output_type -> bpfrx.v1.GetScreenResponse
-	57, // 75: bpfrx.v1.BpfrxService.GetEvents:output_type -> bpfrx.v1.GetEventsResponse
-	60, // 76: bpfrx.v1.BpfrxService.GetInterfaces:output_type -> bpfrx.v1.GetInterfacesResponse
-	63, // 77: bpfrx.v1.BpfrxService.ShowInterfacesDetail:output_type -> bpfrx.v1.ShowInterfacesDetailResponse
-	65, // 78: bpfrx.v1.BpfrxService.GetDHCPLeases:output_type -> bpfrx.v1.GetDHCPLeasesResponse
-	68, // 79: bpfrx.v1.BpfrxService.GetDHCPClientIdentifiers:output_type -> bpfrx.v1.GetDHCPClientIdentifiersResponse
-	73, // 80: bpfrx.v1.BpfrxService.GetRoutes:output_type -> bpfrx.v1.GetRoutesResponse
-	76, // 81: bpfrx.v1.BpfrxService.GetOSPFStatus:output_type -> bpfrx.v1.GetOSPFStatusResponse
-	78, // 82: bpfrx.v1.BpfrxService.GetBGPStatus:output_type -> bpfrx.v1.GetBGPStatusResponse
-	80, // 83: bpfrx.v1.BpfrxService.GetIPsecSA:output_type -> bpfrx.v1.GetIPsecSAResponse
-	82, // 84: bpfrx.v1.BpfrxService.ClearSessions:output_type -> bpfrx.v1.ClearSessionsResponse
-	84, // 85: bpfrx.v1.BpfrxService.ClearCounters:output_type -> bpfrx.v1.ClearCountersResponse
-	71, // 86: bpfrx.v1.BpfrxService.ClearDHCPClientIdentifier:output_type -> bpfrx.v1.ClearDHCPClientIdentifierResponse
-	86, // 87: bpfrx.v1.BpfrxService.Complete:output_type -> bpfrx.v1.CompleteResponse
-	52, // [52:88] is the sub-list for method output_type
-	16, // [16:52] is the sub-list for method input_type
+	81, // 48: bpfrx.v1.BpfrxService.Ping:input_type -> bpfrx.v1.PingRequest
+	83, // 49: bpfrx.v1.BpfrxService.Traceroute:input_type -> bpfrx.v1.TracerouteRequest
+	85, // 50: bpfrx.v1.BpfrxService.ClearSessions:input_type -> bpfrx.v1.ClearSessionsRequest
+	87, // 51: bpfrx.v1.BpfrxService.ClearCounters:input_type -> bpfrx.v1.ClearCountersRequest
+	70, // 52: bpfrx.v1.BpfrxService.ClearDHCPClientIdentifier:input_type -> bpfrx.v1.ClearDHCPClientIdentifierRequest
+	89, // 53: bpfrx.v1.BpfrxService.Complete:input_type -> bpfrx.v1.CompleteRequest
+	3,  // 54: bpfrx.v1.BpfrxService.EnterConfigure:output_type -> bpfrx.v1.EnterConfigureResponse
+	5,  // 55: bpfrx.v1.BpfrxService.ExitConfigure:output_type -> bpfrx.v1.ExitConfigureResponse
+	7,  // 56: bpfrx.v1.BpfrxService.GetConfigModeStatus:output_type -> bpfrx.v1.GetConfigModeStatusResponse
+	9,  // 57: bpfrx.v1.BpfrxService.Set:output_type -> bpfrx.v1.SetResponse
+	11, // 58: bpfrx.v1.BpfrxService.Delete:output_type -> bpfrx.v1.DeleteResponse
+	13, // 59: bpfrx.v1.BpfrxService.Commit:output_type -> bpfrx.v1.CommitResponse
+	15, // 60: bpfrx.v1.BpfrxService.CommitCheck:output_type -> bpfrx.v1.CommitCheckResponse
+	17, // 61: bpfrx.v1.BpfrxService.CommitConfirmed:output_type -> bpfrx.v1.CommitConfirmedResponse
+	19, // 62: bpfrx.v1.BpfrxService.ConfirmCommit:output_type -> bpfrx.v1.ConfirmCommitResponse
+	21, // 63: bpfrx.v1.BpfrxService.Rollback:output_type -> bpfrx.v1.RollbackResponse
+	23, // 64: bpfrx.v1.BpfrxService.ShowConfig:output_type -> bpfrx.v1.ShowConfigResponse
+	25, // 65: bpfrx.v1.BpfrxService.ShowCompare:output_type -> bpfrx.v1.ShowCompareResponse
+	27, // 66: bpfrx.v1.BpfrxService.ShowRollback:output_type -> bpfrx.v1.ShowRollbackResponse
+	29, // 67: bpfrx.v1.BpfrxService.ListHistory:output_type -> bpfrx.v1.ListHistoryResponse
+	32, // 68: bpfrx.v1.BpfrxService.GetStatus:output_type -> bpfrx.v1.GetStatusResponse
+	34, // 69: bpfrx.v1.BpfrxService.GetGlobalStats:output_type -> bpfrx.v1.GetGlobalStatsResponse
+	36, // 70: bpfrx.v1.BpfrxService.GetZones:output_type -> bpfrx.v1.GetZonesResponse
+	39, // 71: bpfrx.v1.BpfrxService.GetPolicies:output_type -> bpfrx.v1.GetPoliciesResponse
+	43, // 72: bpfrx.v1.BpfrxService.GetSessions:output_type -> bpfrx.v1.GetSessionsResponse
+	46, // 73: bpfrx.v1.BpfrxService.GetSessionSummary:output_type -> bpfrx.v1.GetSessionSummaryResponse
+	48, // 74: bpfrx.v1.BpfrxService.GetNATSource:output_type -> bpfrx.v1.GetNATSourceResponse
+	51, // 75: bpfrx.v1.BpfrxService.GetNATDestination:output_type -> bpfrx.v1.GetNATDestinationResponse
+	54, // 76: bpfrx.v1.BpfrxService.GetScreen:output_type -> bpfrx.v1.GetScreenResponse
+	57, // 77: bpfrx.v1.BpfrxService.GetEvents:output_type -> bpfrx.v1.GetEventsResponse
+	60, // 78: bpfrx.v1.BpfrxService.GetInterfaces:output_type -> bpfrx.v1.GetInterfacesResponse
+	63, // 79: bpfrx.v1.BpfrxService.ShowInterfacesDetail:output_type -> bpfrx.v1.ShowInterfacesDetailResponse
+	65, // 80: bpfrx.v1.BpfrxService.GetDHCPLeases:output_type -> bpfrx.v1.GetDHCPLeasesResponse
+	68, // 81: bpfrx.v1.BpfrxService.GetDHCPClientIdentifiers:output_type -> bpfrx.v1.GetDHCPClientIdentifiersResponse
+	73, // 82: bpfrx.v1.BpfrxService.GetRoutes:output_type -> bpfrx.v1.GetRoutesResponse
+	76, // 83: bpfrx.v1.BpfrxService.GetOSPFStatus:output_type -> bpfrx.v1.GetOSPFStatusResponse
+	78, // 84: bpfrx.v1.BpfrxService.GetBGPStatus:output_type -> bpfrx.v1.GetBGPStatusResponse
+	80, // 85: bpfrx.v1.BpfrxService.GetIPsecSA:output_type -> bpfrx.v1.GetIPsecSAResponse
+	82, // 86: bpfrx.v1.BpfrxService.Ping:output_type -> bpfrx.v1.PingResponse
+	84, // 87: bpfrx.v1.BpfrxService.Traceroute:output_type -> bpfrx.v1.TracerouteResponse
+	86, // 88: bpfrx.v1.BpfrxService.ClearSessions:output_type -> bpfrx.v1.ClearSessionsResponse
+	88, // 89: bpfrx.v1.BpfrxService.ClearCounters:output_type -> bpfrx.v1.ClearCountersResponse
+	71, // 90: bpfrx.v1.BpfrxService.ClearDHCPClientIdentifier:output_type -> bpfrx.v1.ClearDHCPClientIdentifierResponse
+	90, // 91: bpfrx.v1.BpfrxService.Complete:output_type -> bpfrx.v1.CompleteResponse
+	54, // [54:92] is the sub-list for method output_type
+	16, // [16:54] is the sub-list for method input_type
 	16, // [16:16] is the sub-list for extension type_name
 	16, // [16:16] is the sub-list for extension extendee
 	0,  // [0:16] is the sub-list for field type_name
@@ -4990,7 +5239,7 @@ func file_bpfrx_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_bpfrx_proto_rawDesc), len(file_bpfrx_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   85,
+			NumMessages:   89,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

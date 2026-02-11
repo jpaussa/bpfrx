@@ -163,6 +163,12 @@ func (c *ctl) dispatchOperational(line string) error {
 	case "clear":
 		return c.handleClear(parts[1:])
 
+	case "ping":
+		return c.handlePing(parts[1:])
+
+	case "traceroute":
+		return c.handleTraceroute(parts[1:])
+
 	case "quit", "exit":
 		return errExit
 
@@ -285,11 +291,15 @@ func (c *ctl) handleShow(args []string) error {
 				return c.showDHCPLeases()
 			case "client-identifier":
 				return c.showDHCPClientIdentifier()
+			case "relay":
+				fmt.Println("show dhcp relay: not available via remote CLI (local only)")
+				return nil
 			}
 		}
 		fmt.Println("show dhcp:")
 		fmt.Println("  leases              Show DHCP leases")
 		fmt.Println("  client-identifier   Show DHCPv6 DUID(s)")
+		fmt.Println("  relay               Show DHCP relay status")
 		return nil
 
 	case "route":
@@ -306,6 +316,14 @@ func (c *ctl) handleShow(args []string) error {
 
 	case "system":
 		return c.handleShowSystem(args[1:])
+
+	case "schedulers":
+		fmt.Println("show schedulers: not available via remote CLI (local only)")
+		return nil
+
+	case "snmp":
+		fmt.Println("show snmp: not available via remote CLI (local only)")
+		return nil
 
 	default:
 		return fmt.Errorf("unknown show target: %s", args[0])
@@ -677,6 +695,8 @@ func (c *ctl) handleShowProtocols(args []string) error {
 		fmt.Println("show protocols:")
 		fmt.Println("  ospf             Show OSPF information")
 		fmt.Println("  bgp              Show BGP information")
+		fmt.Println("  rip              Show RIP routes")
+		fmt.Println("  isis             Show IS-IS information")
 		return nil
 	}
 	switch args[0] {
@@ -701,6 +721,9 @@ func (c *ctl) handleShowProtocols(args []string) error {
 			return fmt.Errorf("%v", err)
 		}
 		fmt.Print(resp.Output)
+		return nil
+	case "rip", "isis":
+		fmt.Printf("show protocols %s: not available via remote CLI (local only)\n", args[0])
 		return nil
 	default:
 		return fmt.Errorf("unknown show protocols target: %s", args[0])
@@ -994,6 +1017,78 @@ func (c *ctl) showOperationalHelp() {
 	fmt.Println("  clear security flow session        Clear all sessions")
 	fmt.Println("  clear security counters            Clear all counters")
 	fmt.Println("  quit                               Exit CLI")
+}
+
+func (c *ctl) handlePing(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: ping <host> [count N] [source IP] [size N] [routing-instance NAME]")
+	}
+	req := &pb.PingRequest{Target: args[0], Count: 5}
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "count":
+			if i+1 < len(args) {
+				i++
+				if v, err := strconv.Atoi(args[i]); err == nil {
+					req.Count = int32(v)
+				}
+			}
+		case "source":
+			if i+1 < len(args) {
+				i++
+				req.Source = args[i]
+			}
+		case "size":
+			if i+1 < len(args) {
+				i++
+				if v, err := strconv.Atoi(args[i]); err == nil {
+					req.Size = int32(v)
+				}
+			}
+		case "routing-instance":
+			if i+1 < len(args) {
+				i++
+				req.RoutingInstance = args[i]
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	resp, err := c.client.Ping(ctx, req)
+	if err != nil {
+		return fmt.Errorf("%v", err)
+	}
+	fmt.Print(resp.Output)
+	return nil
+}
+
+func (c *ctl) handleTraceroute(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: traceroute <host> [source IP] [routing-instance NAME]")
+	}
+	req := &pb.TracerouteRequest{Target: args[0]}
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "source":
+			if i+1 < len(args) {
+				i++
+				req.Source = args[i]
+			}
+		case "routing-instance":
+			if i+1 < len(args) {
+				i++
+				req.RoutingInstance = args[i]
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	resp, err := c.client.Traceroute(ctx, req)
+	if err != nil {
+		return fmt.Errorf("%v", err)
+	}
+	fmt.Print(resp.Output)
+	return nil
 }
 
 func (c *ctl) showConfigHelp() {

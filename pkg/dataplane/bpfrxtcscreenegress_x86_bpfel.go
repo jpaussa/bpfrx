@@ -259,7 +259,8 @@ type bpfrxTcScreenEgressPolicyRule struct {
 	DstPortLow  uint16
 	DstPortHigh uint16
 	Protocol    uint8
-	Pad         [3]uint8
+	Active      uint8
+	Pad         [2]uint8
 	AppId       uint32
 	NatRuleId   uint32
 	CounterId   uint32

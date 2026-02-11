@@ -63,6 +63,10 @@ func CompileConfig(tree *ConfigTree) (*Config, error) {
 			if err := compileSystem(node, &cfg.System); err != nil {
 				return nil, fmt.Errorf("system: %w", err)
 			}
+		case "schedulers":
+			if err := compileSchedulers(node, cfg); err != nil {
+				return nil, fmt.Errorf("schedulers: %w", err)
+			}
 		}
 	}
 
@@ -238,6 +242,11 @@ func compilePolicies(node *Node, sec *SecurityConfig) error {
 							pol.Count = true
 						}
 					}
+				}
+
+				// scheduler-name at the policy level
+				if snNode := policyNode.FindChild("scheduler-name"); snNode != nil && len(snNode.Keys) >= 2 {
+					pol.SchedulerName = snNode.Keys[1]
 				}
 
 				zpp.Policies = append(zpp.Policies, pol)
@@ -624,6 +633,23 @@ func compileNATSource(node *Node, sec *SecurityConfig) error {
 						pool.PortHigh = v
 					}
 				}
+			case "persistent-nat":
+				pnat := &PersistentNATConfig{InactivityTimeout: 300}
+				for _, pnProp := range prop.Children {
+					switch pnProp.Name() {
+					case "permit":
+						if len(pnProp.Keys) >= 2 && pnProp.Keys[1] == "any-remote-host" {
+							pnat.PermitAnyRemoteHost = true
+						}
+					case "inactivity-timeout":
+						if len(pnProp.Keys) >= 2 {
+							if v, err := strconv.Atoi(pnProp.Keys[1]); err == nil {
+								pnat.InactivityTimeout = v
+							}
+						}
+					}
+				}
+				pool.PersistentNAT = pnat
 			}
 		}
 		if pool.PortLow == 0 {
@@ -1289,6 +1315,90 @@ func compileProtocols(node *Node, proto *ProtocolsConfig) error {
 		}
 	}
 
+	ripNode := node.FindChild("rip")
+	if ripNode != nil {
+		proto.RIP = &RIPConfig{}
+		for _, child := range ripNode.Children {
+			switch child.Name() {
+			case "group":
+				for _, gc := range child.Children {
+					switch gc.Name() {
+					case "neighbor":
+						if len(gc.Keys) >= 2 {
+							proto.RIP.Interfaces = append(proto.RIP.Interfaces, gc.Keys[1])
+						}
+					case "export":
+						if len(gc.Keys) >= 2 {
+							proto.RIP.Redistribute = append(proto.RIP.Redistribute, gc.Keys[1])
+						}
+					}
+				}
+			case "neighbor":
+				if len(child.Keys) >= 2 {
+					proto.RIP.Interfaces = append(proto.RIP.Interfaces, child.Keys[1])
+				}
+			case "passive-interface":
+				if len(child.Keys) >= 2 {
+					proto.RIP.Passive = append(proto.RIP.Passive, child.Keys[1])
+				}
+			case "redistribute":
+				if len(child.Keys) >= 2 {
+					proto.RIP.Redistribute = append(proto.RIP.Redistribute, child.Keys[1])
+				}
+			}
+		}
+	}
+
+	isisNode := node.FindChild("isis")
+	if isisNode != nil {
+		proto.ISIS = &ISISConfig{Level: "level-2"}
+		for _, child := range isisNode.Children {
+			switch child.Name() {
+			case "net":
+				if len(child.Keys) >= 2 {
+					proto.ISIS.NET = child.Keys[1]
+				}
+			case "level":
+				if len(child.Keys) >= 2 {
+					proto.ISIS.Level = child.Keys[1]
+				}
+			case "is-type":
+				if len(child.Keys) >= 2 {
+					proto.ISIS.Level = child.Keys[1]
+				}
+			case "interface":
+				if len(child.Keys) >= 2 {
+					iface := &ISISInterface{Name: child.Keys[1]}
+					for _, prop := range child.Children {
+						switch prop.Name() {
+						case "level":
+							if len(prop.Keys) >= 2 {
+								iface.Level = prop.Keys[1]
+							}
+						case "passive":
+							iface.Passive = true
+						case "metric":
+							if len(prop.Keys) >= 2 {
+								if v, err := strconv.Atoi(prop.Keys[1]); err == nil {
+									iface.Metric = v
+								}
+							}
+						}
+					}
+					// Check keys for "level N" and "passive" shorthand
+					for _, k := range child.Keys[2:] {
+						switch k {
+						case "passive":
+							iface.Passive = true
+						case "level":
+							// next key is the level value, handled above
+						}
+					}
+					proto.ISIS.Interfaces = append(proto.ISIS.Interfaces, iface)
+				}
+			}
+		}
+	}
 	return nil
 }
 
@@ -1420,6 +1530,8 @@ func compileRoutingInstances(node *Node, cfg *Config) error {
 				}
 				ri.OSPF = proto.OSPF
 				ri.BGP = proto.BGP
+				ri.RIP = proto.RIP
+				ri.ISIS = proto.ISIS
 			}
 		}
 
@@ -1597,16 +1709,23 @@ func compileFilterThen(node *Node, term *FirewallFilterTerm) {
 
 func compileSystem(node *Node, sys *SystemConfig) error {
 	svcNode := node.FindChild("services")
-	if svcNode == nil {
-		return nil
+	if svcNode != nil {
+		dhcpNode := svcNode.FindChild("dhcp-local-server")
+		if dhcpNode != nil {
+			if err := compileDHCPLocalServer(dhcpNode, &sys.DHCPServer); err != nil {
+				return err
+			}
+		}
 	}
 
-	dhcpNode := svcNode.FindChild("dhcp-local-server")
-	if dhcpNode == nil {
-		return nil
+	snmpNode := node.FindChild("snmp")
+	if snmpNode != nil {
+		if err := compileSNMP(snmpNode, sys); err != nil {
+			return err
+		}
 	}
 
-	return compileDHCPLocalServer(dhcpNode, &sys.DHCPServer)
+	return nil
 }
 
 func compileDHCPLocalServer(node *Node, dhcp *DHCPServerConfig) error {
@@ -1863,10 +1982,20 @@ func compileFlowMonitoring(node *Node, svc *ServicesConfig) error {
 
 func compileForwardingOptions(node *Node, fo *ForwardingOptionsConfig) error {
 	sampNode := node.FindChild("sampling")
-	if sampNode == nil {
-		return nil
+	if sampNode != nil {
+		if err := compileSampling(sampNode, fo); err != nil {
+			return err
+		}
 	}
-	return compileSampling(sampNode, fo)
+
+	relayNode := node.FindChild("dhcp-relay")
+	if relayNode != nil {
+		if err := compileDHCPRelay(relayNode, fo); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func compileSampling(node *Node, fo *ForwardingOptionsConfig) error {
@@ -1960,4 +2089,146 @@ func compileSamplingFamily(node *Node) *SamplingFamily {
 	}
 
 	return sf
+}
+
+func compileDHCPRelay(node *Node, fo *ForwardingOptionsConfig) error {
+	relay := &DHCPRelayConfig{
+		ServerGroups: make(map[string]*DHCPRelayServerGroup),
+		Groups:       make(map[string]*DHCPRelayGroup),
+	}
+
+	for _, sgNode := range node.FindChildren("server-group") {
+		if len(sgNode.Keys) < 2 {
+			continue
+		}
+		sg := &DHCPRelayServerGroup{Name: sgNode.Keys[1]}
+		// Servers can be in remaining keys or children
+		for _, k := range sgNode.Keys[2:] {
+			sg.Servers = append(sg.Servers, k)
+		}
+		for _, child := range sgNode.Children {
+			if len(child.Keys) >= 1 {
+				sg.Servers = append(sg.Servers, child.Keys[0])
+			}
+		}
+		relay.ServerGroups[sg.Name] = sg
+	}
+
+	for _, gNode := range node.FindChildren("group") {
+		if len(gNode.Keys) < 2 {
+			continue
+		}
+		g := &DHCPRelayGroup{Name: gNode.Keys[1]}
+		for _, prop := range gNode.Children {
+			switch prop.Name() {
+			case "interface":
+				if len(prop.Keys) >= 2 {
+					g.Interfaces = append(g.Interfaces, prop.Keys[1])
+				}
+			case "active-server-group":
+				if len(prop.Keys) >= 2 {
+					g.ActiveServerGroup = prop.Keys[1]
+				}
+			}
+		}
+		relay.Groups[g.Name] = g
+	}
+
+	fo.DHCPRelay = relay
+	return nil
+}
+
+func compileSNMP(node *Node, sys *SystemConfig) error {
+	snmp := &SNMPConfig{
+		Communities: make(map[string]*SNMPCommunity),
+		TrapGroups:  make(map[string]*SNMPTrapGroup),
+	}
+
+	for _, child := range node.Children {
+		switch child.Name() {
+		case "location":
+			if len(child.Keys) >= 2 {
+				snmp.Location = child.Keys[1]
+			}
+		case "contact":
+			if len(child.Keys) >= 2 {
+				snmp.Contact = child.Keys[1]
+			}
+		case "description":
+			if len(child.Keys) >= 2 {
+				snmp.Description = child.Keys[1]
+			}
+		case "community":
+			if len(child.Keys) >= 2 {
+				comm := &SNMPCommunity{Name: child.Keys[1]}
+				for _, prop := range child.Children {
+					if prop.Name() == "authorization" && len(prop.Keys) >= 2 {
+						comm.Authorization = prop.Keys[1]
+					}
+				}
+				// Flat form: community public authorization read-only
+				for i := 2; i < len(child.Keys)-1; i++ {
+					if child.Keys[i] == "authorization" {
+						comm.Authorization = child.Keys[i+1]
+					}
+				}
+				if comm.Authorization == "" {
+					comm.Authorization = "read-only"
+				}
+				snmp.Communities[comm.Name] = comm
+			}
+		case "trap-group":
+			if len(child.Keys) >= 2 {
+				tg := &SNMPTrapGroup{Name: child.Keys[1]}
+				for _, prop := range child.Children {
+					if prop.Name() == "targets" && len(prop.Keys) >= 2 {
+						tg.Targets = append(tg.Targets, prop.Keys[1])
+					}
+				}
+				snmp.TrapGroups[tg.Name] = tg
+			}
+		}
+	}
+
+	sys.SNMP = snmp
+	return nil
+}
+
+func compileSchedulers(node *Node, cfg *Config) error {
+	if cfg.Schedulers == nil {
+		cfg.Schedulers = make(map[string]*SchedulerConfig)
+	}
+
+	for _, schedNode := range node.FindChildren("scheduler") {
+		if len(schedNode.Keys) < 2 {
+			continue
+		}
+		sched := &SchedulerConfig{Name: schedNode.Keys[1]}
+
+		for _, prop := range schedNode.Children {
+			switch prop.Name() {
+			case "start-time":
+				if len(prop.Keys) >= 2 {
+					sched.StartTime = prop.Keys[1]
+				}
+			case "stop-time":
+				if len(prop.Keys) >= 2 {
+					sched.StopTime = prop.Keys[1]
+				}
+			case "start-date":
+				if len(prop.Keys) >= 2 {
+					sched.StartDate = prop.Keys[1]
+				}
+			case "stop-date":
+				if len(prop.Keys) >= 2 {
+					sched.StopDate = prop.Keys[1]
+				}
+			case "daily":
+				sched.Daily = true
+			}
+		}
+
+		cfg.Schedulers[sched.Name] = sched
+	}
+	return nil
 }
