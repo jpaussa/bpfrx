@@ -259,16 +259,30 @@ provision_instance() {
 		incus exec "$INSTANCE_NAME" -- ip link set enp10s0 up 2>/dev/null || true
 	fi
 
-	# Internet-facing interface: disable RequiredForOnline (DHCP handled by bpfrxd)
+	# Networkd config: FRR is sole route manager, suppress DHCP routes on mgmt + internet
 	if [[ "$type" == "vm" ]]; then
 		local use_networkd=false
 		if incus exec "$INSTANCE_NAME" -- systemctl is-active systemd-networkd &>/dev/null; then
 			use_networkd=true
 		fi
 		if [[ "$use_networkd" == "true" ]]; then
-			incus exec "$INSTANCE_NAME" -- bash -c "cat > /etc/systemd/network/50-internet.network" <<-EOF
+			# Management interface: keep DHCP for address but suppress default route
+			incus exec "$INSTANCE_NAME" -- bash -c 'cat > /etc/systemd/network/enp5s0.network' <<-'EOF'
 			[Match]
-			Name=enp10s0
+			Name=enp5s0
+			[Network]
+			DHCP=true
+			[DHCPv4]
+			UseRoutes=false
+			UseDomains=true
+			UseMTU=true
+			[DHCP]
+			ClientIdentifier=mac
+			EOF
+			# Internet interface: no networkd DHCP (bpfrxd manages this + FRR routes)
+			incus exec "$INSTANCE_NAME" -- bash -c 'cat > /etc/systemd/network/50-internet.network' <<-'EOF'
+			[Match]
+			Name=enp10s0*
 			[Link]
 			RequiredForOnline=no
 			EOF
@@ -394,6 +408,11 @@ cmd_deploy() {
 	incus file push "${SCRIPT_DIR}/bpfrxd.service" "$INSTANCE_NAME/etc/systemd/system/bpfrxd.service"
 	incus exec "$INSTANCE_NAME" -- systemctl daemon-reload
 	incus exec "$INSTANCE_NAME" -- systemctl enable --now bpfrxd
+
+	# Suppress management interface default route so FRR-managed routes take effect.
+	# The permanent fix is UseRoutes=false in networkd, but on existing VMs the
+	# kernel DHCP route may already be installed.
+	incus exec "$INSTANCE_NAME" -- ip route del default via 10.0.100.1 dev enp5s0 2>/dev/null || true
 
 	info "Deploy complete. Service started via systemd."
 	info "  Logs:    $0 logs"
