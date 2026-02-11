@@ -178,3 +178,45 @@
 - Managed section markers in frr.conf for non-destructive updates
 - setup.sh: start/stop/restart/logs/journal commands
 - Makefile: test-start/stop/restart/logs/journal targets
+
+## Phase 36-38: DHCP Relay, IP-IP Tunnels, RIP/IS-IS, Ping/Traceroute, SNMP, Scheduler, Persistent NAT
+- DHCP relay agent for forwarding client requests to upstream servers
+- IP-IP tunnel support alongside GRE
+- RIP and IS-IS routing protocol support via FRR
+- Built-in ping and traceroute diagnostic tools
+- SNMP agent for monitoring integration
+- Scheduler for timed policy/config actions
+- Persistent NAT table that survives daemon restarts
+
+## Phase 39-41: NAT Monitoring, CLI Polish, VRRP High Availability
+- NAT session monitoring and detailed display
+- CLI polish: configure mode echo fix, prompt improvements
+- VRRP high availability for active/standby failover
+
+## Phase 42: Performance Profiling & BPF Optimization
+- Identified `bpf_printk` consuming 55%+ CPU — disabled tracing (`e104112`)
+- Fixed `CHECKSUM_PARTIAL` NAT checksum — use non-complemented update for PH seed (`0950a1f`)
+- Fixed cross-zone TCP forwarding with cold ARP and CHECKSUM_PARTIAL handling (`a1e1aab`)
+- Fixed cross-zone forwarding: VLAN tag restore, overlapping memcpy, XDP mode consistency (`9f8f32c`)
+- Fixed conntrack dropping TCP RST before forwarding to peer (`05b43a4`)
+- Reduced per-packet `memset`/`memcpy` overhead in BPF pipeline (`299a536`)
+- Cached FIB lookup results in session entries to skip `bpf_fib_lookup` on established flows (`144a3c2`)
+- Fixed cross-CPU NAT port collisions; skip FIB cache on TCP SYN (`7aa77f0`)
+- **Perf profile (Feb 2026, 4-stream iperf3):** BPF programs ~10% CPU, generic XDP infrastructure ~16%
+
+## Phase 43: BPF Map & Link Pinning for Hitless Restarts
+- **Commit:** `513339f`
+- Stateful maps pinned to `/sys/fs/bpf/bpfrx/`: `sessions`, `sessions_v6`, `dnat_table`, `dnat_table_v6`, `nat64_state`, `nat_port_counters`
+- XDP/TC links pinned to `/sys/fs/bpf/bpfrx/links/` — programs keep running after daemon exit
+- On restart: `link.Update()` atomically replaces programs, pinned maps reused
+- Incompatible pin recovery: if struct sizes change, old pins removed and fresh maps created
+- `bpfrxd cleanup` subcommand for full teardown (unpin links + remove all BPF state + clear FRR routes)
+
+## Phase 44: Hitless Restart Fixes & Per-Interface Native XDP
+- **Commit:** `f9edb92`
+- **Non-destructive shutdown:** Removed all destructive cleanup from SIGTERM (FRR route clearing, DHCP lease release, VRF/tunnel removal, radvd/ipsec clear)
+- **DHCP context decoupling:** DHCP clients use `context.Background()` instead of daemon context, preventing address removal during restart
+- **Deferred program attachment:** XDP/TC `link.Update()` moved to AFTER all compilation phases (zones, policies, NAT, screen, filters) — eliminates window with empty config maps
+- **Per-interface native/generic XDP:** Each interface independently tries native XDP first, falls back to generic. `redirect_capable` BPF array map tells `xdp_forward` whether to use `bpf_redirect_map` (native) or `XDP_PASS` (kernel forwarding)
+- **Results:** 4 virtio-net interfaces in native XDP, 1 iavf in generic mode. 25+ Gbps sustained throughput with zero packet loss during restarts
+- **Verification:** 3 consecutive daemon restarts during 40-second iperf3 — zero throughput disruption

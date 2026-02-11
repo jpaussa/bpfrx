@@ -77,3 +77,79 @@ VF appears as enp10s0 inside VM.
 ### TCP MSS clamping verifier
 - Cannot use loops or variable offsets from map-derived values (`l4_offset`)
 - **Fix:** Use constant-offset checks for common MSS positions + single bounds check (`l4_offset + 60 <= data_end`)
+
+## Performance Bugs
+
+### bpf_printk consuming 55%+ CPU
+- Debug `bpf_printk()` calls left in production BPF programs consumed over 55% CPU
+- **Fix:** Removed/disabled all `bpf_printk()` calls
+- **Commit:** `e104112`
+
+### CHECKSUM_PARTIAL NAT checksum corruption
+- NAT checksum update used complemented delta for `CHECKSUM_PARTIAL` pseudo-header seed
+- Kernel expects non-complemented update for PH seed — corrupted checksums on offloaded packets
+- **Fix:** Use non-complemented `csum_replace4`/`csum_replace16` for PH seed updates
+- **Commit:** `0950a1f`
+
+### Cross-zone TCP forwarding with cold ARP
+- `bpf_fib_lookup` returns `NO_NEIGH` (rc=7) when ARP entry is absent
+- Cannot redirect without destination MAC — packets dropped silently
+- **Fix:** XDP_PASS to kernel for ARP resolution; TC egress drops un-NAT'd kernel-forwarded packets
+- **Files:** `bpf/xdp/xdp_zone.c`, `bpf/tc/tc_main.c`, `bpf/tc/tc_conntrack.c`
+- **Commit:** `a1e1aab`
+
+### VLAN tag restore + overlapping memcpy in cross-zone forwarding
+- VLAN tag not restored after cross-zone forwarding when egress interface has VLAN
+- `memcpy` with overlapping source/dest regions caused corruption
+- **Fix:** Proper VLAN tag push on egress; safe copy ordering
+- **Commit:** `9f8f32c`
+
+### Conntrack dropping TCP RST before forwarding to peer
+- TCP RST packets matching existing sessions were dropped by conntrack instead of forwarded
+- Broke connection resets and half-open connection cleanup
+- **Fix:** Allow TCP RST through conntrack for established sessions
+- **Commit:** `05b43a4`
+
+### Cross-CPU NAT port collisions
+- Multiple CPUs could allocate the same SNAT port simultaneously (per-CPU counters not atomic)
+- **Fix:** Per-CPU NAT port counter partitioning; also skip FIB cache on TCP SYN (need full FIB for new connections)
+- **Commit:** `7aa77f0`
+
+### Generic XDP 16% CPU overhead
+- All interfaces forced to generic (SKB) XDP mode because iavf driver lacks native support
+- `bpf_redirect_map()` in native XDP requires target's `ndo_xdp_xmit` — if ANY interface lacks it, all forced generic
+- Generic XDP creates full SKB per packet: `memcpy_orig` ~8% + `memset_orig` ~8% = ~16% CPU
+- **Fix:** Per-interface native/generic XDP selection with `redirect_capable` BPF map
+- **Commit:** `f9edb92`
+
+## Hitless Restart Bugs
+
+### Destructive daemon shutdown kills sessions and routes
+- `daemon.Close()` called `d.frr.Clear()` (removes kernel routes), `d.dhcp.StopAll()` (releases DHCP leases + removes IPs), `d.routing.ClearVRFs()`/`ClearTunnels()` (removes VRFs)
+- On restart: no routes = no forwarding, no IPs = DHCP re-request, all sessions lost
+- **Fix:** Non-destructive SIGTERM shutdown — only close Go file handles, leave all state for next daemon. Full teardown only via `bpfrxd cleanup`
+- **File:** `pkg/daemon/daemon.go`
+- **Commit:** `f9edb92`
+
+### DHCP context cancellation removes addresses on restart
+- DHCP client context derived from daemon context: `context.WithCancel(ctx)`
+- When daemon ctx cancelled during SIGTERM, DHCP clients release leases and remove interface IPs
+- Even without explicit `StopAll()`, context cancellation triggers cleanup
+- **Fix:** DHCP clients use `context.Background()` — only explicit `StopAll()` triggers lease release
+- **File:** `pkg/dhcp/dhcp.go`
+- **Commit:** `f9edb92`
+
+### Premature link.Update() with empty config maps
+- XDP attachment happened during `compileZones()` BEFORE policies/NAT/screen were compiled
+- Brief window where new BPF programs run with populated zone maps but empty policy/NAT/screen maps
+- During this window: all traffic hits default-deny (no policies loaded)
+- **Fix:** Collect pending ifindex lists during compilation; defer all `link.Update()` calls to end of `Compile()` after ALL map populations complete
+- **File:** `pkg/dataplane/compiler.go`
+- **Commit:** `f9edb92`
+
+### Stale generic XDP pinned links after mode change
+- Pinned links from before per-interface XDP were created in generic mode
+- `link.Update()` replaces the program but does NOT change XDP attachment mode
+- Restarting daemon reuses stale generic links even though native is now supported
+- **Fix:** Run `bpfrxd cleanup` once after deploying the per-interface XDP code to create fresh native links
+- **Pattern:** Structural changes to XDP/TC attachment require one-time cleanup + fresh start
