@@ -7,12 +7,14 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 
 	"github.com/psaab/bpfrx/pkg/api"
@@ -220,6 +222,20 @@ func (d *Daemon) Run(ctx context.Context) error {
 			defer wg.Done()
 			d.scheduler.Run(ctx)
 		}()
+	}
+
+	// Start periodic neighbor resolution to keep ARP entries warm for
+	// known forwarding targets (DNAT pools, gateways, address-book hosts).
+	// Without this, bpf_fib_lookup returns NO_NEIGH when ARP expires,
+	// causing cold-start delays or connection failures for return traffic.
+	if !d.opts.NoDataplane {
+		if cfg := d.store.ActiveConfig(); cfg != nil {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				d.runPeriodicNeighborResolution(ctx, cfg)
+			}()
+		}
 	}
 
 	// Start HTTP API server if configured.
@@ -433,6 +449,11 @@ func (d *Daemon) applyConfig(cfg *config.Config) {
 		}
 	}
 
+	// 4. Proactive neighbor resolution for all known next-hops/gateways.
+	// This ensures bpf_fib_lookup returns SUCCESS (with valid MACs)
+	// instead of NO_NEIGH for the first forwarded packet.
+	d.resolveNeighbors(cfg)
+
 	// 5. Apply radvd config (Router Advertisements)
 	if d.radvd != nil && len(cfg.Protocols.RouterAdvertisement) > 0 {
 		if err := d.radvd.Apply(cfg.Protocols.RouterAdvertisement); err != nil {
@@ -516,6 +537,190 @@ func (d *Daemon) startDHCPClients(ctx context.Context, cfg *config.Config) {
 				slog.Info("starting DHCPv6 client", "interface", dhcpIface)
 				dm.Start(ctx, dhcpIface, dhcp.AFInet6)
 			}
+		}
+	}
+}
+
+// stripCIDR removes the /prefix from a CIDR string, returning just the IP.
+func stripCIDR(s string) string {
+	ip, _, err := net.ParseCIDR(s)
+	if err != nil {
+		return s // not CIDR, return as-is
+	}
+	return ip.String()
+}
+
+// resolveNeighbors proactively triggers ARP/NDP resolution for all known
+// next-hops, gateways, NAT destinations, and address-book host entries.
+// This ensures bpf_fib_lookup returns SUCCESS (with valid MAC addresses)
+// instead of NO_NEIGH for the first packet.
+func (d *Daemon) resolveNeighbors(cfg *config.Config) {
+	type target struct {
+		ip        net.IP
+		linkIndex int
+	}
+	var targets []target
+	seen := make(map[string]bool)
+
+	addByLink := func(ip net.IP, linkIndex int) {
+		key := fmt.Sprintf("%s@%d", ip, linkIndex)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		targets = append(targets, target{ip: ip, linkIndex: linkIndex})
+	}
+
+	// addByIP resolves the outgoing interface via the kernel routing table.
+	addByIP := func(ipStr string) {
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			return
+		}
+		routes, err := netlink.RouteGet(ip)
+		if err != nil || len(routes) == 0 {
+			return
+		}
+		addByLink(ip, routes[0].LinkIndex)
+	}
+
+	addByName := func(ipStr, ifName string) {
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			return
+		}
+		link, err := netlink.LinkByName(ifName)
+		if err != nil {
+			return
+		}
+		addByLink(ip, link.Attrs().Index)
+	}
+
+	// 1. Static route next-hops (resolve interface via FIB if not specified)
+	for _, sr := range cfg.RoutingOptions.StaticRoutes {
+		if sr.Discard || sr.NextHop == "" {
+			continue
+		}
+		if sr.Interface != "" {
+			addByName(sr.NextHop, sr.Interface)
+		} else {
+			addByIP(sr.NextHop)
+		}
+	}
+	for _, ri := range cfg.RoutingInstances {
+		for _, sr := range ri.StaticRoutes {
+			if sr.Discard || sr.NextHop == "" {
+				continue
+			}
+			if sr.Interface != "" {
+				addByName(sr.NextHop, sr.Interface)
+			} else {
+				addByIP(sr.NextHop)
+			}
+		}
+	}
+
+	// 2. DHCP-learned gateways
+	if d.dhcp != nil {
+		for _, lease := range d.dhcp.Leases() {
+			if lease.Gateway.IsValid() {
+				addByName(lease.Gateway.String(), lease.Interface)
+			}
+		}
+	}
+
+	// 3. DNAT pool addresses (destinations that will receive forwarded traffic)
+	if cfg.Security.NAT.Destination != nil {
+		for _, pool := range cfg.Security.NAT.Destination.Pools {
+			if pool.Address != "" {
+				addByIP(stripCIDR(pool.Address))
+			}
+		}
+	}
+
+	// 4. Static NAT translated addresses (internal hosts receiving forwarded traffic)
+	for _, rs := range cfg.Security.NAT.Static {
+		for _, rule := range rs.Rules {
+			if rule.Then != "" {
+				addByIP(stripCIDR(rule.Then))
+			}
+		}
+	}
+
+	// 5. Address-book host entries (known hosts referenced in policies).
+	// Only resolve host addresses (/32 for v4, /128 for v6) to avoid
+	// flooding entire subnets with ARP requests.
+	if cfg.Security.AddressBook != nil {
+		for _, addr := range cfg.Security.AddressBook.Addresses {
+			ip, ipNet, err := net.ParseCIDR(addr.Value)
+			if err != nil {
+				continue
+			}
+			ones, bits := ipNet.Mask.Size()
+			if ones == bits {
+				addByIP(ip.String())
+			}
+		}
+	}
+
+	// Resolve each target via ping (triggers kernel ARP/NDP resolution)
+	resolved := 0
+	for _, t := range targets {
+		link, err := netlink.LinkByIndex(t.linkIndex)
+		if err != nil {
+			continue
+		}
+		ifName := link.Attrs().Name
+		family := netlink.FAMILY_V4
+		if t.ip.To4() == nil {
+			family = netlink.FAMILY_V6
+		}
+		// Skip if neighbor already exists and is usable
+		neighs, _ := netlink.NeighList(t.linkIndex, family)
+		skip := false
+		for _, n := range neighs {
+			if n.IP.Equal(t.ip) && (n.State&(netlink.NUD_REACHABLE|netlink.NUD_STALE|netlink.NUD_PERMANENT)) != 0 {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			continue
+		}
+		resolved++
+		// Use ping to trigger kernel ARP/NDP resolution.
+		// arping uses PF_PACKET raw sockets which don't populate the kernel
+		// ARP table when XDP is attached. ping triggers the kernel's own
+		// neighbor resolution before sending, which works with XDP.
+		go func(ip net.IP, iface string) {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			if ip.To4() != nil {
+				exec.CommandContext(ctx, "ping", "-c1", "-W1", "-I", iface, ip.String()).Run()
+			} else {
+				exec.CommandContext(ctx, "ping", "-6", "-c1", "-W1", "-I", iface, ip.String()).Run()
+			}
+		}(t.ip, ifName)
+	}
+
+	if resolved > 0 {
+		slog.Info("proactive neighbor resolution", "resolving", resolved, "total_targets", len(targets))
+		// Brief pause to allow ARP responses
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// runPeriodicNeighborResolution re-runs neighbor resolution every 15 seconds
+// to keep ARP/NDP entries warm for known forwarding targets.
+func (d *Daemon) runPeriodicNeighborResolution(ctx context.Context, cfg *config.Config) {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			d.resolveNeighbors(cfg)
 		}
 	}
 }

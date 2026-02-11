@@ -12,6 +12,7 @@
 #define BPFRX_NAT_POOLS
 #include "../headers/bpfrx_maps.h"
 #include "../headers/bpfrx_helpers.h"
+#include "../headers/bpfrx_trace.h"
 
 /*
  * Check whether an IPv4 address matches a policy rule's address_id.
@@ -819,10 +820,13 @@ int xdp_policy_prog(struct xdp_md *ctx)
 
 				/* Set meta for NAT rewrite (AFTER session creation) */
 				if (sess_nat_flags & SESS_FLAG_SNAT) {
+					TRACE_SNAT(meta, orig_src_ip, sess_nat_src_ip, sess_nat_src_port);
 					__builtin_memset(&meta->src_ip, 0, sizeof(meta->src_ip));
 					meta->src_ip.v4 = sess_nat_src_ip;
 					meta->src_port = sess_nat_src_port;
 				}
+
+				TRACE_POLICY(meta, ACTION_PERMIT, rule->rule_id);
 
 				if (rule->log & LOG_FLAG_SESSION_INIT)
 					emit_event(meta, EVENT_TYPE_SESSION_OPEN,

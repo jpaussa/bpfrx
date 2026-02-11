@@ -9,6 +9,7 @@
 #include "../headers/bpfrx_common.h"
 #include "../headers/bpfrx_maps.h"
 #include "../headers/bpfrx_helpers.h"
+#include "../headers/bpfrx_trace.h"
 
 SEC("tc")
 int tc_main_prog(struct __sk_buff *skb)
@@ -24,6 +25,7 @@ int tc_main_prog(struct __sk_buff *skb)
 
 	__builtin_memset(meta, 0, sizeof(*meta));
 	meta->direction = 1; /* egress */
+	meta->ingress_ifindex = skb->ingress_ifindex;
 
 	/* Parse Ethernet header (extract VLAN ID for zone lookup) */
 	struct ethhdr *eth = data;
@@ -73,6 +75,8 @@ int tc_main_prog(struct __sk_buff *skb)
 	__u16 *zone_ptr = bpf_map_lookup_elem(&iface_zone_map, &zk);
 	if (zone_ptr)
 		meta->egress_zone = *zone_ptr;
+
+	TRACE_TC_MAIN(meta);
 
 	/* Tail call to egress screen */
 	bpf_tail_call(skb, &tc_progs, TC_PROG_SCREEN_EGRESS);

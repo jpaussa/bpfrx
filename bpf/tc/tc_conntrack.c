@@ -11,6 +11,7 @@
 #include "../headers/bpfrx_maps.h"
 #include "../headers/bpfrx_helpers.h"
 #include "../headers/bpfrx_conntrack.h"
+#include "../headers/bpfrx_trace.h"
 
 /*
  * Handle a conntrack hit for an IPv4 session on TC egress.
@@ -117,13 +118,18 @@ int tc_conntrack_prog(struct __sk_buff *skb)
 
 		struct session_value *sess = bpf_map_lookup_elem(&sessions, &fwd_key);
 		if (sess) {
+			TRACE_TC_CT(meta, 1, 0);
 			tc_ct_hit_v4(skb, meta, sess, 0);
 		} else {
 			struct session_key rev_key;
 			ct_reverse_key(&fwd_key, &rev_key);
 			sess = bpf_map_lookup_elem(&sessions, &rev_key);
-			if (sess)
+			if (sess) {
+				TRACE_TC_CT(meta, 1, 1);
 				tc_ct_hit_v4(skb, meta, sess, 1);
+			} else {
+				TRACE_TC_CT(meta, 0, 0);
+			}
 		}
 	} else {
 		/* IPv6 path */
@@ -146,7 +152,18 @@ int tc_conntrack_prog(struct __sk_buff *skb)
 		}
 	}
 
-	/* No session found -- tail-call to forward (pass through) */
+	/*
+	 * No session found. If ingress_ifindex is set, this is a packet
+	 * being forwarded by the kernel (not locally originated). Drop it
+	 * to prevent un-NAT'd packets from leaking out — the XDP pipeline
+	 * handles forwarded traffic via bpf_redirect. This path only
+	 * triggers when XDP passed a packet to the kernel for ARP/NDP
+	 * neighbor resolution (NO_NEIGH case).
+	 */
+	if (meta->ingress_ifindex != 0)
+		return TC_ACT_SHOT;
+
+	/* Locally-originated traffic -- tail-call to forward (pass through) */
 	bpf_tail_call(skb, &tc_progs, TC_PROG_FORWARD);
 	return TC_ACT_OK; /* fallthrough = pass */
 }

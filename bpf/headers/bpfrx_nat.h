@@ -3,6 +3,7 @@
 
 #include "bpfrx_common.h"
 #include "bpfrx_helpers.h"
+#include "bpfrx_trace.h"
 
 /*
  * Shared NAT rewrite helpers.
@@ -100,6 +101,18 @@ nat_rewrite_v4(void *data, void *data_end, struct pkt_meta *meta)
 	/* Compute l4 pointer once -- all helpers share this */
 	void *l4 = data + meta->l4_offset;
 
+	/* Trace actual packet state before rewrite */
+#if BPFRX_TRACE
+	if (TRACE_FILTER(meta->protocol)) {
+		struct tcphdr *_t = l4;
+		if (meta->protocol == PROTO_TCP && (void *)(_t + 1) <= data_end)
+			bpf_printk("TRACE nat_rw: pkt src=%x:%d dst=%x:%d tcp_csum=0x%04x",
+				   iph->saddr, bpf_ntohs(_t->source),
+				   iph->daddr, bpf_ntohs(_t->dest),
+				   (__u16)_t->check);
+	}
+#endif
+
 	/* Source IP rewrite */
 	if (meta->src_ip.v4 != iph->saddr) {
 		__be32 old_src = iph->saddr;
@@ -108,20 +121,24 @@ nat_rewrite_v4(void *data, void *data_end, struct pkt_meta *meta)
 		iph->saddr = meta->src_ip.v4;
 	}
 
-	/* Source port rewrite */
+	/* Source port rewrite.
+	 * For CHECKSUM_PARTIAL, skip the L4 checksum update -- the port
+	 * is in the data that the NIC/skb_checksum_help will sum. */
 	if (meta->src_port != 0) {
 		if (meta->protocol == PROTO_TCP) {
 			struct tcphdr *tcp = l4;
 			if ((void *)(tcp + 1) <= data_end && tcp->source != meta->src_port) {
-				nat_update_l4_port_csum(l4, data_end, meta,
-							tcp->source, meta->src_port);
+				if (!meta->csum_partial)
+					nat_update_l4_port_csum(l4, data_end, meta,
+								tcp->source, meta->src_port);
 				tcp->source = meta->src_port;
 			}
 		} else if (meta->protocol == PROTO_UDP) {
 			struct udphdr *udp = l4;
 			if ((void *)(udp + 1) <= data_end && udp->source != meta->src_port) {
-				nat_update_l4_port_csum(l4, data_end, meta,
-							udp->source, meta->src_port);
+				if (!meta->csum_partial)
+					nat_update_l4_port_csum(l4, data_end, meta,
+								udp->source, meta->src_port);
 				udp->source = meta->src_port;
 			}
 		}
@@ -140,15 +157,17 @@ nat_rewrite_v4(void *data, void *data_end, struct pkt_meta *meta)
 		if (meta->protocol == PROTO_TCP) {
 			struct tcphdr *tcp = l4;
 			if ((void *)(tcp + 1) <= data_end && tcp->dest != meta->dst_port) {
-				nat_update_l4_port_csum(l4, data_end, meta,
-							tcp->dest, meta->dst_port);
+				if (!meta->csum_partial)
+					nat_update_l4_port_csum(l4, data_end, meta,
+								tcp->dest, meta->dst_port);
 				tcp->dest = meta->dst_port;
 			}
 		} else if (meta->protocol == PROTO_UDP) {
 			struct udphdr *udp = l4;
 			if ((void *)(udp + 1) <= data_end && udp->dest != meta->dst_port) {
-				nat_update_l4_port_csum(l4, data_end, meta,
-							udp->dest, meta->dst_port);
+				if (!meta->csum_partial)
+					nat_update_l4_port_csum(l4, data_end, meta,
+								udp->dest, meta->dst_port);
 				udp->dest = meta->dst_port;
 			}
 		}
@@ -199,20 +218,23 @@ nat_rewrite_v6(void *data, void *data_end, struct pkt_meta *meta)
 		__builtin_memcpy(&ip6h->saddr, meta->src_ip.v6, 16);
 	}
 
-	/* Source port rewrite */
+	/* Source port rewrite.
+	 * For CHECKSUM_PARTIAL, skip the L4 checksum update. */
 	if (meta->src_port != 0) {
 		if (meta->protocol == PROTO_TCP) {
 			struct tcphdr *tcp = l4;
 			if ((void *)(tcp + 1) <= data_end && tcp->source != meta->src_port) {
-				nat_update_l4_port_csum(l4, data_end, meta,
-							tcp->source, meta->src_port);
+				if (!meta->csum_partial)
+					nat_update_l4_port_csum(l4, data_end, meta,
+								tcp->source, meta->src_port);
 				tcp->source = meta->src_port;
 			}
 		} else if (meta->protocol == PROTO_UDP) {
 			struct udphdr *udp = l4;
 			if ((void *)(udp + 1) <= data_end && udp->source != meta->src_port) {
-				nat_update_l4_port_csum(l4, data_end, meta,
-							udp->source, meta->src_port);
+				if (!meta->csum_partial)
+					nat_update_l4_port_csum(l4, data_end, meta,
+								udp->source, meta->src_port);
 				udp->source = meta->src_port;
 			}
 		}
@@ -231,21 +253,25 @@ nat_rewrite_v6(void *data, void *data_end, struct pkt_meta *meta)
 		if (meta->protocol == PROTO_TCP) {
 			struct tcphdr *tcp = l4;
 			if ((void *)(tcp + 1) <= data_end && tcp->dest != meta->dst_port) {
-				nat_update_l4_port_csum(l4, data_end, meta,
-							tcp->dest, meta->dst_port);
+				if (!meta->csum_partial)
+					nat_update_l4_port_csum(l4, data_end, meta,
+								tcp->dest, meta->dst_port);
 				tcp->dest = meta->dst_port;
 			}
 		} else if (meta->protocol == PROTO_UDP) {
 			struct udphdr *udp = l4;
 			if ((void *)(udp + 1) <= data_end && udp->dest != meta->dst_port) {
-				nat_update_l4_port_csum(l4, data_end, meta,
-							udp->dest, meta->dst_port);
+				if (!meta->csum_partial)
+					nat_update_l4_port_csum(l4, data_end, meta,
+								udp->dest, meta->dst_port);
 				udp->dest = meta->dst_port;
 			}
 		}
 	}
 
-	/* ICMPv6 echo ID rewrite */
+	/* ICMPv6 echo ID rewrite.
+	 * ICMPv6 checksum covers a pseudo-header, so CHECKSUM_PARTIAL
+	 * applies -- skip ID checksum update when partial. */
 	if (meta->protocol == PROTO_ICMPV6) {
 		struct icmp6hdr *icmp6 = l4;
 		if ((void *)(icmp6 + 1) <= data_end &&
@@ -254,8 +280,10 @@ nat_rewrite_v6(void *data, void *data_end, struct pkt_meta *meta)
 			if (meta->nat_flags & SESS_FLAG_DNAT)
 				desired_id = meta->dst_port;
 			if (icmp6->un.echo.id != desired_id) {
-				csum_update_2(&icmp6->icmp6_cksum,
-					      icmp6->un.echo.id, desired_id);
+				if (!meta->csum_partial)
+					csum_update_2(&icmp6->icmp6_cksum,
+						      icmp6->un.echo.id,
+						      desired_id);
 				icmp6->un.echo.id = desired_id;
 			}
 		}

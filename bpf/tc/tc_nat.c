@@ -11,6 +11,7 @@
 #include "../headers/bpfrx_maps.h"
 #include "../headers/bpfrx_helpers.h"
 #include "../headers/bpfrx_nat.h"
+#include "../headers/bpfrx_trace.h"
 
 SEC("tc")
 int tc_nat_prog(struct __sk_buff *skb)
@@ -22,6 +23,8 @@ int tc_nat_prog(struct __sk_buff *skb)
 	struct pkt_meta *meta = bpf_map_lookup_elem(&pkt_meta_scratch, &zero);
 	if (!meta)
 		return TC_ACT_SHOT;
+
+	TRACE_TC_NAT(meta);
 
 	if (meta->addr_family == AF_INET)
 		nat_rewrite_v4(data, data_end, meta);

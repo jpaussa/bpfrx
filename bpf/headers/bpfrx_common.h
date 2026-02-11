@@ -323,7 +323,8 @@ struct pkt_meta {
 	__u8   ip_ttl;
 	__u8   addr_family;  /* AF_INET=2, AF_INET6=10 */
 	__u8   dscp;          /* DSCP value (top 6 bits of TOS/traffic-class) */
-	__u8   pad_meta[3];   /* alignment */
+	__u8   csum_partial;  /* 1 = L4 csum is pseudo-header only (CHECKSUM_PARTIAL) */
+	__u8   pad_meta[2];   /* alignment */
 
 	/* ICMP specific */
 	__be16 icmp_id;

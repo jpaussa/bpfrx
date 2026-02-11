@@ -12,6 +12,7 @@
 #include "../headers/bpfrx_common.h"
 #include "../headers/bpfrx_maps.h"
 #include "../headers/bpfrx_helpers.h"
+#include "../headers/bpfrx_trace.h"
 
 /*
  * Handle a conntrack hit for an IPv4 session.
@@ -168,7 +169,12 @@ int xdp_conntrack_prog(struct xdp_md *ctx)
 	if (!meta)
 		return XDP_DROP;
 
-	/* TCP MSS clamping on SYN packets */
+	/* TCP MSS clamping on SYN packets.
+	 * For CHECKSUM_PARTIAL, csum_partial=1 tells tcp_mss_clamp to
+	 * skip the incremental checksum update.  The MSS option bytes
+	 * are in the L4 data region that the kernel sums during
+	 * finalization (generic XDP), so the final checksum will be
+	 * correct even though we modified the MSS value. */
 	if (meta->protocol == PROTO_TCP && (meta->tcp_flags & 0x02)) {
 		struct flow_config *fc = bpf_map_lookup_elem(&flow_config_map, &zero);
 		if (fc) {
@@ -176,7 +182,8 @@ int xdp_conntrack_prog(struct xdp_md *ctx)
 			if (fc->tcp_mss_gre > 0 && (fc->tcp_mss_gre < mss || mss == 0))
 				mss = fc->tcp_mss_gre;
 			if (mss > 0)
-				tcp_mss_clamp(ctx, meta->l4_offset, mss);
+				tcp_mss_clamp(ctx, meta->l4_offset, mss,
+					      meta->csum_partial);
 		}
 	}
 
@@ -235,12 +242,14 @@ int xdp_conntrack_prog(struct xdp_md *ctx)
 
 				meta->ct_state = SESS_STATE_NEW;
 				meta->ct_direction = 0;
+				TRACE_CT_MISS(meta);
 				bpf_tail_call(ctx, &xdp_progs, XDP_PROG_POLICY);
 				return XDP_PASS;
 			}
 			direction = 1;
 		}
 
+		TRACE_CT_HIT(meta, direction, sess->flags);
 		return handle_ct_hit_v4(ctx, meta, sess, direction);
 	} else {
 		/* IPv6 path */
@@ -281,12 +290,14 @@ int xdp_conntrack_prog(struct xdp_md *ctx)
 
 				meta->ct_state = SESS_STATE_NEW;
 				meta->ct_direction = 0;
+				TRACE_CT_MISS(meta);
 				bpf_tail_call(ctx, &xdp_progs, XDP_PROG_POLICY);
 				return XDP_PASS;
 			}
 			direction = 1;
 		}
 
+		TRACE_CT_HIT(meta, direction, sess->flags);
 		return handle_ct_hit_v6(ctx, meta, sess, direction);
 	}
 }

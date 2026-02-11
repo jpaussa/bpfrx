@@ -11,6 +11,7 @@
 #include "../headers/bpfrx_common.h"
 #include "../headers/bpfrx_maps.h"
 #include "../headers/bpfrx_helpers.h"
+#include "../headers/bpfrx_trace.h"
 
 /* host_inbound_flag() is now in bpfrx_helpers.h */
 
@@ -106,6 +107,8 @@ int xdp_forward_prog(struct xdp_md *ctx)
 	inc_counter(GLOBAL_CTR_TX_PACKETS);
 	inc_iface_tx(meta->fwd_ifindex, meta->pkt_len);
 	inc_zone_egress((__u32)meta->egress_zone, meta->pkt_len);
+
+	TRACE_FORWARD(meta);
 
 	/* Redirect via devmap to egress interface */
 	return bpf_redirect_map(&tx_ports, meta->fwd_ifindex, 0);

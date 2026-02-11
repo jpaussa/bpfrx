@@ -258,6 +258,156 @@ done:
 	return 0;
 }
 
+/* ============================================================
+ * CHECKSUM_PARTIAL handling for XDP + TC paths.
+ *
+ * Virtio NICs deliver TCP/UDP packets with CHECKSUM_PARTIAL: the
+ * L4 checksum field contains csum_fold(pseudo-header) = ~fold(PH),
+ * and the NIC (or skb_checksum_help) finalizes by summing the
+ * actual L4 data bytes.
+ *
+ * Detection: parse_l4hdr computes the pseudo-header checksum from
+ * the IP header (with ones-complement, matching csum_fold output)
+ * and compares it with the L4 checksum field. A match means the
+ * checksum field is only a pseudo-header seed.
+ *
+ * Generic XDP path: XDP_REDIRECT goes through dev_queue_xmit ->
+ * validate_xmit_skb which DOES finalize the checksum.  We must
+ * skip incremental updates for non-pseudo-header fields (ports,
+ * MSS options) to keep the PH seed intact for kernel finalization.
+ * IP address updates still apply since they change pseudo-header
+ * fields and the incremental update is correct.
+ *
+ * Native XDP path: XDP_REDIRECT uses __dev_direct_xmit which
+ * bypasses finalization.  For native XDP, finalize_csum_partial()
+ * must be called to compute the full checksum before nat_rewrite.
+ *
+ * TC path: Like generic XDP, the kernel finalizes after TC.
+ * The same skip logic applies.
+ * ============================================================ */
+
+/*
+ * Compute IPv4 pseudo-header checksum (folded to 16 bits, native byte order).
+ * Uses the byte-order independence property of the internet checksum.
+ */
+static __always_inline __u16
+compute_ph_csum_v4(__be32 saddr, __be32 daddr, __u8 protocol, __u16 l4_len)
+{
+	__u32 sum = 0;
+	sum += ((__u32)saddr & 0xFFFF) + ((__u32)saddr >> 16);
+	sum += ((__u32)daddr & 0xFFFF) + ((__u32)daddr >> 16);
+	sum += (__u32)bpf_htons((__u16)protocol);
+	sum += (__u32)bpf_htons(l4_len);
+	sum = (sum & 0xFFFF) + (sum >> 16);
+	sum = (sum & 0xFFFF) + (sum >> 16);
+	/* Kernel CHECKSUM_PARTIAL stores fold(PH) in the L4 checksum
+	 * field (see __tcp_v4_send_check: th->check = ~csum_fold(PH),
+	 * and csum_fold returns ~fold, so th->check = fold(PH)). */
+	return (__u16)sum;
+}
+
+/*
+ * Compute IPv6 pseudo-header checksum (folded to 16 bits, native byte order).
+ * IPv6 pseudo-header: src(128) + dst(128) + length(32) + next-hdr(32).
+ */
+static __always_inline __u16
+compute_ph_csum_v6(const __u8 *saddr, const __u8 *daddr,
+		   __u8 protocol, __u16 l4_len)
+{
+	__u32 sum = 0;
+	const __u16 *s = (const __u16 *)saddr;
+	const __u16 *d = (const __u16 *)daddr;
+	#pragma unroll
+	for (int i = 0; i < 8; i++) {
+		sum += (__u32)s[i];
+		sum += (__u32)d[i];
+	}
+	sum += (__u32)bpf_htons((__u16)protocol);
+	sum += (__u32)bpf_htons(l4_len);
+	sum = (sum & 0xFFFF) + (sum >> 16);
+	sum = (sum & 0xFFFF) + (sum >> 16);
+	return (__u16)sum;
+}
+
+/*
+ * Finalize a CHECKSUM_PARTIAL packet's L4 checksum for XDP path.
+ *
+ * For native XDP, XDP_REDIRECT bypasses the kernel's TX path
+ * (validate_xmit_skb / skb_checksum_help), so CHECKSUM_PARTIAL
+ * packets would go out with only the pseudo-header seed in the
+ * L4 checksum field.  This function computes the full checksum
+ * from raw packet data, equivalent to skb_checksum_help().
+ *
+ * The L4 checksum field already contains the pseudo-header seed.
+ * Summing all L4 bytes (which includes this seed) and folding
+ * gives the correct final checksum -- same as skb_checksum_help.
+ *
+ * Must be called BEFORE any incremental checksum updates (NAT,
+ * MSS clamping) in the XDP pipeline.  After this, csum_partial
+ * is set to 0 and normal incremental updates can proceed.
+ *
+ * Do NOT call from TC programs -- the kernel handles finalization.
+ */
+static __always_inline void
+finalize_csum_partial(void *data, void *data_end, struct pkt_meta *meta)
+{
+	if (!meta->csum_partial)
+		return;
+
+	if (meta->l4_offset >= 128)
+		return;
+
+	void *l4 = data + meta->l4_offset;
+	if (l4 + 20 > data_end)
+		return;
+
+	/*
+	 * Sum all L4 data as 16-bit words.  The checksum field
+	 * contains the pseudo-header seed, which participates in
+	 * the sum correctly (same as skb_checksum_help).
+	 *
+	 * Bounded loop with per-iteration packet check satisfies
+	 * the BPF verifier.  Max 750 iterations for 1500-byte MTU.
+	 */
+	__u32 sum = 0;
+	__u16 *p = (__u16 *)l4;
+
+	#pragma unroll 1
+	for (int i = 0; i < 750; i++) {
+		if ((void *)(p + 1) > data_end)
+			break;
+		sum += *p;
+		p++;
+	}
+
+	/* Handle trailing odd byte */
+	__u8 *bp = (__u8 *)p;
+	if ((void *)(bp + 1) <= data_end)
+		sum += (__u32)*bp;
+
+	/* Fold to 16 bits and complement */
+	sum = (sum & 0xFFFF) + (sum >> 16);
+	sum = (sum & 0xFFFF) + (sum >> 16);
+	__sum16 final_csum = (__sum16)(~sum & 0xFFFF);
+
+	/* Write the finalized checksum back to the packet */
+	if (meta->protocol == PROTO_TCP) {
+		struct tcphdr *tcp = l4;
+		if ((void *)(tcp + 1) <= data_end)
+			tcp->check = final_csum;
+	} else if (meta->protocol == PROTO_UDP) {
+		struct udphdr *udp = l4;
+		if ((void *)(udp + 1) <= data_end)
+			udp->check = final_csum;
+	} else if (meta->protocol == PROTO_ICMPV6) {
+		struct icmp6hdr *icmp6 = l4;
+		if ((void *)(icmp6 + 1) <= data_end)
+			icmp6->icmp6_cksum = final_csum;
+	}
+
+	meta->csum_partial = 0;
+}
+
 /*
  * Parse L4 header (TCP, UDP, ICMP, or ICMPv6).
  * Returns 0 on success.
@@ -266,6 +416,7 @@ static __always_inline int
 parse_l4hdr(void *data, void *data_end, struct pkt_meta *meta)
 {
 	void *l4 = data + meta->l4_offset;
+	__sum16 l4_csum = 0;
 
 	switch (meta->protocol) {
 	case PROTO_TCP: {
@@ -278,6 +429,7 @@ parse_l4hdr(void *data, void *data_end, struct pkt_meta *meta)
 		meta->tcp_seq = tcp->seq;
 		meta->tcp_ack_seq = tcp->ack_seq;
 		meta->payload_offset = meta->l4_offset + tcp->doff * 4;
+		l4_csum = tcp->check;
 		break;
 	}
 	case PROTO_UDP: {
@@ -287,6 +439,7 @@ parse_l4hdr(void *data, void *data_end, struct pkt_meta *meta)
 		meta->src_port = udp->source;
 		meta->dst_port = udp->dest;
 		meta->payload_offset = meta->l4_offset + sizeof(struct udphdr);
+		l4_csum = udp->check;
 		break;
 	}
 	case PROTO_ICMP: {
@@ -302,6 +455,7 @@ parse_l4hdr(void *data, void *data_end, struct pkt_meta *meta)
 		meta->dst_port  = (icmp->type == 8 || icmp->type == 0) ?
 				  icmp->un.echo.id : 0;
 		meta->payload_offset = meta->l4_offset + sizeof(struct icmphdr);
+		/* ICMP has no pseudo-header -- l4_csum stays 0 */
 		break;
 	}
 	case PROTO_ICMPV6: {
@@ -316,11 +470,36 @@ parse_l4hdr(void *data, void *data_end, struct pkt_meta *meta)
 		meta->dst_port  = (icmp6->icmp6_type == 128 || icmp6->icmp6_type == 129) ?
 				  icmp6->un.echo.id : 0;
 		meta->payload_offset = meta->l4_offset + sizeof(struct icmp6hdr);
+		l4_csum = icmp6->icmp6_cksum;
 		break;
 	}
 	default:
 		meta->payload_offset = meta->l4_offset;
 		break;
+	}
+
+	/*
+	 * Detect CHECKSUM_PARTIAL: if the L4 checksum field equals the
+	 * pseudo-header checksum, the packet uses hardware checksum
+	 * offload and we must NOT do incremental updates for non-
+	 * pseudo-header fields (ports, TCP options) -- the NIC or
+	 * skb_checksum_help will sum the actual data bytes later.
+	 */
+	meta->csum_partial = 0;
+	if (l4_csum != 0) {
+		__u16 l4_len = meta->pkt_len -
+			       (meta->l4_offset - meta->l3_offset);
+		__u16 ph;
+		if (meta->addr_family == AF_INET)
+			ph = compute_ph_csum_v4(meta->src_ip.v4,
+						meta->dst_ip.v4,
+						meta->protocol, l4_len);
+		else
+			ph = compute_ph_csum_v6(meta->src_ip.v6,
+						meta->dst_ip.v6,
+						meta->protocol, l4_len);
+		if ((__u16)l4_csum == ph)
+			meta->csum_partial = 1;
 	}
 
 	return 0;
@@ -737,7 +916,8 @@ evaluate_firewall_filter(struct pkt_meta *meta)
  * Returns 0 on success/no-op.
  */
 static __always_inline int
-tcp_mss_clamp(struct xdp_md *ctx, __u16 l4_offset, __u16 max_mss)
+tcp_mss_clamp(struct xdp_md *ctx, __u16 l4_offset, __u16 max_mss,
+	      int csum_partial)
 {
 	void *data     = (void *)(long)ctx->data;
 	void *data_end = (void *)(long)ctx->data_end;
@@ -798,13 +978,18 @@ tcp_mss_clamp(struct xdp_md *ctx, __u16 l4_offset, __u16 max_mss)
 		__be16 new_mss = bpf_htons(max_mss);
 		*mss_ptr = new_mss;
 
-		/* Re-read data pointers after packet write for verifier */
-		data = (void *)(long)ctx->data;
-		data_end = (void *)(long)ctx->data_end;
-		if (data + l4_offset + 20 > data_end)
-			return 0;
-		tcp = data + l4_offset;
-		csum_update_2(&tcp->check, old_mss, new_mss);
+		/* For CHECKSUM_PARTIAL, the MSS is in the L4 data that
+		 * the NIC/skb_checksum_help will sum -- skip incremental
+		 * update to avoid double-counting the delta. */
+		if (!csum_partial) {
+			/* Re-read data pointers after packet write for verifier */
+			data = (void *)(long)ctx->data;
+			data_end = (void *)(long)ctx->data_end;
+			if (data + l4_offset + 20 > data_end)
+				return 0;
+			tcp = data + l4_offset;
+			csum_update_2(&tcp->check, old_mss, new_mss);
+		}
 	}
 
 	return 0;

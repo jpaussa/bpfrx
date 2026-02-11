@@ -231,7 +231,8 @@ type bpfrxXdpNat64PktMeta struct {
 	IpTtl          uint8
 	AddrFamily     uint8
 	Dscp           uint8
-	PadMeta        [3]uint8
+	CsumPartial    uint8
+	PadMeta        [2]uint8
 	IcmpId         uint16
 	IcmpType       uint8
 	IcmpCode       uint8

@@ -10,6 +10,7 @@
 #include "../headers/bpfrx_common.h"
 #include "../headers/bpfrx_maps.h"
 #include "../headers/bpfrx_helpers.h"
+#include "../headers/bpfrx_trace.h"
 
 SEC("xdp")
 int xdp_zone_prog(struct xdp_md *ctx)
@@ -208,6 +209,7 @@ int xdp_zone_prog(struct xdp_md *ctx)
 	}
 
 	int rc = bpf_fib_lookup(ctx, &fib, sizeof(fib), 0);
+	TRACE_FIB_RESULT(rc, fib.ifindex);
 
 	if (rc == BPF_FIB_LKUP_RET_SUCCESS) {
 		/* Store forwarding info -- resolve VLAN sub-interface */
@@ -232,25 +234,26 @@ int xdp_zone_prog(struct xdp_md *ctx)
 
 	} else if (rc == BPF_FIB_LKUP_RET_NO_NEIGH) {
 		/*
-		 * Route exists but no neighbor entry (no ARP/NDP yet).
-		 * Store the ifindex for zone lookup; pass to kernel
-		 * to trigger neighbor resolution.
+		 * Route exists but no ARP/NDP entry for the next hop.
+		 * We cannot proceed through the NAT pipeline because:
+		 *   - SNAT would rewrite the source IP to a local address
+		 *   - XDP_PASS with a local source IP gets dropped by the kernel
+		 *     (kernel rejects forwarding packets with its own source IP)
+		 *
+		 * Instead, pass the ORIGINAL un-modified packet to the kernel.
+		 * The kernel will do its own FIB lookup, trigger ARP/NDP neighbor
+		 * resolution, and forward the packet. This first packet goes
+		 * through un-NAT'd, but TCP retransmits (arriving ~1s later)
+		 * will find ARP resolved and go through the full BPF pipeline
+		 * with proper NAT and session tracking.
 		 */
-		__u32 egress_if = fib.ifindex;
-		__u16 egress_vlan = 0;
-		__u32 egress_phys_if = egress_if;
-		struct vlan_iface_info *vi = bpf_map_lookup_elem(&vlan_iface_map, &egress_if);
-		if (vi) {
-			egress_phys_if = vi->parent_ifindex;
-			egress_vlan = vi->vlan_id;
+		TRACE_ZONE(meta);
+		inc_counter(GLOBAL_CTR_HOST_INBOUND);
+		if (meta->ingress_vlan_id != 0) {
+			if (xdp_vlan_tag_push(ctx, meta->ingress_vlan_id) < 0)
+				return XDP_DROP;
 		}
-		meta->fwd_ifindex = egress_phys_if;
-		meta->egress_vlan_id = egress_vlan;
-
-		struct iface_zone_key ezk = { .ifindex = egress_phys_if, .vlan_id = egress_vlan };
-		__u16 *ez = bpf_map_lookup_elem(&iface_zone_map, &ezk);
-		if (ez)
-			meta->egress_zone = *ez;
+		return XDP_PASS;
 
 	} else {
 		/*
@@ -262,6 +265,8 @@ int xdp_zone_prog(struct xdp_md *ctx)
 		bpf_tail_call(ctx, &xdp_progs, XDP_PROG_FORWARD);
 		return XDP_PASS;
 	}
+
+	TRACE_ZONE(meta);
 
 	/* Tail call to conntrack for session lookup and policy evaluation */
 	bpf_tail_call(ctx, &xdp_progs, XDP_PROG_CONNTRACK);

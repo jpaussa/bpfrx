@@ -12,6 +12,7 @@
 #include "../headers/bpfrx_maps.h"
 #include "../headers/bpfrx_helpers.h"
 #include "../headers/bpfrx_nat.h"
+#include "../headers/bpfrx_trace.h"
 
 SEC("xdp")
 int xdp_nat_prog(struct xdp_md *ctx)
@@ -40,10 +41,32 @@ int xdp_nat_prog(struct xdp_md *ctx)
 		return XDP_PASS;
 	}
 
+	/*
+	 * CHECKSUM_PARTIAL handling:
+	 *
+	 * Generic XDP: kernel finalizes L4 checksum after XDP via
+	 * validate_xmit_skb → skb_checksum_help.  We just skip
+	 * incremental updates for non-pseudo-header fields (ports)
+	 * when csum_partial=1, keeping the PH seed intact.
+	 *
+	 * Native XDP: XDP_REDIRECT bypasses kernel finalization.
+	 * finalize_csum_partial() computes the full checksum from
+	 * packet data, then clears csum_partial so nat_rewrite
+	 * does normal incremental updates.  Currently all our
+	 * target NICs use generic XDP, so finalization is disabled.
+	 *
+	 * To enable for native XDP, uncomment:
+	 *   finalize_csum_partial(data, data_end, meta);
+	 */
+
+	TRACE_NAT_REWRITE(meta, "xdp-pre");
+
 	if (meta->addr_family == AF_INET)
 		nat_rewrite_v4(data, data_end, meta);
 	else
 		nat_rewrite_v6(data, data_end, meta);
+
+	TRACE_NAT_REWRITE(meta, "xdp-post");
 
 	/* Continue to forwarding */
 	bpf_tail_call(ctx, &xdp_progs, XDP_PROG_FORWARD);

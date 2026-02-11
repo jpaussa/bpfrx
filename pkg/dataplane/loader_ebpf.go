@@ -133,11 +133,19 @@ func (m *Manager) loadAllObjects() error {
 	m.programs["xdp_zone_prog"] = zoneObjs.XdpZoneProg
 
 	// Load XDP conntrack program.
+	// Add flow_config_map to replacements so conntrack shares it.
+	conntrackReplaceOpts := &ebpf.CollectionOptions{
+		MapReplacements: map[string]*ebpf.Map{},
+	}
+	for k, v := range replaceOpts.MapReplacements {
+		conntrackReplaceOpts.MapReplacements[k] = v
+	}
 	var ctObjs bpfrxXdpConntrackObjects
-	if err := loadBpfrxXdpConntrackObjects(&ctObjs, replaceOpts); err != nil {
+	if err := loadBpfrxXdpConntrackObjects(&ctObjs, conntrackReplaceOpts); err != nil {
 		return fmt.Errorf("load xdp_conntrack: %w", err)
 	}
 	m.programs["xdp_conntrack_prog"] = ctObjs.XdpConntrackProg
+	m.maps["flow_config_map"] = ctObjs.FlowConfigMap
 
 	// Load XDP policy program (uses NAT pool maps).
 	var polObjs bpfrxXdpPolicyObjects

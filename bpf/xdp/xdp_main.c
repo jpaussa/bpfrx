@@ -10,6 +10,7 @@
 #define BPFRX_NAT_POOLS
 #include "../headers/bpfrx_maps.h"
 #include "../headers/bpfrx_helpers.h"
+#include "../headers/bpfrx_trace.h"
 
 SEC("xdp")
 int xdp_main_prog(struct xdp_md *ctx)
@@ -76,6 +77,8 @@ int xdp_main_prog(struct xdp_md *ctx)
 	/* Increment global RX counter and per-interface RX counter */
 	inc_counter(GLOBAL_CTR_RX_PACKETS);
 	inc_iface_rx(meta->ingress_ifindex, meta->pkt_len);
+
+	TRACE_XDP_MAIN(meta);
 
 	/* Dispatch to pipeline: screen -> zone -> conntrack -> policy -> nat -> forward */
 	bpf_tail_call(ctx, &xdp_progs, XDP_PROG_SCREEN);
