@@ -160,6 +160,30 @@ int xdp_zone_prog(struct xdp_md *ctx)
 	}
 
 	/*
+	 * DHCP/DHCPv6 unicast responses bypass FIB lookup.
+	 * When the zone allows DHCP host-inbound, unicast DHCP replies
+	 * (e.g. DHCPOFFER to the offered IP before it's configured)
+	 * must reach the host. Without this, bpf_fib_lookup matches
+	 * the default route, sending the packet through the policy
+	 * pipeline where deny-all drops it.
+	 */
+	{
+		__u32 zone_key = (__u32)meta->ingress_zone;
+		struct zone_config *zcfg = bpf_map_lookup_elem(&zone_configs, &zone_key);
+		if (zcfg) {
+			if (meta->protocol == PROTO_UDP) {
+				__u16 dp = bpf_ntohs(meta->dst_port);
+				if ((dp == 68 && (zcfg->host_inbound_flags & HOST_INBOUND_DHCP)) ||
+				    (dp == 546 && (zcfg->host_inbound_flags & HOST_INBOUND_DHCPV6))) {
+					meta->fwd_ifindex = 0;
+					bpf_tail_call(ctx, &xdp_progs, XDP_PROG_FORWARD);
+					return XDP_PASS;
+				}
+			}
+		}
+	}
+
+	/*
 	 * FIB lookup to determine egress interface.
 	 * Uses the (possibly translated) dst_ip for routing.
 	 */
@@ -231,9 +255,11 @@ int xdp_zone_prog(struct xdp_md *ctx)
 	} else {
 		/*
 		 * No route or packet is destined locally.
-		 * Egress zone stays 0 (unset). Later policy stages
-		 * can handle host-inbound traffic.
+		 * Send to xdp_forward which handles host-inbound
+		 * checks and VLAN tag restoration for sub-interfaces.
 		 */
+		meta->fwd_ifindex = 0;
+		bpf_tail_call(ctx, &xdp_progs, XDP_PROG_FORWARD);
 		return XDP_PASS;
 	}
 

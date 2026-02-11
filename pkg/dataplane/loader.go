@@ -70,7 +70,9 @@ func (m *Manager) IsLoaded() bool {
 }
 
 // AttachXDP attaches the XDP main program to the given interface.
-func (m *Manager) AttachXDP(ifindex int) error {
+// If forceGeneric is true, uses generic (SKB) mode instead of native driver mode.
+// When forceGeneric is false, tries native driver mode only (no automatic fallback).
+func (m *Manager) AttachXDP(ifindex int, forceGeneric bool) error {
 	if !m.loaded {
 		return fmt.Errorf("eBPF programs not loaded")
 	}
@@ -84,16 +86,27 @@ func (m *Manager) AttachXDP(ifindex int) error {
 		return fmt.Errorf("XDP already attached to ifindex %d", ifindex)
 	}
 
-	l, err := link.AttachXDP(link.XDPOptions{
+	opts := link.XDPOptions{
 		Program:   prog,
 		Interface: ifindex,
-	})
+	}
+	if forceGeneric {
+		opts.Flags = link.XDPGenericMode
+	} else {
+		opts.Flags = link.XDPDriverMode
+	}
+
+	l, err := link.AttachXDP(opts)
 	if err != nil {
 		return fmt.Errorf("attach XDP to ifindex %d: %w", ifindex, err)
 	}
 
 	m.xdpLinks[ifindex] = l
-	slog.Info("attached XDP program", "ifindex", ifindex)
+	mode := "native"
+	if forceGeneric {
+		mode = "generic"
+	}
+	slog.Info("attached XDP program", "ifindex", ifindex, "mode", mode)
 	return nil
 }
 

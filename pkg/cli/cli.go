@@ -1023,6 +1023,7 @@ func (c *CLI) showStatistics() error {
 		{dataplane.GlobalCtrPolicyDeny, "Policy denies"},
 		{dataplane.GlobalCtrNATAllocFail, "NAT alloc failures"},
 		{dataplane.GlobalCtrHostInboundDeny, "Host-inbound denies"},
+		{dataplane.GlobalCtrHostInbound, "Host-inbound allowed"},
 		{dataplane.GlobalCtrTCEgressPackets, "TC egress packets"},
 	}
 

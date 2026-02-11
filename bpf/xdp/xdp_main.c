@@ -53,6 +53,12 @@ int xdp_main_prog(struct xdp_md *ctx)
 		if (parse_ipv6hdr(data, data_end, meta) < 0)
 			return XDP_DROP;
 	} else {
+		/* Non-IP traffic (ARP, etc.) — pass to kernel.
+		 * Restore VLAN tag so kernel delivers to sub-interface. */
+		if (vlan_id != 0) {
+			if (xdp_vlan_tag_push(ctx, vlan_id) < 0)
+				return XDP_DROP;
+		}
 		return XDP_PASS;
 	}
 

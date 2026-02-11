@@ -40,6 +40,13 @@ int xdp_forward_prog(struct xdp_md *ctx)
 				return XDP_DROP;
 			}
 		}
+		/* Push VLAN tag back so kernel delivers to sub-interface
+		 * (e.g. DHCP on enp10s0f0.100 needs tagged frames). */
+		if (meta->ingress_vlan_id != 0) {
+			if (xdp_vlan_tag_push(ctx, meta->ingress_vlan_id) < 0)
+				return XDP_DROP;
+		}
+		inc_counter(GLOBAL_CTR_HOST_INBOUND);
 		/* flags==0 means no host-inbound configured → allow all */
 		return XDP_PASS;
 	}

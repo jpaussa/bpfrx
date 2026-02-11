@@ -225,7 +225,8 @@ struct icmp6hdr {
 #define GLOBAL_CTR_HOST_INBOUND_DENY   8
 #define GLOBAL_CTR_TC_EGRESS_PACKETS   9
 #define GLOBAL_CTR_NAT64_XLATE        10
-#define GLOBAL_CTR_MAX                 11
+#define GLOBAL_CTR_HOST_INBOUND       11
+#define GLOBAL_CTR_MAX                 12
 
 /* Flow timeout indices for flow_timeouts ARRAY map */
 #define FLOW_TIMEOUT_TCP_ESTABLISHED   0

@@ -497,19 +497,24 @@ func (d *Daemon) startDHCPClients(ctx context.Context, cfg *config.Config) {
 
 	for ifName, ifc := range cfg.Interfaces.Interfaces {
 		for _, unit := range ifc.Units {
+			// Use VLAN sub-interface name when unit has a VLAN ID
+			dhcpIface := ifName
+			if unit.VlanID > 0 {
+				dhcpIface = fmt.Sprintf("%s.%d", ifName, unit.VlanID)
+			}
 			if unit.DHCP {
-				slog.Info("starting DHCPv4 client", "interface", ifName)
-				dm.Start(ctx, ifName, dhcp.AFInet)
+				slog.Info("starting DHCPv4 client", "interface", dhcpIface)
+				dm.Start(ctx, dhcpIface, dhcp.AFInet)
 			}
 			if unit.DHCPv6 {
 				// Configure DUID type from dhcpv6-client stanza
 				if unit.DHCPv6Client != nil && unit.DHCPv6Client.DUIDType != "" {
-					dm.SetDUIDType(ifName, unit.DHCPv6Client.DUIDType)
+					dm.SetDUIDType(dhcpIface, unit.DHCPv6Client.DUIDType)
 				} else {
-					dm.SetDUIDType(ifName, "duid-ll") // default
+					dm.SetDUIDType(dhcpIface, "duid-ll") // default
 				}
-				slog.Info("starting DHCPv6 client", "interface", ifName)
-				dm.Start(ctx, ifName, dhcp.AFInet6)
+				slog.Info("starting DHCPv6 client", "interface", dhcpIface)
+				dm.Start(ctx, dhcpIface, dhcp.AFInet6)
 			}
 		}
 	}

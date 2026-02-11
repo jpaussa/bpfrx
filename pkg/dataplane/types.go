@@ -192,7 +192,8 @@ const (
 	GlobalCtrHostInboundDeny = 8
 	GlobalCtrTCEgressPackets = 9
 	GlobalCtrNAT64Xlate      = 10
-	GlobalCtrMax             = 11
+	GlobalCtrHostInbound     = 11
+	GlobalCtrMax             = 12
 )
 
 // Host-inbound-traffic service flags (bitmap in zone_config.host_inbound_flags).

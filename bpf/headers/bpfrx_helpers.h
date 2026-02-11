@@ -96,10 +96,6 @@ xdp_vlan_tag_pop(struct xdp_md *ctx)
 static __always_inline int
 xdp_vlan_tag_push(struct xdp_md *ctx, __u16 vid)
 {
-	/* Grow head by 4 bytes */
-	if (bpf_xdp_adjust_head(ctx, -(int)sizeof(struct vlan_hdr)))
-		return -1;
-
 	void *data     = (void *)(long)ctx->data;
 	void *data_end = (void *)(long)ctx->data_end;
 
@@ -107,13 +103,28 @@ xdp_vlan_tag_push(struct xdp_md *ctx, __u16 vid)
 	if ((void *)(eth + 1) > data_end)
 		return -1;
 
-	/* The old Ethernet header is at data + 4. Copy MACs from there. */
-	struct ethhdr *old_eth = data + sizeof(struct vlan_hdr);
-	if ((void *)(old_eth + 1) > data_end)
+	/* Save MACs and inner EtherType to stack before adjust_head,
+	 * avoiding overlapping memcpy after the head grows by 4 bytes. */
+	__u8 dmac[ETH_ALEN];
+	__u8 smac[ETH_ALEN];
+	__builtin_memcpy(dmac, eth->h_dest, ETH_ALEN);
+	__builtin_memcpy(smac, eth->h_source, ETH_ALEN);
+	__be16 inner_proto = eth->h_proto;
+
+	/* Grow head by 4 bytes */
+	if (bpf_xdp_adjust_head(ctx, -(int)sizeof(struct vlan_hdr)))
 		return -1;
 
-	__builtin_memcpy(eth->h_dest, old_eth->h_dest, ETH_ALEN);
-	__builtin_memcpy(eth->h_source, old_eth->h_source, ETH_ALEN);
+	data     = (void *)(long)ctx->data;
+	data_end = (void *)(long)ctx->data_end;
+
+	eth = data;
+	if ((void *)(eth + 1) > data_end)
+		return -1;
+
+	/* Restore MACs from stack (no overlap) */
+	__builtin_memcpy(eth->h_dest, dmac, ETH_ALEN);
+	__builtin_memcpy(eth->h_source, smac, ETH_ALEN);
 	eth->h_proto = bpf_htons(ETH_P_8021Q);
 
 	/* Write VLAN header between Ethernet and inner EtherType */
@@ -122,7 +133,7 @@ xdp_vlan_tag_push(struct xdp_md *ctx, __u16 vid)
 		return -1;
 
 	vhdr->h_vlan_TCI = bpf_htons(vid);
-	vhdr->h_vlan_encapsulated_proto = old_eth->h_proto;
+	vhdr->h_vlan_encapsulated_proto = inner_proto;
 
 	return 0;
 }

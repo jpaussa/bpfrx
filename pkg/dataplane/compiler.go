@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -259,6 +260,8 @@ func (m *Manager) compileZones(cfg *config.Config, result *CompileResult) error 
 
 	// Track which physical interfaces we've already attached to
 	attached := make(map[int]bool)
+	// Collect physical ifindexes for deferred XDP attachment
+	var xdpIfindexes []int
 
 	for name, zone := range cfg.Security.Zones {
 		zid := result.ZoneIDs[name]
@@ -352,16 +355,21 @@ func (m *Manager) compileZones(cfg *config.Config, result *CompileResult) error 
 					physName, vlanID, physIface.Index, err)
 			}
 
-			// Add physical interface to tx_ports and attach XDP/TC (once per phys iface)
+			// Add physical interface to tx_ports and attach TC (once per phys iface).
+			// XDP attachment is deferred to after the loop so we can ensure
+			// all interfaces use the same XDP mode (native vs generic).
 			if !attached[physIface.Index] {
 				if err := m.AddTxPort(physIface.Index); err != nil {
 					return fmt.Errorf("add tx port %s: %w", physName, err)
 				}
 
-				if err := m.AttachXDP(physIface.Index); err != nil {
-					if !strings.Contains(err.Error(), "already attached") {
-						return fmt.Errorf("attach XDP to %s: %w", physName, err)
-					}
+				// Disable VLAN RX offload so XDP sees VLAN tags in packet data
+				// (otherwise NIC strips them into skb->vlan_tci which XDP can't read)
+				if out, err := exec.Command("ethtool", "-K", physName, "rxvlan", "off").CombinedOutput(); err != nil {
+					slog.Warn("failed to disable rxvlan offload (VLAN parsing may fail)",
+						"interface", physName, "err", err, "output", strings.TrimSpace(string(out)))
+				} else {
+					slog.Info("disabled VLAN RX offload for XDP", "interface", physName)
 				}
 
 				if err := m.AttachTC(physIface.Index); err != nil {
@@ -378,6 +386,7 @@ func (m *Manager) compileZones(cfg *config.Config, result *CompileResult) error 
 					}
 				}
 
+				xdpIfindexes = append(xdpIfindexes, physIface.Index)
 				attached[physIface.Index] = true
 			}
 
@@ -396,6 +405,41 @@ func (m *Manager) compileZones(cfg *config.Config, result *CompileResult) error 
 				"zone_id", zid)
 		}
 	}
+
+	// Two-phase XDP attachment: try native first, fall back to all-generic.
+	// bpf_redirect_map between native and generic XDP fails silently because
+	// generic-mode interfaces lack ndo_xdp_xmit. All interfaces must use the
+	// same mode for cross-zone forwarding to work.
+	if len(xdpIfindexes) > 0 {
+		useGeneric := false
+		for _, ifidx := range xdpIfindexes {
+			if err := m.AttachXDP(ifidx, false); err != nil {
+				if strings.Contains(err.Error(), "already attached") {
+					continue
+				}
+				slog.Info("native XDP not supported, will use generic mode for all interfaces",
+					"ifindex", ifidx, "err", err)
+				useGeneric = true
+				break
+			}
+		}
+
+		if useGeneric {
+			// Detach any native XDP we already attached
+			for _, ifidx := range xdpIfindexes {
+				m.DetachXDP(ifidx)
+			}
+			// Reattach all in generic mode
+			for _, ifidx := range xdpIfindexes {
+				if err := m.AttachXDP(ifidx, true); err != nil {
+					if !strings.Contains(err.Error(), "already attached") {
+						return fmt.Errorf("attach XDP generic to ifindex %d: %w", ifidx, err)
+					}
+				}
+			}
+		}
+	}
+
 	return nil
 }
 
