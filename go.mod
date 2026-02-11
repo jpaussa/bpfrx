@@ -1,6 +1,6 @@
 module github.com/psaab/bpfrx
 
-go 1.24.9
+go 1.24.7
 
 require (
 	github.com/chzyer/readline v1.5.1
