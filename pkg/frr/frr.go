@@ -3,11 +3,13 @@ package frr
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/psaab/bpfrx/pkg/config"
 )
@@ -287,15 +289,18 @@ func (m *Manager) generateOSPFBGP(ospf *config.OSPFConfig, bgp *config.BGPConfig
 }
 
 func (m *Manager) reload() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
 	// Try systemctl reload first (runs frr-reload.py which diffs running vs frr.conf)
-	cmd := exec.Command("systemctl", "reload", "frr")
+	cmd := exec.CommandContext(ctx, "systemctl", "reload", "frr")
 	if err := cmd.Run(); err == nil {
 		slog.Info("FRR reloaded via systemctl")
 		return nil
 	}
 
 	// Fallback: load config directly via vtysh
-	cmd = exec.Command("vtysh", "-f", m.frrConf)
+	cmd = exec.CommandContext(ctx, "vtysh", "-f", m.frrConf)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("vtysh reload: %w: %s", err, string(output))
