@@ -1,18 +1,72 @@
 package dataplane
 
 import (
+	"errors"
 	"fmt"
+	"log/slog"
+	"os"
 
 	"github.com/cilium/ebpf"
 )
 
+const bpfPinPath = "/sys/fs/bpf/bpfrx"
+
+// pinnedMaps lists stateful maps that survive daemon restarts.
+// Config-derived maps are repopulated from config on every Compile().
+// Infrastructure maps (per-CPU scratch, counters, prog arrays) are
+// recreated fresh each time.
+var pinnedMaps = map[string]bool{
+	"sessions":          true,
+	"sessions_v6":       true,
+	"dnat_table":        true,
+	"dnat_table_v6":     true,
+	"nat64_state":       true,
+	"nat_port_counters": true,
+}
+
 // loadAllObjects loads all eBPF programs and populates the Manager's
 // maps and programs using the bpf2go-generated types.
 func (m *Manager) loadAllObjects() error {
-	// Load XDP main program first -- it owns all the shared maps.
+	// Ensure pin directory exists.
+	if err := os.MkdirAll(bpfPinPath, 0700); err != nil {
+		return fmt.Errorf("create pin path %s: %w", bpfPinPath, err)
+	}
+
+	// Get the CollectionSpec (not yet loaded into kernel).
+	spec, err := loadBpfrxXdpMain()
+	if err != nil {
+		return fmt.Errorf("load xdp_main spec: %w", err)
+	}
+
+	// Mark stateful maps for pinning.
+	for name, ms := range spec.Maps {
+		if pinnedMaps[name] {
+			ms.Pinning = ebpf.PinByName
+		}
+	}
+
+	// Load with PinPath — reuses existing pinned maps if compatible.
+	opts := &ebpf.CollectionOptions{
+		Maps: ebpf.MapOptions{
+			PinPath: bpfPinPath,
+		},
+	}
 	var mainObjs bpfrxXdpMainObjects
-	if err := loadBpfrxXdpMainObjects(&mainObjs, nil); err != nil {
-		return fmt.Errorf("load xdp_main: %w", err)
+	if err := spec.LoadAndAssign(&mainObjs, opts); err != nil {
+		// If pinned maps are incompatible (struct size changed after
+		// upgrade), remove them and retry with fresh maps.
+		if errors.Is(err, ebpf.ErrMapIncompatible) {
+			slog.Warn("pinned maps incompatible, creating fresh", "err", err)
+			os.RemoveAll(bpfPinPath)
+			if err := os.MkdirAll(bpfPinPath, 0700); err != nil {
+				return fmt.Errorf("recreate pin path: %w", err)
+			}
+			if err := spec.LoadAndAssign(&mainObjs, opts); err != nil {
+				return fmt.Errorf("load xdp_main (fresh): %w", err)
+			}
+		} else {
+			return fmt.Errorf("load xdp_main: %w", err)
+		}
 	}
 
 	// Store map references.
@@ -65,12 +119,12 @@ func (m *Manager) loadAllObjects() error {
 	// Build map replacements so tail call programs share the same maps.
 	replaceOpts := &ebpf.CollectionOptions{
 		MapReplacements: map[string]*ebpf.Map{
-			"pkt_meta_scratch":  mainObjs.PktMetaScratch,
-			"iface_zone_map":    mainObjs.IfaceZoneMap,
-			"zone_configs":      mainObjs.ZoneConfigs,
-			"sessions":          mainObjs.Sessions,
-			"global_counters":   mainObjs.GlobalCounters,
-			"tx_ports":          mainObjs.TxPorts,
+			"pkt_meta_scratch":   mainObjs.PktMetaScratch,
+			"iface_zone_map":     mainObjs.IfaceZoneMap,
+			"zone_configs":       mainObjs.ZoneConfigs,
+			"sessions":           mainObjs.Sessions,
+			"global_counters":    mainObjs.GlobalCounters,
+			"tx_ports":           mainObjs.TxPorts,
 			"xdp_progs":         mainObjs.XdpProgs,
 			"tc_progs":          mainObjs.TcProgs,
 			"zone_pair_policies": mainObjs.ZonePairPolicies,

@@ -3,10 +3,14 @@ package dataplane
 import (
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 )
+
+const linkPinPath = "/sys/fs/bpf/bpfrx/links"
 
 // go:generate directives -- run "make generate" with clang + libbpf-dev installed.
 // These produce the *_bpfel.go files with embedded ELF objects.
@@ -30,7 +34,6 @@ type Manager struct {
 	loaded        bool
 	programs      map[string]*ebpf.Program
 	maps          map[string]*ebpf.Map
-	colls         []*ebpf.Collection
 	xdpLinks      map[int]link.Link
 	tcLinks       map[int]link.Link
 	lastCompile   *CompileResult
@@ -72,6 +75,7 @@ func (m *Manager) IsLoaded() bool {
 // AttachXDP attaches the XDP main program to the given interface.
 // If forceGeneric is true, uses generic (SKB) mode instead of native driver mode.
 // When forceGeneric is false, tries native driver mode only (no automatic fallback).
+// On restart, reuses a previously pinned link and atomically replaces the program.
 func (m *Manager) AttachXDP(ifindex int, forceGeneric bool) error {
 	if !m.loaded {
 		return fmt.Errorf("eBPF programs not loaded")
@@ -86,6 +90,20 @@ func (m *Manager) AttachXDP(ifindex int, forceGeneric bool) error {
 		return fmt.Errorf("XDP already attached to ifindex %d", ifindex)
 	}
 
+	// Try to load a previously pinned link and update it atomically.
+	pinFile := filepath.Join(linkPinPath, fmt.Sprintf("xdp_%d", ifindex))
+	if existing, err := link.LoadPinnedLink(pinFile, nil); err == nil {
+		if err := existing.Update(prog); err == nil {
+			m.xdpLinks[ifindex] = existing
+			slog.Info("updated pinned XDP link", "ifindex", ifindex)
+			return nil
+		}
+		// Update failed (e.g. program type mismatch) — detach old and re-attach.
+		existing.Close()
+		os.Remove(pinFile)
+	}
+
+	// Fresh attachment (first boot or pin was removed/incompatible).
 	opts := link.XDPOptions{
 		Program:   prog,
 		Interface: ifindex,
@@ -101,6 +119,13 @@ func (m *Manager) AttachXDP(ifindex int, forceGeneric bool) error {
 		return fmt.Errorf("attach XDP to ifindex %d: %w", ifindex, err)
 	}
 
+	// Pin the link for future restarts.
+	if err := os.MkdirAll(linkPinPath, 0700); err != nil {
+		slog.Warn("failed to create link pin dir", "err", err)
+	} else if err := l.Pin(pinFile); err != nil {
+		slog.Warn("failed to pin XDP link", "ifindex", ifindex, "err", err)
+	}
+
 	m.xdpLinks[ifindex] = l
 	mode := "native"
 	if forceGeneric {
@@ -110,12 +135,14 @@ func (m *Manager) AttachXDP(ifindex int, forceGeneric bool) error {
 	return nil
 }
 
-// DetachXDP detaches the XDP program from the given interface.
+// DetachXDP detaches the XDP program from the given interface and
+// removes its pin file.
 func (m *Manager) DetachXDP(ifindex int) error {
 	l, exists := m.xdpLinks[ifindex]
 	if !exists {
 		return nil
 	}
+	l.Unpin()
 	if err := l.Close(); err != nil {
 		return fmt.Errorf("detach XDP from ifindex %d: %w", ifindex, err)
 	}
@@ -196,6 +223,7 @@ func (m *Manager) AddTxPort(ifindex int) error {
 }
 
 // AttachTC attaches the TC main program to the egress path of the given interface.
+// On restart, reuses a previously pinned link and atomically replaces the program.
 func (m *Manager) AttachTC(ifindex int) error {
 	if !m.loaded {
 		return fmt.Errorf("eBPF programs not loaded")
@@ -210,6 +238,19 @@ func (m *Manager) AttachTC(ifindex int) error {
 		return fmt.Errorf("TC already attached to ifindex %d", ifindex)
 	}
 
+	// Try to load a previously pinned link and update it atomically.
+	pinFile := filepath.Join(linkPinPath, fmt.Sprintf("tc_%d", ifindex))
+	if existing, err := link.LoadPinnedLink(pinFile, nil); err == nil {
+		if err := existing.Update(prog); err == nil {
+			m.tcLinks[ifindex] = existing
+			slog.Info("updated pinned TC link", "ifindex", ifindex)
+			return nil
+		}
+		existing.Close()
+		os.Remove(pinFile)
+	}
+
+	// Fresh attachment (first boot or pin was removed/incompatible).
 	l, err := link.AttachTCX(link.TCXOptions{
 		Program:   prog,
 		Attach:    ebpf.AttachTCXEgress,
@@ -219,17 +260,26 @@ func (m *Manager) AttachTC(ifindex int) error {
 		return fmt.Errorf("attach TC to ifindex %d: %w", ifindex, err)
 	}
 
+	// Pin the link for future restarts.
+	if err := os.MkdirAll(linkPinPath, 0700); err != nil {
+		slog.Warn("failed to create link pin dir", "err", err)
+	} else if err := l.Pin(pinFile); err != nil {
+		slog.Warn("failed to pin TC link", "ifindex", ifindex, "err", err)
+	}
+
 	m.tcLinks[ifindex] = l
 	slog.Info("attached TC egress program", "ifindex", ifindex)
 	return nil
 }
 
-// DetachTC detaches the TC program from the given interface.
+// DetachTC detaches the TC program from the given interface and
+// removes its pin file.
 func (m *Manager) DetachTC(ifindex int) error {
 	l, exists := m.tcLinks[ifindex]
 	if !exists {
 		return nil
 	}
+	l.Unpin()
 	if err := l.Close(); err != nil {
 		return fmt.Errorf("detach TC from ifindex %d: %w", ifindex, err)
 	}
@@ -248,21 +298,44 @@ func (m *Manager) LastCompileResult() *CompileResult {
 	return m.lastCompile
 }
 
-// Close releases all eBPF resources.
+// Close releases Go handles for eBPF resources but leaves pinned maps
+// and links in the kernel for the next daemon to reuse. This enables
+// hitless restarts — sessions survive and XDP/TC programs keep running.
 func (m *Manager) Close() error {
 	for ifindex, l := range m.xdpLinks {
 		if err := l.Close(); err != nil {
-			slog.Error("failed to detach XDP", "ifindex", ifindex, "err", err)
+			slog.Error("failed to close XDP link handle", "ifindex", ifindex, "err", err)
 		}
 	}
 	for ifindex, l := range m.tcLinks {
 		if err := l.Close(); err != nil {
-			slog.Error("failed to detach TC", "ifindex", ifindex, "err", err)
+			slog.Error("failed to close TC link handle", "ifindex", ifindex, "err", err)
 		}
 	}
-	for _, coll := range m.colls {
-		coll.Close()
-	}
 	m.loaded = false
+	return nil
+}
+
+// Cleanup removes all pinned BPF maps and links. This fully tears down
+// the dataplane — use when decommissioning, not during normal restarts.
+func Cleanup() error {
+	// Unpin and close any pinned links first.
+	if entries, err := os.ReadDir(linkPinPath); err == nil {
+		for _, e := range entries {
+			pinFile := filepath.Join(linkPinPath, e.Name())
+			if l, err := link.LoadPinnedLink(pinFile, nil); err == nil {
+				l.Unpin()
+				l.Close()
+			} else {
+				// If we can't load it, just remove the file.
+				os.Remove(pinFile)
+			}
+		}
+	}
+	// Remove the entire pin directory tree.
+	if err := os.RemoveAll(bpfPinPath); err != nil {
+		return fmt.Errorf("remove %s: %w", bpfPinPath, err)
+	}
+	slog.Info("removed all pinned BPF state", "path", bpfPinPath)
 	return nil
 }

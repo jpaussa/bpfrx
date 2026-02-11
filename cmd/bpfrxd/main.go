@@ -12,9 +12,19 @@ import (
 	"os"
 
 	"github.com/psaab/bpfrx/pkg/daemon"
+	"github.com/psaab/bpfrx/pkg/dataplane"
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "cleanup" {
+		if err := dataplane.Cleanup(); err != nil {
+			fmt.Fprintf(os.Stderr, "cleanup: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("all pinned BPF state removed")
+		return
+	}
+
 	configFile := flag.String("config", "/etc/bpfrx/bpfrx.conf", "configuration file path")
 	noDataplane := flag.Bool("no-dataplane", false, "run without eBPF (config-only mode)")
 	apiAddr := flag.String("api-addr", "127.0.0.1:8080", "HTTP API listen address (empty to disable)")
