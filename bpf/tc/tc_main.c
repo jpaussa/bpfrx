@@ -23,7 +23,9 @@ int tc_main_prog(struct __sk_buff *skb)
 	if (!meta)
 		return TC_ACT_OK;
 
-	__builtin_memset(meta, 0, sizeof(*meta));
+	/* Zero from src_port onward — skip src_ip/dst_ip (32 bytes)
+	 * which the L3 parser always overwrites. */
+	__builtin_memset((__u8 *)meta + 32, 0, sizeof(*meta) - 32);
 	meta->direction = 1; /* egress */
 	meta->ingress_ifindex = skb->ingress_ifindex;
 

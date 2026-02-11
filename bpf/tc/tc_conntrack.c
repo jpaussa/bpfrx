@@ -39,14 +39,12 @@ tc_ct_hit_v4(struct __sk_buff *skb, struct pkt_meta *meta,
 
 	if (sess->flags & SESS_FLAG_SNAT) {
 		if (is_fwd) {
-			__builtin_memset(&meta->src_ip, 0, sizeof(meta->src_ip));
 			meta->src_ip.v4 = sess->nat_src_ip;
 			meta->src_port  = sess->nat_src_port;
 		}
 	}
 	if (sess->flags & SESS_FLAG_DNAT) {
 		if (!is_fwd) {
-			__builtin_memset(&meta->src_ip, 0, sizeof(meta->src_ip));
 			meta->src_ip.v4 = sess->nat_dst_ip;
 			meta->src_port  = sess->nat_dst_port;
 		}

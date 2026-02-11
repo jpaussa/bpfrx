@@ -29,7 +29,9 @@ int xdp_main_prog(struct xdp_md *ctx)
 	if (!meta)
 		return XDP_DROP;
 
-	__builtin_memset(meta, 0, sizeof(*meta));
+	/* Zero from src_port onward — skip src_ip/dst_ip (32 bytes)
+	 * which the L3 parser always overwrites. */
+	__builtin_memset((__u8 *)meta + 32, 0, sizeof(*meta) - 32);
 	meta->direction = 0; /* ingress */
 	meta->ingress_ifindex = ctx->ingress_ifindex;
 	meta->ingress_vlan_id = vlan_id;

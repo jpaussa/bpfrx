@@ -159,10 +159,6 @@ parse_iphdr(void *data, void *data_end, struct pkt_meta *meta)
 	if ((void *)iph + ihl > data_end)
 		return -1;
 
-	/* Zero full ip_addr unions before writing v4 */
-	__builtin_memset(&meta->src_ip, 0, sizeof(meta->src_ip));
-	__builtin_memset(&meta->dst_ip, 0, sizeof(meta->dst_ip));
-
 	meta->src_ip.v4 = iph->saddr;
 	meta->dst_ip.v4 = iph->daddr;
 	meta->protocol  = iph->protocol;
