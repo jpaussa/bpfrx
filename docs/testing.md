@@ -316,11 +316,6 @@ incus exec bpfrx-fw -- curl -s http://127.0.0.1:8080/metrics | grep bpfrx
 
 ### Common Issues
 
-**"failed to compile dataplane: compile flow config: flow_config_map map not found"**
-- Non-fatal warning during initial load
-- TCP MSS clamping may not work until next commit
-- Caused by `flow_config_map` being created by conntrack program, not main
-
 **Configure mode double echo via `incus exec -- cli`**
 - Extra echo when typing in configure mode
 - PTY multiplexing between incus exec and chzyer/readline
