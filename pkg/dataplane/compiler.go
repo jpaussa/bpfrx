@@ -259,51 +259,66 @@ func ensureVLANSubInterface(parentName string, vlanID int) (int, error) {
 	return link.Attrs().Index, nil
 }
 
-// assignInterfaceAddresses assigns configured addresses to a physical interface via netlink.
-func assignInterfaceAddresses(ifaceName string, addresses []string) {
+// reconcileInterfaceAddresses ensures the interface has exactly the configured
+// addresses. Stale addresses are removed and missing ones are added.
+// Link-local (fe80::/10) addresses are left untouched since the kernel manages them.
+func reconcileInterfaceAddresses(ifaceName string, desired []string) {
 	link, err := netlink.LinkByName(ifaceName)
 	if err != nil {
-		slog.Warn("cannot find interface for address assignment",
+		slog.Warn("cannot find interface for address reconciliation",
 			"name", ifaceName, "err", err)
 		return
 	}
-	for _, addrStr := range addresses {
+
+	// Build desired set keyed by "ip/mask"
+	want := make(map[string]*netlink.Addr, len(desired))
+	for _, addrStr := range desired {
 		addr, err := netlink.ParseAddr(addrStr)
 		if err != nil {
 			slog.Warn("invalid address for interface",
 				"addr", addrStr, "name", ifaceName, "err", err)
 			continue
 		}
-		if err := netlink.AddrAdd(link, addr); err != nil {
-			// EEXIST is fine
-			if !strings.Contains(err.Error(), "exists") {
-				slog.Warn("failed to add address to interface",
-					"addr", addrStr, "name", ifaceName, "err", err)
+		want[addr.IPNet.String()] = addr
+	}
+
+	// List current kernel addresses (both v4 and v6)
+	existing, err := netlink.AddrList(link, netlink.FAMILY_ALL)
+	if err != nil {
+		slog.Warn("failed to list addresses on interface",
+			"name", ifaceName, "err", err)
+		// Fall through to add-only mode
+		existing = nil
+	}
+
+	// Remove stale addresses (skip link-local)
+	for i := range existing {
+		addr := &existing[i]
+		if addr.IP.IsLinkLocalUnicast() || addr.IP.IsLinkLocalMulticast() {
+			continue
+		}
+		key := addr.IPNet.String()
+		if _, ok := want[key]; ok {
+			// Already present, no need to add
+			delete(want, key)
+		} else {
+			// Stale — remove it
+			if err := netlink.AddrDel(link, addr); err != nil {
+				slog.Warn("failed to remove stale address from interface",
+					"addr", key, "name", ifaceName, "err", err)
+			} else {
+				slog.Info("removed stale address from interface",
+					"addr", key, "name", ifaceName)
 			}
 		}
 	}
-}
 
-// assignSubInterfaceAddresses assigns configured addresses to a VLAN sub-interface via netlink.
-func assignSubInterfaceAddresses(subName string, addresses []string) {
-	link, err := netlink.LinkByName(subName)
-	if err != nil {
-		slog.Warn("cannot find sub-interface for address assignment",
-			"name", subName, "err", err)
-		return
-	}
-	for _, addrStr := range addresses {
-		addr, err := netlink.ParseAddr(addrStr)
-		if err != nil {
-			slog.Warn("invalid address for sub-interface",
-				"addr", addrStr, "name", subName, "err", err)
-			continue
-		}
+	// Add missing addresses
+	for key, addr := range want {
 		if err := netlink.AddrAdd(link, addr); err != nil {
-			// EEXIST is fine
 			if !strings.Contains(err.Error(), "exists") {
-				slog.Warn("failed to add address to sub-interface",
-					"addr", addrStr, "name", subName, "err", err)
+				slog.Warn("failed to add address to interface",
+					"addr", key, "name", ifaceName, "err", err)
 			}
 		}
 	}
@@ -397,13 +412,15 @@ func (m *Manager) compileZones(cfg *config.Config, result *CompileResult) error 
 						physName, vlanID, err)
 				}
 
-				// Assign addresses from unit config to sub-interface
+				// Reconcile addresses on sub-interface (removes stale, adds missing)
+				subName := fmt.Sprintf("%s.%d", physName, vlanID)
+				var addrs []string
 				if ifCfg, ok := cfg.Interfaces.Interfaces[physName]; ok {
-					if unit, ok := ifCfg.Units[unitNum]; ok && len(unit.Addresses) > 0 {
-						subName := fmt.Sprintf("%s.%d", physName, vlanID)
-						assignSubInterfaceAddresses(subName, unit.Addresses)
+					if unit, ok := ifCfg.Units[unitNum]; ok {
+						addrs = unit.Addresses
 					}
 				}
+				reconcileInterfaceAddresses(subName, addrs)
 
 				slog.Info("VLAN sub-interface configured",
 					"parent", physName, "vlan_id", vlanID,
@@ -448,13 +465,15 @@ func (m *Manager) compileZones(cfg *config.Config, result *CompileResult) error 
 				attached[physIface.Index] = true
 			}
 
-			// Assign addresses from config for non-VLAN interfaces
+			// Reconcile addresses for non-VLAN interfaces (removes stale, adds missing)
 			if vlanID == 0 {
+				var addrs []string
 				if ifCfg, ok := cfg.Interfaces.Interfaces[physName]; ok {
-					if unit, ok := ifCfg.Units[unitNum]; ok && len(unit.Addresses) > 0 {
-						assignInterfaceAddresses(physName, unit.Addresses)
+					if unit, ok := ifCfg.Units[unitNum]; ok {
+						addrs = unit.Addresses
 					}
 				}
+				reconcileInterfaceAddresses(physName, addrs)
 			}
 
 			slog.Info("zone interface configured",

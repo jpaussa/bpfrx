@@ -1156,6 +1156,12 @@ func compileRoutingOptions(node *Node, ro *RoutingOptionsConfig) error {
 				if len(prop.Keys) >= 2 {
 					route.NextHop = prop.Keys[1]
 				}
+				// Check children for interface (needed for IPv6 link-local next-hops)
+				for _, child := range prop.Children {
+					if child.Name() == "interface" && len(child.Keys) >= 2 {
+						route.Interface = child.Keys[1]
+					}
+				}
 			case "discard":
 				route.Discard = true
 			case "preference":
