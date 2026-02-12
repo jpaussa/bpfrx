@@ -109,6 +109,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.dhcpServer = dhcpserver.New()
 	}
 
+	// Enable IP forwarding — required for the firewall to route packets.
+	if !d.opts.NoDataplane {
+		enableForwarding()
+	}
+
 	// Load eBPF programs (unless in config-only mode)
 	if !d.opts.NoDataplane {
 		d.dp = dataplane.New()
@@ -344,6 +349,22 @@ func (d *Daemon) Run(ctx context.Context) error {
 }
 
 // isInteractive returns true if stdin is a real terminal (not /dev/null or a pipe).
+// enableForwarding enables IPv4 and IPv6 forwarding via sysctl.
+// A firewall must forward packets between interfaces; without this,
+// the kernel drops all transit traffic.
+func enableForwarding() {
+	sysctls := map[string]string{
+		"/proc/sys/net/ipv4/ip_forward":          "1",
+		"/proc/sys/net/ipv6/conf/all/forwarding":  "1",
+	}
+	for path, val := range sysctls {
+		if err := os.WriteFile(path, []byte(val), 0644); err != nil {
+			slog.Warn("failed to enable forwarding", "path", path, "err", err)
+		}
+	}
+	slog.Info("IP forwarding enabled")
+}
+
 func isInteractive() bool {
 	_, err := unix.IoctlGetTermios(int(os.Stdin.Fd()), unix.TCGETS)
 	return err == nil

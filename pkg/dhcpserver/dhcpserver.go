@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	kea4Config = "/etc/kea/kea-dhcp4-bpfrx.conf"
-	kea6Config = "/etc/kea/kea-dhcp6-bpfrx.conf"
+	kea4Config = "/etc/kea/kea-dhcp4.conf"
+	kea6Config = "/etc/kea/kea-dhcp6.conf"
 	kea4Svc    = "kea-dhcp4-server"
 	kea6Svc    = "kea-dhcp6-server"
 )
@@ -77,6 +77,7 @@ func (m *Manager) generateKea4Config(cfg *config.DHCPServerConfig) error {
 		Data string `json:"data"`
 	}
 	type keaSubnet4 struct {
+		ID            int       `json:"id"`
 		Subnet        string    `json:"subnet"`
 		Pools         []keaPool `json:"pools,omitempty"`
 		Interface     string    `json:"interface,omitempty"`
@@ -85,11 +86,14 @@ func (m *Manager) generateKea4Config(cfg *config.DHCPServerConfig) error {
 	}
 
 	var subnets []keaSubnet4
+	subnetID := 1
 	for _, group := range cfg.DHCPLocalServer.Groups {
 		for _, pool := range group.Pools {
 			sub := keaSubnet4{
+				ID:     subnetID,
 				Subnet: pool.Subnet,
 			}
+			subnetID++
 			if pool.RangeLow != "" && pool.RangeHigh != "" {
 				sub.Pools = append(sub.Pools, keaPool{
 					Pool: fmt.Sprintf("%s - %s", pool.RangeLow, pool.RangeHigh),
@@ -140,7 +144,7 @@ func (m *Manager) generateKea4Config(cfg *config.DHCPServerConfig) error {
 			},
 			"lease-database": map[string]any{
 				"type": "memfile",
-				"name": "/var/lib/kea/dhcp4.leases",
+				"name": "/var/lib/kea/kea-leases4.csv",
 			},
 			"valid-lifetime":   86400,
 			"subnet4":          subnets,

@@ -30,11 +30,12 @@ IMAGE_CT="images:debian/13"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-# Network definitions: name subnet nat
+# Network definitions: name:subnet:nat
+# Dataplane networks use none — DHCP comes from the firewall VM, not the bridge.
 NETWORKS=(
-	"bpfrx-trust:10.0.1.1/24:false"
-	"bpfrx-untrust:10.0.2.1/24:true"
-	"bpfrx-dmz:10.0.30.1/24:false"
+	"bpfrx-trust:none:false"
+	"bpfrx-untrust:none:false"
+	"bpfrx-dmz:none:false"
 	"bpfrx-tunnel:10.0.40.1/24:false"
 )
 
@@ -293,13 +294,11 @@ provision_instance() {
 	info "Configuring sysctl..."
 	incus exec "$INSTANCE_NAME" -- bash -c 'cat > /etc/sysctl.d/99-bpf.conf <<EOF
 net.core.bpf_jit_enable=1
-net.ipv4.ip_forward=1
-net.ipv6.conf.all.forwarding=1
 EOF'
 	incus exec "$INSTANCE_NAME" -- sysctl --system
 
 	info "Installing packages (this may take a few minutes)..."
-	incus exec "$INSTANCE_NAME" -- bash -c 'DEBIAN_FRONTEND=noninteractive apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential clang llvm libbpf-dev linux-headers-amd64 golang tcpdump iproute2 iperf3 bpftool frr strongswan strongswan-swanctl'
+	incus exec "$INSTANCE_NAME" -- bash -c 'DEBIAN_FRONTEND=noninteractive apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential clang llvm libbpf-dev linux-headers-amd64 golang tcpdump iproute2 iperf3 bpftool frr strongswan strongswan-swanctl kea-dhcp4-server'
 
 	# Upgrade kernel to latest from Debian unstable for full BPF verifier support
 	info "Adding Debian unstable repo for kernel upgrade..."
