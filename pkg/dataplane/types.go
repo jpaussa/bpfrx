@@ -530,6 +530,13 @@ type IfaceZoneKey struct {
 	Pad     uint16
 }
 
+// IfaceZoneValue mirrors the C struct iface_zone_value.
+type IfaceZoneValue struct {
+	ZoneID       uint16
+	Pad          uint16
+	RoutingTable uint32 // kernel table ID, 0 = main table
+}
+
 // VlanIfaceInfo mirrors the C struct vlan_iface_info.
 type VlanIfaceInfo struct {
 	ParentIfindex uint32

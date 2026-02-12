@@ -333,6 +333,14 @@ func (m *Manager) compileZones(cfg *config.Config, result *CompileResult) error 
 		slog.Warn("failed to clear vlan_iface_map", "err", err)
 	}
 
+	// Build interface -> routing table ID map from routing instances
+	ifaceTableID := make(map[string]uint32)
+	for _, ri := range cfg.RoutingInstances {
+		for _, ifaceName := range ri.Interfaces {
+			ifaceTableID[ifaceName] = uint32(ri.TableID)
+		}
+	}
+
 	// Track which physical interfaces we've already attached to
 	attached := make(map[int]bool)
 	// Collect physical ifindexes for deferred XDP attachment
@@ -428,7 +436,8 @@ func (m *Manager) compileZones(cfg *config.Config, result *CompileResult) error 
 			}
 
 			// Set zone mapping using composite key {physIfindex, vlanID}
-			if err := m.SetZone(physIface.Index, uint16(vlanID), zid); err != nil {
+			tableID := ifaceTableID[ifaceRef] // 0 if not in any routing instance
+			if err := m.SetZone(physIface.Index, uint16(vlanID), zid, tableID); err != nil {
 				return fmt.Errorf("set zone for %s vlan %d (ifindex %d): %w",
 					physName, vlanID, physIface.Index, err)
 			}

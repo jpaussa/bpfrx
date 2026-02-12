@@ -74,9 +74,9 @@ int tc_main_prog(struct __sk_buff *skb)
 		.ifindex = skb->ifindex,
 		.vlan_id = vlan_id,
 	};
-	__u16 *zone_ptr = bpf_map_lookup_elem(&iface_zone_map, &zk);
+	struct iface_zone_value *zone_ptr = bpf_map_lookup_elem(&iface_zone_map, &zk);
 	if (zone_ptr)
-		meta->egress_zone = *zone_ptr;
+		meta->egress_zone = zone_ptr->zone_id;
 
 	TRACE_TC_MAIN(meta);
 

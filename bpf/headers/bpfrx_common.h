@@ -300,12 +300,23 @@ struct ip_addr {
  * VLAN / logical interface support
  * ============================================================ */
 
-/* Composite key for iface_zone_map (HASH): {ifindex, vlan_id} -> zone_id */
+/* Composite key for iface_zone_map (HASH): {ifindex, vlan_id} -> zone + routing table */
 struct iface_zone_key {
 	__u32 ifindex;
 	__u16 vlan_id;
 	__u16 pad;
 };
+
+/* Value for iface_zone_map: zone assignment + optional VRF routing table */
+struct iface_zone_value {
+	__u16 zone_id;
+	__u16 pad;
+	__u32 routing_table;  /* kernel table ID, 0 = main table */
+};
+
+#ifndef BPF_FIB_LOOKUP_TBID
+#define BPF_FIB_LOOKUP_TBID (1U << 3)
+#endif
 
 /* Reverse mapping: sub-interface ifindex -> parent physical info */
 struct vlan_iface_info {

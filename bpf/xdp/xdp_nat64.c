@@ -400,10 +400,12 @@ nat64_xlate_6to4(struct xdp_md *ctx, struct pkt_meta *meta)
 	fib.l4_protocol = ip4_proto;
 	fib.tot_len     = tot_len;
 	fib.ifindex     = meta->ingress_ifindex;
+	fib.tbid        = meta->routing_table;
 	fib.ipv4_src    = v4_src;
 	fib.ipv4_dst    = v4_dst;
 
-	int rc = bpf_fib_lookup(ctx, &fib, sizeof(fib), 0);
+	__u32 fib_flags = meta->routing_table ? BPF_FIB_LOOKUP_TBID : 0;
+	int rc = bpf_fib_lookup(ctx, &fib, sizeof(fib), fib_flags);
 	if (rc != BPF_FIB_LKUP_RET_SUCCESS)
 		return XDP_PASS; /* let kernel handle */
 
@@ -593,10 +595,12 @@ nat64_xlate_4to6(struct xdp_md *ctx, struct pkt_meta *meta)
 	fib.l4_protocol = ip6_proto;
 	fib.tot_len     = bpf_ntohs(ip6h->payload_len) + 40;
 	fib.ifindex     = meta->ingress_ifindex;
+	fib.tbid        = meta->routing_table;
 	__builtin_memcpy(fib.ipv6_src, v6_src, 16);
 	__builtin_memcpy(fib.ipv6_dst, v6_dst, 16);
 
-	int rc = bpf_fib_lookup(ctx, &fib, sizeof(fib), 0);
+	__u32 fib_flags = meta->routing_table ? BPF_FIB_LOOKUP_TBID : 0;
+	int rc = bpf_fib_lookup(ctx, &fib, sizeof(fib), fib_flags);
 	if (rc != BPF_FIB_LKUP_RET_SUCCESS)
 		return XDP_PASS;
 

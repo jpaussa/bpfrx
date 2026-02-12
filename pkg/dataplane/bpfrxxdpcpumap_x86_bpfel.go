@@ -157,6 +157,13 @@ type bpfrxXdpCpumapIfaceZoneKey struct {
 	Pad     uint16
 }
 
+type bpfrxXdpCpumapIfaceZoneValue struct {
+	_            structs.HostLayout
+	ZoneId       uint16
+	Pad          uint16
+	RoutingTable uint32
+}
+
 type bpfrxXdpCpumapLpmKeyV4 struct {
 	_         structs.HostLayout
 	Prefixlen uint32

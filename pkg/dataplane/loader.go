@@ -153,14 +153,15 @@ func (m *Manager) DetachXDP(ifindex int) error {
 	return nil
 }
 
-// SetZone maps an {ifindex, vlanID} to a security zone in the BPF map.
-func (m *Manager) SetZone(ifindex int, vlanID uint16, zoneID uint16) error {
+// SetZone maps an {ifindex, vlanID} to a security zone and routing table in the BPF map.
+func (m *Manager) SetZone(ifindex int, vlanID uint16, zoneID uint16, routingTable uint32) error {
 	zm, ok := m.maps["iface_zone_map"]
 	if !ok {
 		return fmt.Errorf("iface_zone_map not found")
 	}
 	key := IfaceZoneKey{Ifindex: uint32(ifindex), VlanID: vlanID}
-	return zm.Update(key, zoneID, ebpf.UpdateAny)
+	val := IfaceZoneValue{ZoneID: zoneID, RoutingTable: routingTable}
+	return zm.Update(key, val, ebpf.UpdateAny)
 }
 
 // SetVlanIfaceInfo maps a VLAN sub-interface ifindex to its parent info.
@@ -180,7 +181,7 @@ func (m *Manager) ClearIfaceZoneMap() error {
 		return fmt.Errorf("iface_zone_map not found")
 	}
 	var key IfaceZoneKey
-	var val uint16
+	var val IfaceZoneValue
 	iter := zm.Iterate()
 	var keys []IfaceZoneKey
 	for iter.Next(&key, &val) {

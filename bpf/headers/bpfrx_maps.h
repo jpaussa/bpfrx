@@ -105,7 +105,7 @@ struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, MAX_LOGICAL_INTERFACES);
 	__type(key, struct iface_zone_key);
-	__type(value, __u16);
+	__type(value, struct iface_zone_value);
 	__uint(map_flags, BPF_F_NO_PREALLOC);
 } iface_zone_map SEC(".maps");
 

@@ -161,14 +161,19 @@ int xdp_zone_prog(struct xdp_md *ctx)
 		.ifindex = meta->ingress_ifindex,
 		.vlan_id = meta->ingress_vlan_id,
 	};
-	__u16 *zone_id = bpf_map_lookup_elem(&iface_zone_map, &izk);
-	if (!zone_id) {
+	struct iface_zone_value *izv = bpf_map_lookup_elem(&iface_zone_map, &izk);
+	if (!izv) {
 		/* Interface not assigned to any zone -- drop */
 		inc_counter(GLOBAL_CTR_DROPS);
 		return XDP_DROP;
 	}
-	meta->ingress_zone = *zone_id;
-	inc_zone_ingress((__u32)*zone_id, meta->pkt_len);
+	meta->ingress_zone = izv->zone_id;
+	inc_zone_ingress((__u32)izv->zone_id, meta->pkt_len);
+
+	/* Set VRF routing table from interface's routing instance.
+	 * Firewall filter PBR (already set in xdp_main) takes priority. */
+	if (meta->routing_table == 0 && izv->routing_table != 0)
+		meta->routing_table = izv->routing_table;
 
 	/*
 	 * Pre-routing NAT: check dnat_table before FIB lookup.
@@ -408,7 +413,10 @@ int xdp_zone_prog(struct xdp_md *ctx)
 		__builtin_memcpy(fib.ipv6_dst, meta->dst_ip.v6, 16);
 	}
 
-	int rc = bpf_fib_lookup(ctx, &fib, sizeof(fib), 0);
+	__u32 fib_flags = 0;
+	if (meta->routing_table)
+		fib_flags = BPF_FIB_LOOKUP_TBID;
+	int rc = bpf_fib_lookup(ctx, &fib, sizeof(fib), fib_flags);
 	TRACE_FIB_RESULT(rc, fib.ifindex);
 
 	if (rc == BPF_FIB_LKUP_RET_SUCCESS) {
@@ -428,9 +436,9 @@ int xdp_zone_prog(struct xdp_md *ctx)
 
 		/* Look up egress zone using {physical_ifindex, vlan_id} */
 		struct iface_zone_key ezk = { .ifindex = egress_phys_if, .vlan_id = egress_vlan };
-		__u16 *ez = bpf_map_lookup_elem(&iface_zone_map, &ezk);
-		if (ez)
-			meta->egress_zone = *ez;
+		struct iface_zone_value *ezv = bpf_map_lookup_elem(&iface_zone_map, &ezk);
+		if (ezv)
+			meta->egress_zone = ezv->zone_id;
 
 		/* Populate FIB cache + conntrack fast-path using session
 		 * pointer from FIB cache check above (avoids duplicate

@@ -157,6 +157,13 @@ type bpfrxXdpNat64IfaceZoneKey struct {
 	Pad     uint16
 }
 
+type bpfrxXdpNat64IfaceZoneValue struct {
+	_            structs.HostLayout
+	ZoneId       uint16
+	Pad          uint16
+	RoutingTable uint32
+}
+
 type bpfrxXdpNat64LpmKeyV4 struct {
 	_         structs.HostLayout
 	Prefixlen uint32

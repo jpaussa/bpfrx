@@ -157,6 +157,13 @@ type bpfrxTcScreenEgressIfaceZoneKey struct {
 	Pad     uint16
 }
 
+type bpfrxTcScreenEgressIfaceZoneValue struct {
+	_            structs.HostLayout
+	ZoneId       uint16
+	Pad          uint16
+	RoutingTable uint32
+}
+
 type bpfrxTcScreenEgressLpmKeyV4 struct {
 	_         structs.HostLayout
 	Prefixlen uint32

@@ -2807,3 +2807,69 @@ func TestPolicyDenyAll(t *testing.T) {
 		t.Errorf("expected PolicyPermit, got %d", pol.Action)
 	}
 }
+
+func TestRoutingInstanceWithZone(t *testing.T) {
+	input := `
+routing-instances {
+    isp-a {
+        instance-type virtual-router;
+        interface enp7s0;
+        routing-options {
+            static {
+                route 0.0.0.0/0 {
+                    next-hop 10.0.2.1;
+                }
+            }
+        }
+    }
+}
+security {
+    zones {
+        security-zone untrust {
+            interfaces {
+                enp7s0;
+            }
+        }
+    }
+}
+`
+	parser := NewParser(input)
+	tree, errs := parser.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+
+	// Verify routing instance
+	if len(cfg.RoutingInstances) != 1 {
+		t.Fatalf("expected 1 routing instance, got %d", len(cfg.RoutingInstances))
+	}
+	ri := cfg.RoutingInstances[0]
+	if ri.Name != "isp-a" {
+		t.Errorf("instance name: got %q, want %q", ri.Name, "isp-a")
+	}
+	if len(ri.Interfaces) != 1 || ri.Interfaces[0] != "enp7s0" {
+		t.Errorf("instance interfaces: got %v, want [enp7s0]", ri.Interfaces)
+	}
+	if ri.TableID != 100 {
+		t.Errorf("table ID: got %d, want 100", ri.TableID)
+	}
+	if len(ri.StaticRoutes) != 1 {
+		t.Fatalf("expected 1 static route, got %d", len(ri.StaticRoutes))
+	}
+	if ri.StaticRoutes[0].NextHop != "10.0.2.1" {
+		t.Errorf("next-hop: got %q, want %q", ri.StaticRoutes[0].NextHop, "10.0.2.1")
+	}
+
+	// Verify zone references the same interface
+	zone, ok := cfg.Security.Zones["untrust"]
+	if !ok {
+		t.Fatal("missing untrust zone")
+	}
+	if len(zone.Interfaces) != 1 || zone.Interfaces[0] != "enp7s0" {
+		t.Errorf("zone interfaces: got %v, want [enp7s0]", zone.Interfaces)
+	}
+}
