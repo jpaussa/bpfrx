@@ -118,6 +118,16 @@ TC Egress:   main -> screen_egress -> conntrack -> nat -> forward
 - **Bootstrap**: `setup.sh` writes initial `.link` files for first boot (before daemon has run)
 - DHCP-learned default routes get admin distance 200 in FRR (lower priority than static routes)
 
+### XDP on SR-IOV Interfaces
+- **iavf (VF driver) has NO native XDP support** — only generic/SKB mode works, which creates a full `sk_buff` per packet (~16% CPU overhead from `memcpy_orig` + `memset_orig`). Performance drops from 25+ Gbps to ~6.8 Gbps
+- **i40e/ice (PF driver) has native XDP** — driver-mode XDP processes packets before SKB allocation, much faster
+- **`bpf_redirect_map` requires `ndo_xdp_xmit` on target** — you cannot redirect from a native XDP program to an interface that lacks native XDP support. If the target doesn't implement `ndo_xdp_xmit`, the redirect silently fails. This means mixing native+generic interfaces in a redirect set does not work
+- **bpfrx workaround: `redirect_capable` map** — per-interface flag checked in `xdp_forward.c`. Interfaces without native XDP get `XDP_PASS` (kernel forwarding path) instead of `bpf_redirect_map`. This lets native interfaces redirect between each other while non-native interfaces fall back to kernel forwarding
+- **XDP on PF does NOT see VF traffic** — SR-IOV hardware switching delivers VF packets directly to VFs, bypassing the PF's XDP program entirely. You cannot use PF XDP to firewall VF traffic. Each VF would need its own XDP program (but iavf doesn't support native XDP, so that's generic-only)
+- **Current test env uses PF passthrough (i40e)** — the entire PF (`enp10s0f0np0`) is passed through to the VM via VFIO, not a VF. This gives native XDP on the WAN interface. All interfaces (virtio + i40e PF) run native XDP
+- **Why not VF passthrough** — VFs use the iavf driver which forces generic mode. Even with the `redirect_capable` workaround, the WAN interface itself runs in generic XDP which is slower for ingress processing. PF passthrough avoids this entirely
+- **Gotcha: PF passthrough claims the whole NIC** — no VFs can be used by other VMs when the PF is passed through. For multi-VM setups, VF passthrough with generic XDP + `redirect_capable` fallback is the only option (at a performance cost)
+
 ### Shutdown
 - FRR reload commands use 15s context timeout to prevent hanging on `systemctl reload frr`
 - systemd unit has `TimeoutStopSec=20` as safety net
