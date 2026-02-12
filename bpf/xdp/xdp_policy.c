@@ -359,7 +359,7 @@ nat_pool_alloc_v6(__u8 pool_id, __u8 *out_ip, __be16 *out_port)
  * Swaps MACs, IPs, ports, sets RST flag, recomputes checksums.
  * Returns XDP_TX to send the packet back out the ingress interface.
  */
-static __always_inline int
+static __noinline int
 send_tcp_rst_v4(struct xdp_md *ctx, struct pkt_meta *meta)
 {
 	void *data = (void *)(long)ctx->data;
@@ -486,7 +486,7 @@ send_tcp_rst_v4(struct xdp_md *ctx, struct pkt_meta *meta)
  * Swaps MACs, IPs, ports, sets RST flag, recomputes TCP checksum.
  * Returns XDP_TX to send the packet back out the ingress interface.
  */
-static __always_inline int
+static __noinline int
 send_tcp_rst_v6(struct xdp_md *ctx, struct pkt_meta *meta)
 {
 	void *data = (void *)(long)ctx->data;
@@ -593,6 +593,250 @@ send_tcp_rst_v6(struct xdp_md *ctx, struct pkt_meta *meta)
 	tcp_csum += tcp_csum >> 16;
 	tcp_hdr.check = ~tcp_csum;
 	*tcp = tcp_hdr;
+
+	return XDP_TX;
+}
+
+/*
+ * Send ICMP Destination Unreachable (type 3, code 13: admin prohibited)
+ * for non-TCP REJECT action on IPv4 traffic.
+ * Packet layout: ETH(14) + IP(20) + ICMP(8) + orig_IP(20) + orig_L4(8) = 70
+ *
+ * Uses session_v4_scratch map at index 0 for original header storage
+ * to stay within BPF 512-byte combined stack limit.
+ */
+static __noinline int
+send_icmp_unreach_v4(struct xdp_md *ctx, struct pkt_meta *meta)
+{
+	/* Use session scratch as byte buffer for original headers (28 bytes).
+	 * At REJECT time, no sessions are created, so scratch is free. */
+	__u32 scratch_idx = 0;
+	struct session_value *scratch = bpf_map_lookup_elem(
+		&session_v4_scratch, &scratch_idx);
+	if (!scratch)
+		return XDP_DROP;
+	__u8 *orig_hdr = (__u8 *)scratch; /* reinterpret as byte buffer */
+
+	void *data = (void *)(long)ctx->data;
+	void *data_end = (void *)(long)ctx->data_end;
+
+	if (data + ETH_HLEN + 28 > data_end)
+		return XDP_DROP;
+
+	/* Save MACs from packet */
+	__u8 orig_smac[ETH_ALEN], orig_dmac[ETH_ALEN];
+	__builtin_memcpy(orig_smac, ((struct ethhdr *)data)->h_source, ETH_ALEN);
+	__builtin_memcpy(orig_dmac, ((struct ethhdr *)data)->h_dest, ETH_ALEN);
+
+	/* Save original IP header (20 bytes) + first 8 bytes of L4 to scratch */
+	__builtin_memcpy(orig_hdr, data + ETH_HLEN, 28);
+
+	/* Source/dest IPs from meta (handle DNAT: use original dest if DNAT) */
+	__be32 orig_saddr = meta->src_ip.v4;
+	__be32 orig_daddr = (meta->nat_flags & SESS_FLAG_DNAT) ?
+		meta->nat_dst_ip.v4 : meta->dst_ip.v4;
+
+	/* Truncate/extend to exactly 70 bytes */
+	int cur_len = (int)((long)data_end - (long)data);
+	int delta = 70 - cur_len;
+	if (delta != 0) {
+		if (bpf_xdp_adjust_tail(ctx, delta))
+			return XDP_DROP;
+	}
+
+	data = (void *)(long)ctx->data;
+	data_end = (void *)(long)ctx->data_end;
+	if (data + 70 > data_end)
+		return XDP_DROP;
+
+	struct ethhdr *eth = data;
+	struct iphdr *ip = data + sizeof(struct ethhdr);
+	struct icmphdr *icmp = (void *)ip + sizeof(struct iphdr);
+
+	/* Swap MACs */
+	__builtin_memcpy(eth->h_source, orig_dmac, ETH_ALEN);
+	__builtin_memcpy(eth->h_dest, orig_smac, ETH_ALEN);
+	eth->h_proto = bpf_htons(ETH_P_IP);
+
+	/* Build IP header: total_len = 56 (IP 20 + ICMP 8 + payload 28) */
+	struct iphdr ip_hdr = {};
+	ip_hdr.version  = 4;
+	ip_hdr.ihl      = 5;
+	ip_hdr.tot_len  = bpf_htons(56);
+	ip_hdr.frag_off = bpf_htons(0x4000); /* DF */
+	ip_hdr.ttl      = 64;
+	ip_hdr.protocol = PROTO_ICMP;
+	ip_hdr.saddr    = orig_daddr; /* firewall responds as dest */
+	ip_hdr.daddr    = orig_saddr; /* back to sender */
+
+	/* IP checksum (10 x 16-bit words) */
+	__u32 csum = 0;
+	__u16 *ip16 = (__u16 *)&ip_hdr;
+	#pragma unroll
+	for (int i = 0; i < 10; i++)
+		csum += ip16[i];
+	csum = (csum >> 16) + (csum & 0xffff);
+	csum += csum >> 16;
+	ip_hdr.check = ~csum;
+	*ip = ip_hdr;
+
+	/* Copy original IP header + 8 bytes L4 to ICMP payload */
+	__builtin_memcpy((void *)icmp + sizeof(struct icmphdr), orig_hdr, 28);
+
+	/* Build ICMP header: type 3 (dest unreachable), code 13 (admin prohibited) */
+	struct icmphdr icmp_hdr = {};
+	icmp_hdr.type = 3;
+	icmp_hdr.code = 13;
+
+	/* ICMP checksum: header(8) + payload(28) = 36 bytes = 18 words */
+	__u32 icmp_csum = 0;
+	__u16 *i16 = (__u16 *)&icmp_hdr;
+	#pragma unroll
+	for (int i = 0; i < 4; i++)
+		icmp_csum += i16[i];
+	__u16 *p16 = (__u16 *)orig_hdr;
+	#pragma unroll
+	for (int i = 0; i < 14; i++)
+		icmp_csum += p16[i];
+	icmp_csum = (icmp_csum >> 16) + (icmp_csum & 0xffff);
+	icmp_csum += icmp_csum >> 16;
+	icmp_hdr.checksum = ~icmp_csum;
+
+	/* Write ICMP header to packet */
+	*icmp = icmp_hdr;
+
+	return XDP_TX;
+}
+
+/*
+ * Send ICMPv6 Destination Unreachable (type 1, code 1: admin prohibited)
+ * for non-TCP REJECT action on IPv6 traffic.
+ * Packet layout: ETH(14) + IPv6(40) + ICMPv6(8) + orig_IPv6(40) + orig_L4(8) = 110
+ *
+ * Uses session_v4_scratch map at index 1 for original header storage
+ * and reads IPs from meta to minimize stack usage.
+ */
+static __noinline int
+send_icmp_unreach_v6(struct xdp_md *ctx, struct pkt_meta *meta)
+{
+	/* Use session scratch as byte buffer for original headers (48 bytes). */
+	__u32 scratch_idx = 1;
+	struct session_value *scratch = bpf_map_lookup_elem(
+		&session_v4_scratch, &scratch_idx);
+	if (!scratch)
+		return XDP_DROP;
+	__u8 *orig_hdr = (__u8 *)scratch;
+
+	void *data = (void *)(long)ctx->data;
+	void *data_end = (void *)(long)ctx->data_end;
+
+	if (data + ETH_HLEN + 48 > data_end)
+		return XDP_DROP;
+
+	/* Save MACs from packet */
+	__u8 orig_smac[ETH_ALEN], orig_dmac[ETH_ALEN];
+	__builtin_memcpy(orig_smac, ((struct ethhdr *)data)->h_source, ETH_ALEN);
+	__builtin_memcpy(orig_dmac, ((struct ethhdr *)data)->h_dest, ETH_ALEN);
+
+	/* Save original IPv6 header (40 bytes) + first 8 bytes of L4 to scratch */
+	__builtin_memcpy(orig_hdr, data + ETH_HLEN, 48);
+
+	/*
+	 * Read IPs from meta directly (avoids 32 bytes on stack).
+	 * Store src/dst for the response into meta->nat_src_ip/nat_dst_ip
+	 * which are unused at REJECT time.
+	 * Response src = original dst, Response dst = original src.
+	 */
+	__builtin_memcpy(meta->nat_src_ip.v6, meta->dst_ip.v6, 16);
+	if (meta->nat_flags & SESS_FLAG_DNAT)
+		__builtin_memcpy(meta->nat_src_ip.v6, meta->nat_dst_ip.v6, 16);
+	/* meta->src_ip still has original source — will become response dst */
+
+	/* Truncate/extend to exactly 110 bytes */
+	int cur_len = (int)((long)data_end - (long)data);
+	int delta = 110 - cur_len;
+	if (delta != 0) {
+		if (bpf_xdp_adjust_tail(ctx, delta))
+			return XDP_DROP;
+	}
+
+	data = (void *)(long)ctx->data;
+	data_end = (void *)(long)ctx->data_end;
+	if (data + 110 > data_end)
+		return XDP_DROP;
+
+	struct ethhdr *eth = data;
+	struct ipv6hdr *ip6 = data + sizeof(struct ethhdr);
+	struct icmp6hdr *icmp6 = (void *)ip6 + sizeof(struct ipv6hdr);
+
+	/* Swap MACs */
+	__builtin_memcpy(eth->h_source, orig_dmac, ETH_ALEN);
+	__builtin_memcpy(eth->h_dest, orig_smac, ETH_ALEN);
+	eth->h_proto = bpf_htons(ETH_P_IPV6);
+
+	/* Build IPv6 header: payload_len = 56 (ICMPv6 8 + payload 48) */
+	ip6->version = 6;
+	ip6->priority = 0;
+	ip6->flow_lbl[0] = 0;
+	ip6->flow_lbl[1] = 0;
+	ip6->flow_lbl[2] = 0;
+	ip6->payload_len = bpf_htons(56);
+	ip6->nexthdr = PROTO_ICMPV6;
+	ip6->hop_limit = 64;
+	/* saddr = original dst (from meta->nat_src_ip), daddr = original src */
+	__builtin_memcpy(&ip6->saddr, meta->nat_src_ip.v6, 16);
+	__builtin_memcpy(&ip6->daddr, meta->src_ip.v6, 16);
+
+	/* Copy original headers to ICMPv6 payload (bytes 62-109) */
+	__builtin_memcpy((void *)icmp6 + sizeof(struct icmp6hdr), orig_hdr, 48);
+
+	/* Build ICMPv6 header: type 1 (dest unreachable), code 1 (admin prohibited) */
+	struct icmp6hdr icmp6_hdr = {};
+	icmp6_hdr.icmp6_type = 1;
+	icmp6_hdr.icmp6_code = 1;
+
+	/*
+	 * ICMPv6 checksum: pseudo-header + ICMPv6 message.
+	 * Pseudo-header: src(16) + dst(16) + upper_layer_len(4) + nexthdr(4)
+	 * ICMPv6 message: header(8) + payload(48) = 56 bytes
+	 * Read addresses from meta (map value, not stack) for checksum.
+	 */
+	__u32 icmp6_csum = 0;
+
+	/* Pseudo-header: source address (response src = meta->nat_src_ip) */
+	__u16 *s16 = (__u16 *)meta->nat_src_ip.v6;
+	#pragma unroll
+	for (int i = 0; i < 8; i++)
+		icmp6_csum += s16[i];
+
+	/* Pseudo-header: dest address (response dst = meta->src_ip) */
+	__u16 *d16 = (__u16 *)meta->src_ip.v6;
+	#pragma unroll
+	for (int i = 0; i < 8; i++)
+		icmp6_csum += d16[i];
+
+	/* Pseudo-header: upper-layer length + next header */
+	icmp6_csum += bpf_htons(56);
+	icmp6_csum += bpf_htons(PROTO_ICMPV6);
+
+	/* ICMPv6 header (4 words, checksum field is 0) */
+	__u16 *h16 = (__u16 *)&icmp6_hdr;
+	#pragma unroll
+	for (int i = 0; i < 4; i++)
+		icmp6_csum += h16[i];
+
+	/* ICMPv6 payload: orig headers from scratch map (24 words) */
+	__u16 *p16 = (__u16 *)orig_hdr;
+	#pragma unroll
+	for (int i = 0; i < 24; i++)
+		icmp6_csum += p16[i];
+
+	icmp6_csum = (icmp6_csum >> 16) + (icmp6_csum & 0xffff);
+	icmp6_csum += icmp6_csum >> 16;
+	icmp6_hdr.icmp6_cksum = ~icmp6_csum;
+
+	/* Write ICMPv6 header to packet */
+	*icmp6 = icmp6_hdr;
 
 	return XDP_TX;
 }
@@ -1075,12 +1319,33 @@ int xdp_policy_prog(struct xdp_md *ctx)
 			emit_event(meta, EVENT_TYPE_POLICY_DENY,
 				   rule->action, 0, 0);
 
-		/* REJECT: send TCP RST for TCP traffic */
-		if (rule->action == ACTION_REJECT && meta->protocol == PROTO_TCP) {
+		if (rule->action == ACTION_REJECT) {
+			/* TCP: send RST */
+			if (meta->protocol == PROTO_TCP) {
+				if (meta->addr_family == AF_INET)
+					return send_tcp_rst_v4(ctx, meta);
+				else
+					return send_tcp_rst_v6(ctx, meta);
+			}
+			/*
+			 * RFC 792/4443: never send ICMP error about ICMP error.
+			 * ICMPv4 error types: 3(unreach), 4(quench), 5(redirect),
+			 * 11(time exceeded), 12(param problem).
+			 * ICMPv6: all types < 128 are errors.
+			 */
+			if (meta->protocol == PROTO_ICMP &&
+			    (meta->icmp_type == 3 || meta->icmp_type == 4 ||
+			     meta->icmp_type == 5 || meta->icmp_type == 11 ||
+			     meta->icmp_type == 12))
+				return XDP_DROP;
+			if (meta->protocol == PROTO_ICMPV6 &&
+			    meta->icmp_type < 128)
+				return XDP_DROP;
+			/* Send ICMP unreachable for UDP, ICMP queries, etc. */
 			if (meta->addr_family == AF_INET)
-				return send_tcp_rst_v4(ctx, meta);
+				return send_icmp_unreach_v4(ctx, meta);
 			else
-				return send_tcp_rst_v6(ctx, meta);
+				return send_icmp_unreach_v6(ctx, meta);
 		}
 		return XDP_DROP;
 	}

@@ -2686,3 +2686,124 @@ func TestHostInboundIPsec(t *testing.T) {
 		}
 	}
 }
+
+func TestPolicyReject(t *testing.T) {
+	input := `security {
+    zones {
+        security-zone trust { interfaces { eth0; } }
+        security-zone untrust { interfaces { eth1; } }
+    }
+    policies {
+        from-zone untrust to-zone trust {
+            policy block-all {
+                match {
+                    source-address any;
+                    destination-address any;
+                    application any;
+                }
+                then { reject; }
+            }
+        }
+    }
+}`
+	parser := NewParser(input)
+	tree, errs := parser.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	if len(cfg.Security.Policies) != 1 {
+		t.Fatalf("expected 1 zone-pair policy, got %d", len(cfg.Security.Policies))
+	}
+	zpp := cfg.Security.Policies[0]
+	if zpp.FromZone != "untrust" || zpp.ToZone != "trust" {
+		t.Errorf("zone pair: from=%s to=%s", zpp.FromZone, zpp.ToZone)
+	}
+	if len(zpp.Policies) != 1 {
+		t.Fatalf("expected 1 policy, got %d", len(zpp.Policies))
+	}
+	pol := zpp.Policies[0]
+	if pol.Name != "block-all" {
+		t.Errorf("policy name: %s", pol.Name)
+	}
+	if pol.Action != PolicyReject {
+		t.Errorf("expected PolicyReject (%d), got %d", PolicyReject, pol.Action)
+	}
+
+	// Also test set-command syntax
+	tree2 := &ConfigTree{}
+	setCommands := []string{
+		"set security zones security-zone trust interfaces eth0",
+		"set security zones security-zone untrust interfaces eth1",
+		"set security policies from-zone untrust to-zone trust policy block-all match source-address any",
+		"set security policies from-zone untrust to-zone trust policy block-all match destination-address any",
+		"set security policies from-zone untrust to-zone trust policy block-all match application any",
+		"set security policies from-zone untrust to-zone trust policy block-all then reject",
+	}
+	for _, cmd := range setCommands {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree2.SetPath(path); err != nil {
+			t.Fatalf("SetPath: %v", err)
+		}
+	}
+
+	cfg2, err := CompileConfig(tree2)
+	if err != nil {
+		t.Fatalf("set-command compile error: %v", err)
+	}
+	if len(cfg2.Security.Policies) != 1 {
+		t.Fatalf("set: expected 1 zone-pair, got %d", len(cfg2.Security.Policies))
+	}
+	if cfg2.Security.Policies[0].Policies[0].Action != PolicyReject {
+		t.Errorf("set: expected PolicyReject, got %d",
+			cfg2.Security.Policies[0].Policies[0].Action)
+	}
+}
+
+func TestPolicyDenyAll(t *testing.T) {
+	input := `security {
+    policies {
+        default-policy deny-all;
+        from-zone trust to-zone untrust {
+            policy allow-web {
+                match {
+                    source-address any;
+                    destination-address any;
+                    application junos-http;
+                }
+                then { permit; }
+            }
+        }
+    }
+}`
+	parser := NewParser(input)
+	tree, errs := parser.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	if cfg.Security.DefaultPolicy != PolicyDeny {
+		t.Errorf("expected DefaultPolicy=PolicyDeny (%d), got %d",
+			PolicyDeny, cfg.Security.DefaultPolicy)
+	}
+	if len(cfg.Security.Policies) != 1 {
+		t.Fatalf("expected 1 zone-pair policy, got %d", len(cfg.Security.Policies))
+	}
+	pol := cfg.Security.Policies[0].Policies[0]
+	if pol.Action != PolicyPermit {
+		t.Errorf("expected PolicyPermit, got %d", pol.Action)
+	}
+}
