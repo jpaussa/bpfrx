@@ -98,9 +98,8 @@ int xdp_forward_prog(struct xdp_md *ctx)
 		if ((void *)(iph + 1) > data_end)
 			return XDP_DROP;
 
-		if (iph->ttl <= 1)
-			return XDP_PASS; /* Let kernel send ICMP Time Exceeded */
-
+		/* TTL=1 is caught in xdp_nat before NAT rewrite,
+		 * so we never see TTL <= 1 here. */
 		__u16 old_ttl_proto = *(__u16 *)&iph->ttl;
 		iph->ttl--;
 		__u16 new_ttl_proto = *(__u16 *)&iph->ttl;
@@ -112,9 +111,7 @@ int xdp_forward_prog(struct xdp_md *ctx)
 		if ((void *)(ip6h + 1) > data_end)
 			return XDP_DROP;
 
-		if (ip6h->hop_limit <= 1)
-			return XDP_PASS; /* Let kernel send ICMPv6 Time Exceeded */
-
+		/* hop_limit=1 is caught in xdp_nat before NAT rewrite. */
 		ip6h->hop_limit--;
 	}
 
