@@ -182,7 +182,8 @@ type FirewallFilterTerm struct {
 
 // DHCPServerConfig holds DHCP server configuration.
 type DHCPServerConfig struct {
-	DHCPLocalServer *DHCPLocalServerConfig
+	DHCPLocalServer   *DHCPLocalServerConfig
+	DHCPv6LocalServer *DHCPLocalServerConfig
 }
 
 // DHCPLocalServerConfig holds per-group DHCP server settings.

@@ -473,8 +473,8 @@ func (d *Daemon) applyConfig(cfg *config.Config) {
 		}
 	}
 
-	// 7. Apply DHCP server config (Kea)
-	if d.dhcpServer != nil && cfg.System.DHCPServer.DHCPLocalServer != nil {
+	// 7. Apply DHCP server config (Kea DHCPv4 + DHCPv6)
+	if d.dhcpServer != nil && (cfg.System.DHCPServer.DHCPLocalServer != nil || cfg.System.DHCPServer.DHCPv6LocalServer != nil) {
 		if err := d.dhcpServer.Apply(&cfg.System.DHCPServer); err != nil {
 			slog.Warn("failed to apply DHCP server config", "err", err)
 		}

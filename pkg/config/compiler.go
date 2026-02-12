@@ -1777,7 +1777,13 @@ func compileSystem(node *Node, sys *SystemConfig) error {
 	if svcNode != nil {
 		dhcpNode := svcNode.FindChild("dhcp-local-server")
 		if dhcpNode != nil {
-			if err := compileDHCPLocalServer(dhcpNode, &sys.DHCPServer); err != nil {
+			if err := compileDHCPLocalServer(dhcpNode, &sys.DHCPServer, false); err != nil {
+				return err
+			}
+		}
+		dhcp6Node := svcNode.FindChild("dhcpv6-local-server")
+		if dhcp6Node != nil {
+			if err := compileDHCPLocalServer(dhcp6Node, &sys.DHCPServer, true); err != nil {
 				return err
 			}
 		}
@@ -1793,9 +1799,14 @@ func compileSystem(node *Node, sys *SystemConfig) error {
 	return nil
 }
 
-func compileDHCPLocalServer(node *Node, dhcp *DHCPServerConfig) error {
-	dhcp.DHCPLocalServer = &DHCPLocalServerConfig{
+func compileDHCPLocalServer(node *Node, dhcp *DHCPServerConfig, isV6 bool) error {
+	lsc := &DHCPLocalServerConfig{
 		Groups: make(map[string]*DHCPServerGroup),
+	}
+	if isV6 {
+		dhcp.DHCPv6LocalServer = lsc
+	} else {
+		dhcp.DHCPLocalServer = lsc
 	}
 
 	for _, groupNode := range node.FindChildren("group") {
@@ -1850,7 +1861,7 @@ func compileDHCPLocalServer(node *Node, dhcp *DHCPServerConfig) error {
 			}
 		}
 
-		dhcp.DHCPLocalServer.Groups[group.Name] = group
+		lsc.Groups[group.Name] = group
 	}
 	return nil
 }

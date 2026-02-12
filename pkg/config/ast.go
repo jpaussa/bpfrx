@@ -307,6 +307,11 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 					"pool": {args: 1, children: nil},
 				}},
 			}},
+			"dhcpv6-local-server": {children: map[string]*schemaNode{
+				"group": {args: 1, children: map[string]*schemaNode{
+					"pool": {args: 1, children: nil},
+				}},
+			}},
 		}},
 	}},
 	"services": {children: map[string]*schemaNode{
