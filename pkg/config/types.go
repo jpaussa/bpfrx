@@ -40,8 +40,11 @@ type PolicyStatement struct {
 type PolicyTerm struct {
 	Name         string
 	FromProtocol string         // "direct", "static", "bgp", "ospf"
+	PrefixList   string         // from prefix-list <name>
 	RouteFilters []*RouteFilter // prefix matching
 	Action       string         // "accept", "reject"
+	NextHop      string         // then next-hop (e.g. "peer-address", "self", IP)
+	LoadBalance  string         // then load-balance (e.g. "consistent-hash", "per-packet")
 }
 
 // RouteFilter matches a prefix with a match type.
@@ -620,17 +623,22 @@ type InterfacesConfig struct {
 
 // InterfaceConfig represents a network interface.
 type InterfaceConfig struct {
-	Name        string
-	VlanTagging bool // 802.1Q trunk mode
-	Units       map[int]*InterfaceUnit
-	Tunnel      *TunnelConfig // non-nil for tunnel interfaces (gre0, etc.)
+	Name            string
+	Description     string // free-text interface description
+	VlanTagging     bool   // 802.1Q trunk mode
+	RedundantParent string // gigether-options redundant-parent (HA)
+	Units           map[int]*InterfaceUnit
+	Tunnel          *TunnelConfig // non-nil for tunnel interfaces (gre0, etc.)
 }
 
 // InterfaceUnit represents a logical unit on an interface.
 type InterfaceUnit struct {
 	Number        int
+	Description   string   // free-text unit description
 	VlanID        int      // 0 = native/untagged, >0 = 802.1Q tagged
+	PointToPoint  bool     // point-to-point link (for tunnels)
 	Addresses     []string // CIDR notation
+	MTU           int      // family-level MTU (0 = default)
 	DHCP          bool     // family inet { dhcp; }
 	DHCPv6        bool     // family inet6 { dhcpv6; }
 	DHCPv6Client  *DHCPv6ClientConfig
@@ -683,7 +691,10 @@ type Application struct {
 
 // RoutingOptionsConfig holds static routing configuration.
 type RoutingOptionsConfig struct {
-	StaticRoutes []*StaticRoute
+	StaticRoutes        []*StaticRoute
+	Inet6StaticRoutes   []*StaticRoute // rib inet6.0 static routes
+	ForwardingTableExport string       // forwarding-table { export <policy>; }
+	AutonomousSystem    uint32         // autonomous-system <number>
 }
 
 // NextHopEntry defines a single next-hop for a static route.
@@ -796,13 +807,14 @@ type BGPNeighbor struct {
 
 // TunnelConfig defines a GRE or other tunnel interface.
 type TunnelConfig struct {
-	Name        string   // e.g. "gre0"
-	Mode        string   // "gre" (future: "ip-ip", "vxlan")
-	Source      string   // local tunnel endpoint IP
-	Destination string   // remote tunnel endpoint IP
-	Key         uint32   // GRE key, 0 = none
-	TTL         int      // tunnel TTL, 0 = default 64
-	Addresses   []string // IPs to assign to tunnel interface (CIDR)
+	Name            string   // e.g. "gre0"
+	Mode            string   // "gre" (future: "ip-ip", "vxlan")
+	Source          string   // local tunnel endpoint IP
+	Destination     string   // remote tunnel endpoint IP
+	Key             uint32   // GRE key, 0 = none
+	TTL             int      // tunnel TTL, 0 = default 64
+	Addresses       []string // IPs to assign to tunnel interface (CIDR)
+	RoutingInstance string   // destination routing-instance (VRF)
 }
 
 // IPsecConfig holds IPsec VPN configuration.

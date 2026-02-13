@@ -554,9 +554,21 @@ func compileInterfaces(node *Node, ifaces *InterfacesConfig) error {
 			Units: make(map[int]*InterfaceUnit),
 		}
 
+		// Check for description
+		if descNode := child.FindChild("description"); descNode != nil {
+			ifc.Description = nodeVal(descNode)
+		}
+
 		// Check for vlan-tagging flag
 		if child.FindChild("vlan-tagging") != nil {
 			ifc.VlanTagging = true
+		}
+
+		// Check for gigether-options redundant-parent
+		if goNode := child.FindChild("gigether-options"); goNode != nil {
+			if rpNode := goNode.FindChild("redundant-parent"); rpNode != nil {
+				ifc.RedundantParent = nodeVal(rpNode)
+			}
 		}
 
 		// Check for tunnel configuration
@@ -592,6 +604,13 @@ func compileInterfaces(node *Node, ifaces *InterfacesConfig) error {
 							tc.TTL = v
 						}
 					}
+				case "routing-instance":
+					// routing-instance { destination <name>; }
+					if destNode := prop.FindChild("destination"); destNode != nil {
+						tc.RoutingInstance = nodeVal(destNode)
+					} else if v := nodeVal(prop); v != "" {
+						tc.RoutingInstance = v
+					}
 				}
 			}
 			ifc.Tunnel = tc
@@ -603,6 +622,43 @@ func compileInterfaces(node *Node, ifaces *InterfacesConfig) error {
 				continue
 			}
 			unit := &InterfaceUnit{Number: unitNum}
+
+			// Parse description on unit
+			if descNode := unitInst.node.FindChild("description"); descNode != nil {
+				unit.Description = nodeVal(descNode)
+			}
+
+			// Parse point-to-point flag
+			if unitInst.node.FindChild("point-to-point") != nil {
+				unit.PointToPoint = true
+			}
+
+			// Parse tunnel config at unit level (gr-0/0/0 unit N { tunnel { ... } })
+			if tunnelNode := unitInst.node.FindChild("tunnel"); tunnelNode != nil {
+				tc := ifc.Tunnel
+				if tc == nil {
+					tc = &TunnelConfig{Name: ifName, Mode: "gre"}
+					ifc.Tunnel = tc
+				}
+				for _, prop := range tunnelNode.Children {
+					switch prop.Name() {
+					case "source":
+						if v := nodeVal(prop); v != "" {
+							tc.Source = v
+						}
+					case "destination":
+						if v := nodeVal(prop); v != "" {
+							tc.Destination = v
+						}
+					case "routing-instance":
+						if destNode := prop.FindChild("destination"); destNode != nil {
+							tc.RoutingInstance = nodeVal(destNode)
+						} else if v := nodeVal(prop); v != "" {
+							tc.RoutingInstance = v
+						}
+					}
+				}
+			}
 
 			// Parse vlan-id on unit
 			if vlanNode := unitInst.node.FindChild("vlan-id"); vlanNode != nil {
@@ -684,6 +740,13 @@ func compileInterfaces(node *Node, ifaces *InterfacesConfig) error {
 						if afNode.FindChild("dhcp") != nil {
 							unit.DHCP = true
 						}
+						if mtuNode := afNode.FindChild("mtu"); mtuNode != nil {
+							if v := nodeVal(mtuNode); v != "" {
+								if n, err := strconv.Atoi(v); err == nil {
+									unit.MTU = n
+								}
+							}
+						}
 						if filterNode := afNode.FindChild("filter"); filterNode != nil {
 							if inputNode := filterNode.FindChild("input"); inputNode != nil {
 								unit.FilterInputV4 = nodeVal(inputNode)
@@ -695,6 +758,15 @@ func compileInterfaces(node *Node, ifaces *InterfacesConfig) error {
 						}
 						if afNode.FindChild("dhcpv6") != nil {
 							unit.DHCPv6 = true
+						}
+						if mtuNode := afNode.FindChild("mtu"); mtuNode != nil {
+							if v := nodeVal(mtuNode); v != "" {
+								if n, err := strconv.Atoi(v); err == nil {
+									if n < unit.MTU || unit.MTU == 0 {
+										unit.MTU = n
+									}
+								}
+							}
 						}
 						if filterNode := afNode.FindChild("filter"); filterNode != nil {
 							if inputNode := filterNode.FindChild("input"); inputNode != nil {
@@ -1436,13 +1508,48 @@ func parseApplicationTerm(parentName string, keys []string) *Application {
 }
 
 func compileRoutingOptions(node *Node, ro *RoutingOptionsConfig) error {
-	staticNode := node.FindChild("static")
-	if staticNode == nil {
-		return nil
+	// Parse autonomous-system
+	if asNode := node.FindChild("autonomous-system"); asNode != nil {
+		if v := nodeVal(asNode); v != "" {
+			if n, err := strconv.ParseUint(v, 10, 32); err == nil {
+				ro.AutonomousSystem = uint32(n)
+			}
+		}
 	}
 
+	// Parse forwarding-table { export <policy>; }
+	if ftNode := node.FindChild("forwarding-table"); ftNode != nil {
+		if expNode := ftNode.FindChild("export"); expNode != nil {
+			ro.ForwardingTableExport = nodeVal(expNode)
+		}
+	}
+
+	// Parse rib inet6.0 { static { route ... } }
+	for _, ribNode := range node.FindChildren("rib") {
+		ribName := nodeVal(ribNode)
+		if ribName == "inet6.0" {
+			if ribStatic := ribNode.FindChild("static"); ribStatic != nil {
+				ro.Inet6StaticRoutes = compileStaticRoutes(ribStatic, ro.Inet6StaticRoutes)
+			}
+		}
+	}
+
+	staticNode := node.FindChild("static")
+	if staticNode != nil {
+		ro.StaticRoutes = compileStaticRoutes(staticNode, ro.StaticRoutes)
+	}
+
+	return nil
+}
+
+// compileStaticRoutes parses static route entries from a "static" node,
+// appending to and returning the updated slice.
+func compileStaticRoutes(staticNode *Node, existing []*StaticRoute) []*StaticRoute {
 	// Track destination→index so flat "set" duplicates merge into one route.
 	destIdx := make(map[string]int)
+	for i, sr := range existing {
+		destIdx[sr.Destination] = i
+	}
 
 	for _, routeInst := range namedInstances(staticNode.FindChildren("route")) {
 		route := &StaticRoute{
@@ -1489,20 +1596,20 @@ func compileRoutingOptions(node *Node, ro *RoutingOptionsConfig) error {
 
 		// Merge routes with the same destination (flat "set" syntax creates duplicates).
 		if idx, exists := destIdx[route.Destination]; exists {
-			existing := ro.StaticRoutes[idx]
-			existing.NextHops = append(existing.NextHops, route.NextHops...)
+			existingRoute := existing[idx]
+			existingRoute.NextHops = append(existingRoute.NextHops, route.NextHops...)
 			if route.Discard {
-				existing.Discard = true
+				existingRoute.Discard = true
 			}
 			if route.Preference != 5 {
-				existing.Preference = route.Preference
+				existingRoute.Preference = route.Preference
 			}
 		} else {
-			destIdx[route.Destination] = len(ro.StaticRoutes)
-			ro.StaticRoutes = append(ro.StaticRoutes, route)
+			destIdx[route.Destination] = len(existing)
+			existing = append(existing, route)
 		}
 	}
-	return nil
+	return existing
 }
 
 func compileRouterAdvertisement(node *Node, proto *ProtocolsConfig) error {
@@ -3149,6 +3256,10 @@ func parsePolicyTermChildren(term *PolicyTerm, children []*Node) {
 					if len(fc.Keys) >= 2 {
 						term.FromProtocol = fc.Keys[1]
 					}
+				case "prefix-list":
+					if v := nodeVal(fc); v != "" {
+						term.PrefixList = v
+					}
 				case "route-filter":
 					if len(fc.Keys) >= 3 {
 						rf := &RouteFilter{
@@ -3166,6 +3277,10 @@ func parsePolicyTermChildren(term *PolicyTerm, children []*Node) {
 					term.Action = "accept"
 				case "reject":
 					term.Action = "reject"
+				case "next-hop":
+					term.NextHop = nodeVal(ac)
+				case "load-balance":
+					term.LoadBalance = nodeVal(ac)
 				}
 			}
 			if len(tc.Keys) >= 2 {
@@ -3194,6 +3309,11 @@ func parsePolicyTermInlineKeys(term *PolicyTerm, keys []string) {
 				i++
 				term.FromProtocol = keys[i]
 			}
+		case "prefix-list":
+			if i+1 < len(keys) {
+				i++
+				term.PrefixList = keys[i]
+			}
 		case "route-filter":
 			if i+2 < len(keys) {
 				rf := &RouteFilter{
@@ -3202,6 +3322,16 @@ func parsePolicyTermInlineKeys(term *PolicyTerm, keys []string) {
 				}
 				term.RouteFilters = append(term.RouteFilters, rf)
 				i += 2
+			}
+		case "next-hop":
+			if i+1 < len(keys) {
+				i++
+				term.NextHop = keys[i]
+			}
+		case "load-balance":
+			if i+1 < len(keys) {
+				i++
+				term.LoadBalance = keys[i]
 			}
 		case "accept":
 			term.Action = "accept"

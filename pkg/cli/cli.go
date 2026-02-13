@@ -190,13 +190,15 @@ var operationalTree = map[string]*completionNode{
 		"dhcp-server": {desc: "Show DHCP server leases"},
 		"snmp":        {desc: "Show SNMP statistics"},
 		"system": {desc: "Show system information", children: map[string]*completionNode{
-			"alarms":    {desc: "Show system alarms"},
-			"rollback":  {desc: "Show rollback history"},
-			"storage":   {desc: "Show filesystem usage"},
-			"uptime":    {desc: "Show system uptime"},
-			"memory":    {desc: "Show memory usage"},
-			"processes": {desc: "Show running processes"},
-			"license":   {desc: "Show system license"},
+			"alarms":      {desc: "Show system alarms"},
+			"connections": {desc: "Show system TCP connections"},
+			"rollback":    {desc: "Show rollback history"},
+			"storage":     {desc: "Show filesystem usage"},
+			"uptime":      {desc: "Show system uptime"},
+			"memory":      {desc: "Show memory usage"},
+			"processes":   {desc: "Show running processes"},
+			"users":       {desc: "Show configured login users"},
+			"license":     {desc: "Show system license"},
 		}},
 	}},
 	"clear": {desc: "Clear information", children: map[string]*completionNode{
@@ -3285,12 +3287,14 @@ func formatSpeed(mbps int) string {
 func (c *CLI) handleShowSystem(args []string) error {
 	if len(args) == 0 {
 		fmt.Println("show system:")
+		fmt.Println("  connections      Show TCP connections")
+		fmt.Println("  license          Show system license")
+		fmt.Println("  memory           Show memory usage")
+		fmt.Println("  processes        Show running processes")
 		fmt.Println("  rollback         Show rollback history")
 		fmt.Println("  storage          Show filesystem usage")
 		fmt.Println("  uptime           Show system uptime")
-		fmt.Println("  memory           Show memory usage")
-		fmt.Println("  processes        Show running processes")
-		fmt.Println("  license          Show system license")
+		fmt.Println("  users            Show configured login users")
 		return nil
 	}
 
@@ -3358,6 +3362,12 @@ func (c *CLI) handleShowSystem(args []string) error {
 			fmt.Println("No active configuration loaded")
 		}
 		return nil
+
+	case "users":
+		return c.showSystemUsers()
+
+	case "connections":
+		return c.showSystemConnections()
 
 	case "license":
 		fmt.Println("License: open-source (no license required)")
@@ -4796,6 +4806,38 @@ func fmtBytes(b uint64) string {
 	default:
 		return fmt.Sprintf("%dB", b)
 	}
+}
+
+// showSystemUsers shows configured login users from the active config.
+func (c *CLI) showSystemUsers() error {
+	cfg := c.store.ActiveConfig()
+	if cfg == nil || cfg.System.Login == nil || len(cfg.System.Login.Users) == 0 {
+		fmt.Println("No login users configured")
+		return nil
+	}
+
+	fmt.Printf("%-20s %-8s %-20s %s\n", "Username", "UID", "Class", "SSH Keys")
+	for _, u := range cfg.System.Login.Users {
+		uid := "-"
+		if u.UID > 0 {
+			uid = strconv.Itoa(u.UID)
+		}
+		class := u.Class
+		if class == "" {
+			class = "-"
+		}
+		keys := strconv.Itoa(len(u.SSHKeys))
+		fmt.Printf("%-20s %-8s %-20s %s\n", u.Name, uid, class, keys)
+	}
+	return nil
+}
+
+// showSystemConnections shows active TCP connections.
+func (c *CLI) showSystemConnections() error {
+	cmd := exec.Command("ss", "-tnp")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 // showVersion displays software version information.
