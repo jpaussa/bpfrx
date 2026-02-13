@@ -596,6 +596,8 @@ func (c *ctl) handleShowSecurity(args []string) error {
 		return c.showStatistics()
 	case "ipsec":
 		return c.showIPsec(args[1:])
+	case "ike":
+		return c.showText("ike")
 	case "match-policies":
 		return c.showMatchPolicies(args[1:])
 	case "vrrp":

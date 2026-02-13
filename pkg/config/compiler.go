@@ -2318,6 +2318,7 @@ func compileProtocols(node *Node, proto *ProtocolsConfig) error {
 							Export:      groupExport,
 							FamilyInet:  familyInet,
 							FamilyInet6: familyInet6,
+							GroupName:   groupInst.name,
 						}
 						// Per-neighbor overrides
 						for _, prop := range child.Children {

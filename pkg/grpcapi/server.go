@@ -1355,6 +1355,47 @@ func (s *Server) GetBGPStatus(_ context.Context, req *pb.GetBGPStatusRequest) (*
 		for _, r := range routes {
 			fmt.Fprintf(&b, "%-24s %-20s %s\n", r.Network, r.NextHop, r.Path)
 		}
+	case "groups":
+		cfg := s.store.ActiveConfig()
+		if cfg == nil || cfg.Protocols.BGP == nil || len(cfg.Protocols.BGP.Neighbors) == 0 {
+			b.WriteString("No BGP groups configured\n")
+		} else {
+			// Group neighbors by GroupName
+			groups := make(map[string][]*config.BGPNeighbor)
+			for _, n := range cfg.Protocols.BGP.Neighbors {
+				name := n.GroupName
+				if name == "" {
+					name = "(ungrouped)"
+				}
+				groups[name] = append(groups[name], n)
+			}
+			names := make([]string, 0, len(groups))
+			for name := range groups {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			for _, name := range names {
+				neighbors := groups[name]
+				var peerAS uint32
+				var exports []string
+				if len(neighbors) > 0 {
+					peerAS = neighbors[0].PeerAS
+					exports = neighbors[0].Export
+				}
+				fmt.Fprintf(&b, "Group: %s  Peer-AS: %d  Neighbors: %d\n", name, peerAS, len(neighbors))
+				if len(exports) > 0 {
+					fmt.Fprintf(&b, "  Export: %s\n", strings.Join(exports, ", "))
+				}
+				for _, n := range neighbors {
+					desc := ""
+					if n.Description != "" {
+						desc = " (" + n.Description + ")"
+					}
+					fmt.Fprintf(&b, "  Neighbor: %s%s\n", n.Address, desc)
+				}
+				b.WriteString("\n")
+			}
+		}
 	default:
 		peers, err := s.frr.GetBGPSummary()
 		if err != nil {
@@ -3219,6 +3260,75 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 			}
 			if len(po.PrefixLists) == 0 && len(po.PolicyStatements) == 0 {
 				buf.WriteString("No policy-options configured\n")
+			}
+		}
+
+	case "ike":
+		if cfg == nil || len(cfg.Security.IPsec.Gateways) == 0 {
+			buf.WriteString("No IKE gateways configured\n")
+		} else {
+			names := make([]string, 0, len(cfg.Security.IPsec.Gateways))
+			for name := range cfg.Security.IPsec.Gateways {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			for _, name := range names {
+				gw := cfg.Security.IPsec.Gateways[name]
+				fmt.Fprintf(&buf, "IKE gateway: %s\n", name)
+				if gw.Address != "" {
+					fmt.Fprintf(&buf, "  Remote address:     %s\n", gw.Address)
+				}
+				if gw.DynamicHostname != "" {
+					fmt.Fprintf(&buf, "  Dynamic hostname:   %s\n", gw.DynamicHostname)
+				}
+				if gw.LocalAddress != "" {
+					fmt.Fprintf(&buf, "  Local address:      %s\n", gw.LocalAddress)
+				}
+				if gw.ExternalIface != "" {
+					fmt.Fprintf(&buf, "  External interface: %s\n", gw.ExternalIface)
+				}
+				if gw.IKEPolicy != "" {
+					fmt.Fprintf(&buf, "  IKE policy:         %s\n", gw.IKEPolicy)
+					if pol, ok := cfg.Security.IPsec.IKEPolicies[gw.IKEPolicy]; ok {
+						fmt.Fprintf(&buf, "    Mode:     %s\n", pol.Mode)
+						fmt.Fprintf(&buf, "    Proposal: %s\n", pol.Proposals)
+					}
+				}
+				ver := gw.Version
+				if ver == "" {
+					ver = "v1+v2"
+				}
+				fmt.Fprintf(&buf, "  IKE version:        %s\n", ver)
+				if gw.DeadPeerDetect != "" {
+					fmt.Fprintf(&buf, "  DPD:                %s\n", gw.DeadPeerDetect)
+				}
+				if gw.NoNATTraversal {
+					buf.WriteString("  NAT-T:              disabled\n")
+				}
+				if gw.LocalIDValue != "" {
+					fmt.Fprintf(&buf, "  Local identity:     %s %s\n", gw.LocalIDType, gw.LocalIDValue)
+				}
+				if gw.RemoteIDValue != "" {
+					fmt.Fprintf(&buf, "  Remote identity:    %s %s\n", gw.RemoteIDType, gw.RemoteIDValue)
+				}
+				buf.WriteString("\n")
+			}
+			// IKE proposals
+			if len(cfg.Security.IPsec.IKEProposals) > 0 {
+				pNames := make([]string, 0, len(cfg.Security.IPsec.IKEProposals))
+				for name := range cfg.Security.IPsec.IKEProposals {
+					pNames = append(pNames, name)
+				}
+				sort.Strings(pNames)
+				buf.WriteString("IKE proposals:\n")
+				for _, name := range pNames {
+					p := cfg.Security.IPsec.IKEProposals[name]
+					fmt.Fprintf(&buf, "  %s: auth=%s enc=%s dh=group%d", name, p.AuthMethod, p.EncryptionAlg, p.DHGroup)
+					if p.LifetimeSeconds > 0 {
+						fmt.Fprintf(&buf, " lifetime=%ds", p.LifetimeSeconds)
+					}
+					buf.WriteString("\n")
+				}
 			}
 		}
 

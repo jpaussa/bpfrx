@@ -969,13 +969,14 @@ type BGPConfig struct {
 
 // BGPNeighbor defines a BGP peer.
 type BGPNeighbor struct {
-	Address     string // peer IP
+	Address     string   // peer IP
 	PeerAS      uint32
 	Description string
 	MultihopTTL int      // 0 = directly connected
 	Export      []string // per-group export policies (route-map out)
 	FamilyInet  bool     // activate under address-family ipv4 unicast
 	FamilyInet6 bool     // activate under address-family ipv6 unicast
+	GroupName   string   // BGP group name (for display)
 }
 
 // TunnelConfig defines a GRE or other tunnel interface.
