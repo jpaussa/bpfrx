@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 )
@@ -175,6 +176,80 @@ func ValidateConfig(cfg *Config) []string {
 			if _, ok := cfg.Security.Screen[zone.ScreenProfile]; !ok {
 				warnings = append(warnings, fmt.Sprintf(
 					"zone %q: screen profile %q not defined", name, zone.ScreenProfile))
+			}
+		}
+	}
+
+	// Validate address-book entries have valid CIDR or IP formats
+	if ab := cfg.Security.AddressBook; ab != nil {
+		for name, entry := range ab.Addresses {
+			if entry.Value != "" {
+				if _, _, err := net.ParseCIDR(entry.Value); err != nil {
+					if net.ParseIP(entry.Value) == nil {
+						warnings = append(warnings, fmt.Sprintf(
+							"address-book %q: invalid address %q", name, entry.Value))
+					}
+				}
+			}
+		}
+		// Validate address-set members reference valid entries
+		for setName, as := range ab.AddressSets {
+			for _, m := range as.Addresses {
+				if !addrs[m] {
+					warnings = append(warnings, fmt.Sprintf(
+						"address-set %q: member %q not in address-book", setName, m))
+				}
+			}
+			for _, m := range as.AddressSets {
+				if !addrs[m] {
+					warnings = append(warnings, fmt.Sprintf(
+						"address-set %q: nested set %q not in address-book", setName, m))
+				}
+			}
+		}
+	}
+
+	// Validate static route destinations are valid CIDR
+	for _, sr := range cfg.RoutingOptions.StaticRoutes {
+		if sr.Destination != "" {
+			if _, _, err := net.ParseCIDR(sr.Destination); err != nil {
+				warnings = append(warnings, fmt.Sprintf(
+					"static route: invalid destination %q", sr.Destination))
+			}
+		}
+	}
+
+	// Validate DNAT pool references
+	if dnat := cfg.Security.NAT.Destination; dnat != nil {
+		for _, rs := range dnat.RuleSets {
+			for _, rule := range rs.Rules {
+				if rule.Then.PoolName != "" {
+					if _, ok := dnat.Pools[rule.Then.PoolName]; !ok {
+						warnings = append(warnings, fmt.Sprintf(
+							"destination-nat %q rule %q: pool %q not defined",
+							rs.Name, rule.Name, rule.Then.PoolName))
+					}
+				}
+			}
+		}
+	}
+
+	// Validate firewall filter references on interfaces
+	for ifName, ifc := range cfg.Interfaces.Interfaces {
+		for unitNum, unit := range ifc.Units {
+			if unit.FilterInputV4 != "" {
+				if _, ok := cfg.Firewall.FiltersInet[unit.FilterInputV4]; !ok {
+					warnings = append(warnings, fmt.Sprintf(
+						"interface %s unit %d: filter input %q not defined",
+						ifName, unitNum, unit.FilterInputV4))
+				}
+			}
+			if unit.FilterInputV6 != "" {
+				if _, ok := cfg.Firewall.FiltersInet6[unit.FilterInputV6]; !ok {
+					warnings = append(warnings, fmt.Sprintf(
+						"interface %s unit %d: filter input-v6 %q not defined",
+						ifName, unitNum, unit.FilterInputV6))
+				}
 			}
 		}
 	}
@@ -1551,8 +1626,7 @@ func compileStaticRoutes(staticNode *Node, existing []*StaticRoute) []*StaticRou
 		destIdx[sr.Destination] = i
 	}
 
-	instances := namedInstances(staticNode.FindChildren("route"))
-	for _, routeInst := range instances {
+	for _, routeInst := range namedInstances(staticNode.FindChildren("route")) {
 		route := &StaticRoute{
 			Destination: routeInst.name,
 			Preference:  5, // default
@@ -2649,6 +2723,48 @@ func compileSystem(node *Node, sys *SystemConfig) error {
 			if dstNode := child.FindChild("destination"); dstNode != nil && len(dstNode.Keys) >= 2 {
 				sys.BackupRouterDst = dstNode.Keys[1]
 			}
+		case "root-authentication":
+			sys.RootAuthentication = &RootAuthConfig{}
+			for _, prop := range child.Children {
+				switch prop.Name() {
+				case "encrypted-password":
+					sys.RootAuthentication.EncryptedPassword = nodeVal(prop)
+				case "ssh-ed25519", "ssh-rsa", "ssh-dsa":
+					if v := nodeVal(prop); v != "" {
+						sys.RootAuthentication.SSHKeys = append(sys.RootAuthentication.SSHKeys, v)
+					}
+				}
+			}
+		case "archival":
+			sys.Archival = &ArchivalConfig{}
+			if cfgNode := child.FindChild("configuration"); cfgNode != nil {
+				if cfgNode.FindChild("transfer-on-commit") != nil {
+					sys.Archival.TransferOnCommit = true
+				}
+				if asNode := cfgNode.FindChild("archive-sites"); asNode != nil {
+					for _, site := range asNode.Children {
+						if len(site.Keys) >= 1 {
+							sys.Archival.ArchiveSites = append(sys.Archival.ArchiveSites, site.Keys[0])
+						}
+					}
+				}
+			}
+		case "master-password":
+			if prfNode := child.FindChild("pseudorandom-function"); prfNode != nil {
+				sys.MasterPassword = nodeVal(prfNode)
+			}
+		case "license":
+			if auNode := child.FindChild("autoupdate"); auNode != nil {
+				if urlNode := auNode.FindChild("url"); urlNode != nil {
+					sys.LicenseAutoUpdate = nodeVal(urlNode)
+				}
+			}
+		case "processes":
+			for _, proc := range child.Children {
+				if proc.FindChild("disable") != nil || nodeVal(proc) == "disable" {
+					sys.DisabledProcesses = append(sys.DisabledProcesses, proc.Name())
+				}
+			}
 		case "internet-options":
 			sys.InternetOptions = &InternetOptionsConfig{}
 			if child.FindChild("no-ipv6-reject-zero-hop-limit") != nil {
@@ -2664,8 +2780,10 @@ func compileSystem(node *Node, sys *SystemConfig) error {
 						host.AllowDuplicates = true
 					default:
 						if len(prop.Keys) >= 2 {
-							host.Facility = prop.Keys[0]
-							host.Severity = prop.Keys[1]
+							host.Facilities = append(host.Facilities, SyslogFacility{
+								Facility: prop.Keys[0],
+								Severity: prop.Keys[1],
+							})
 						}
 					}
 				}
@@ -2680,6 +2798,17 @@ func compileSystem(node *Node, sys *SystemConfig) error {
 					}
 				}
 				sys.Syslog.Files = append(sys.Syslog.Files, file)
+			}
+			// Parse user destinations: user * { any emergency; }
+			for _, userInst := range namedInstances(child.FindChildren("user")) {
+				user := &SyslogUserConfig{User: userInst.name}
+				for _, prop := range userInst.node.Children {
+					if len(prop.Keys) >= 2 {
+						user.Facility = prop.Keys[0]
+						user.Severity = prop.Keys[1]
+					}
+				}
+				sys.Syslog.Users = append(sys.Syslog.Users, user)
 			}
 		}
 	}
@@ -2714,11 +2843,20 @@ func compileSystem(node *Node, sys *SystemConfig) error {
 				sys.Services = &SystemServicesConfig{}
 			}
 			sys.Services.WebManagement = &WebManagementConfig{}
-			if wmNode.FindChild("http") != nil {
+			if httpNode := wmNode.FindChild("http"); httpNode != nil {
 				sys.Services.WebManagement.HTTP = true
+				if ifNode := httpNode.FindChild("interface"); ifNode != nil {
+					sys.Services.WebManagement.HTTPInterface = nodeVal(ifNode)
+				}
 			}
-			if wmNode.FindChild("https") != nil {
+			if httpsNode := wmNode.FindChild("https"); httpsNode != nil {
 				sys.Services.WebManagement.HTTPS = true
+				if httpsNode.FindChild("system-generated-certificate") != nil {
+					sys.Services.WebManagement.SystemGeneratedCert = true
+				}
+				if ifNode := httpsNode.FindChild("interface"); ifNode != nil {
+					sys.Services.WebManagement.HTTPSInterface = nodeVal(ifNode)
+				}
 			}
 		}
 	}

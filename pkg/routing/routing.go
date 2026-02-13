@@ -225,6 +225,14 @@ func (m *Manager) ApplyTunnels(tunnels []*config.TunnelConfig) error {
 			}
 		}
 
+		// Bind tunnel to VRF if routing-instance is configured.
+		if tc.RoutingInstance != "" {
+			if err := m.BindInterfaceToVRF(tc.Name, tc.RoutingInstance); err != nil {
+				slog.Warn("failed to bind tunnel to VRF",
+					"name", tc.Name, "vrf", tc.RoutingInstance, "err", err)
+			}
+		}
+
 		slog.Info("tunnel created", "name", tc.Name,
 			"src", tc.Source, "dst", tc.Destination)
 		m.tunnels = append(m.tunnels, tc.Name)
