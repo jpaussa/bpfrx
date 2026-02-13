@@ -8,7 +8,7 @@ An eBPF-based firewall that clones Juniper vSRX capabilities using native Junos 
 make generate        # Generate Go bindings from BPF C via bpf2go
 make build           # Build bpfrxd daemon
 make build-ctl       # Build remote CLI client
-make test            # Run Go tests (50 tests: 34 config/parser + 16 configstore)
+make test            # Run Go tests (196 tests across 12 packages)
 ```
 
 ## Test Environment (Incus VM)
@@ -89,10 +89,11 @@ TC Egress:   main -> screen_egress -> conntrack -> nat -> forward
 - When mirroring C structs in Go for cilium/ebpf, always match `sizeof` in C
 - Add trailing `Pad [N]byte` fields to reach C compiler's struct alignment
 
-### Parser Dual AST Shape
+### Parser Dual AST Shape & Set Syntax Testing
 - Hierarchical `family inet { dhcp; }` → `Node{Keys:["family","inet"]}` with children
 - Flat `set interfaces eth0 unit 0 family inet dhcp` → `Node{Keys:["family"]}` with child `Node{Keys:["inet"]}`
 - Compiler must handle **both** shapes
+- **Testing flat set syntax:** ALWAYS use `ParseSetCommand()` + `tree.SetPath()` loop, NEVER `NewParser()` — the parser treats newlines as whitespace and will merge all set lines into one giant node
 
 ### BPF Verifier
 - Branch merges lose packet range — re-read `ctx->data`/`ctx->data_end` after branches
@@ -133,15 +134,18 @@ TC Egress:   main -> screen_egress -> conntrack -> nat -> forward
 - systemd unit has `TimeoutStopSec=20` as safety net
 
 ## Feature Coverage
-- **Firewall**: Stateful inspection, zone-based policies, address books, application matching
+- **Firewall**: Stateful inspection, zone-based policies, address books, application matching, multi-term apps
 - **NAT**: SNAT (interface + pool), DNAT, static 1:1, NAT64 (native BPF)
 - **IPv4 + IPv6**: Dual-stack, DHCPv4/v6 clients, Router Advertisements
-- **Screen/IDS**: 10 checks (land, syn-flood, ping-death, rate-limiting)
-- **Routing**: FRR integration (static, OSPF, BGP), VRFs, GRE tunnels
+- **Screen/IDS**: 11 checks (land, syn-flood, ping-death, teardrop, rate-limiting)
+- **Routing**: FRR integration (static, OSPF, BGP, IS-IS, RIP), VRFs, GRE tunnels, export/redistribute
 - **VLANs**: 802.1Q tagging in BPF, trunk ports
-- **IPsec**: strongSwan config generation
-- **Observability**: Syslog, NetFlow v9, Prometheus, RPM probes, dynamic feeds
+- **IPsec**: strongSwan config generation, IKE proposals, gateway compilation, XFRM interfaces
+- **Observability**: Syslog (with facility/severity filtering), NetFlow v9, Prometheus, RPM probes, dynamic feeds, SNMP (ifTable MIB)
 - **Flow**: TCP MSS clamping, ALG control, configurable timeouts, firewall filters + DSCP
+- **HA**: VRRP via keepalived (config generation, runtime state detection)
+- **DHCP**: Relay (Option 82), server (Kea integration with lease display)
+- **CLI**: Junos-style prefix matching, "Possible completions:" headers, zone names in session display, config validation warnings
 
 ## Network Topology (Test VM)
 
@@ -156,7 +160,8 @@ VM (bpfrx-fw) — Virtio NICs (via Incus bridges), all managed by bpfrxd:
   enp9s0  → tunnel0   10.0.40.10    — tunnel zone
 
 VM (bpfrx-fw) — i40e PCI passthrough, managed by bpfrxd:
-  enp10s0f0np0 → wan0  172.16.50.5  — wan zone (VLAN 50, IPv6 2001:559:8585:50::5/64)
+  enp10s0f0np0  → wan0   172.16.50.5  — wan zone (VLAN 50, IPv6 2001:559:8585:50::5/64)
+  enp101s0f1np1 → loss0               — loss zone (PCI passthrough)
 
 Test containers:
   trust-host    10.0.1.102  (2001:559:8585:bf01::102)  — bpfrx-trust bridge
