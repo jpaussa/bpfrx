@@ -740,10 +740,6 @@ func (c *CLI) dispatchOperational(line string) error {
 	case "quit", "exit":
 		return errExit
 
-	case "?", "help":
-		c.showOperationalHelp()
-		return nil
-
 	default:
 		return fmt.Errorf("unknown command: %s", parts[0])
 	}
