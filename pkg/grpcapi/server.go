@@ -143,6 +143,22 @@ func (s *Server) Delete(_ context.Context, req *pb.DeleteRequest) (*pb.DeleteRes
 	return &pb.DeleteResponse{}, nil
 }
 
+func (s *Server) Load(_ context.Context, req *pb.LoadRequest) (*pb.LoadResponse, error) {
+	switch req.Mode {
+	case "override":
+		if err := s.store.LoadOverride(req.Content); err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "%v", err)
+		}
+	case "merge", "":
+		if err := s.store.LoadMerge(req.Content); err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "%v", err)
+		}
+	default:
+		return nil, status.Errorf(codes.InvalidArgument, "unknown load mode: %s (use 'override' or 'merge')", req.Mode)
+	}
+	return &pb.LoadResponse{}, nil
+}
+
 func (s *Server) Commit(_ context.Context, _ *pb.CommitRequest) (*pb.CommitResponse, error) {
 	// If a confirmed commit is pending, confirm it
 	if s.store.IsConfirmPending() {

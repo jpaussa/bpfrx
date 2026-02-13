@@ -700,6 +700,9 @@ func (c *CLI) dispatchConfig(line string) error {
 		fmt.Println("configuration rolled back")
 		return nil
 
+	case "load":
+		return c.handleLoad(parts[1:])
+
 	case "run":
 		if len(parts) < 2 {
 			return fmt.Errorf("run: missing command")
@@ -1166,6 +1169,65 @@ func (c *CLI) handleConfigShow(args []string) error {
 	}
 
 	fmt.Print(c.store.ShowCandidate())
+	return nil
+}
+
+func (c *CLI) handleLoad(args []string) error {
+	if len(args) < 2 {
+		fmt.Println("load:")
+		fmt.Println("  override terminal    Replace candidate with pasted config")
+		fmt.Println("  merge terminal       Merge pasted config into candidate")
+		fmt.Println("  override <file>      Replace candidate with file contents")
+		fmt.Println("  merge <file>         Merge file contents into candidate")
+		return nil
+	}
+
+	mode := args[0] // "override" or "merge"
+	if mode != "override" && mode != "merge" {
+		return fmt.Errorf("load: unknown mode %q (use 'override' or 'merge')", mode)
+	}
+
+	source := args[1]
+	var content string
+
+	if source == "terminal" {
+		// Read from terminal until a line containing only a single Ctrl-D marker
+		fmt.Println("[Type or paste configuration, then press Ctrl-D on an empty line]")
+		var lines []string
+		for {
+			line, err := c.rl.Readline()
+			if err != nil {
+				// EOF (Ctrl-D)
+				break
+			}
+			lines = append(lines, line)
+		}
+		content = strings.Join(lines, "\n")
+	} else {
+		// Read from file
+		data, err := os.ReadFile(source)
+		if err != nil {
+			return fmt.Errorf("load: %w", err)
+		}
+		content = string(data)
+	}
+
+	if strings.TrimSpace(content) == "" {
+		return fmt.Errorf("load: empty input")
+	}
+
+	var err error
+	switch mode {
+	case "override":
+		err = c.store.LoadOverride(content)
+	case "merge":
+		err = c.store.LoadMerge(content)
+	}
+	if err != nil {
+		return fmt.Errorf("load %s: %w", mode, err)
+	}
+
+	fmt.Printf("load %s complete\n", mode)
 	return nil
 }
 

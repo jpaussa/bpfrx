@@ -333,6 +333,9 @@ func (c *ctl) dispatchConfig(line string) error {
 		fmt.Println("configuration rolled back")
 		return nil
 
+	case "load":
+		return c.handleLoad(parts[1:])
+
 	case "run":
 		if len(parts) < 2 {
 			return fmt.Errorf("run: missing command")
@@ -1561,10 +1564,66 @@ func (c *ctl) handleTraceroute(args []string) error {
 	return nil
 }
 
+func (c *ctl) handleLoad(args []string) error {
+	if len(args) < 2 {
+		fmt.Println("load:")
+		fmt.Println("  override terminal    Replace candidate with pasted config")
+		fmt.Println("  merge terminal       Merge pasted config into candidate")
+		fmt.Println("  override <file>      Replace candidate with file contents")
+		fmt.Println("  merge <file>         Merge file contents into candidate")
+		return nil
+	}
+
+	mode := args[0]
+	if mode != "override" && mode != "merge" {
+		return fmt.Errorf("load: unknown mode %q (use 'override' or 'merge')", mode)
+	}
+
+	source := args[1]
+	var content string
+
+	if source == "terminal" {
+		fmt.Println("[Type or paste configuration, then press Ctrl-D on an empty line]")
+		var lines []string
+		for {
+			line, err := c.rl.Readline()
+			if err != nil {
+				break
+			}
+			lines = append(lines, line)
+		}
+		content = strings.Join(lines, "\n")
+	} else {
+		data, err := os.ReadFile(source)
+		if err != nil {
+			return fmt.Errorf("load: %v", err)
+		}
+		content = string(data)
+	}
+
+	if strings.TrimSpace(content) == "" {
+		return fmt.Errorf("load: empty input")
+	}
+
+	_, err := c.client.Load(context.Background(), &pb.LoadRequest{
+		Mode:    mode,
+		Content: content,
+	})
+	if err != nil {
+		return fmt.Errorf("load %s: %v", mode, err)
+	}
+	fmt.Printf("load %s complete\n", mode)
+	return nil
+}
+
 func (c *ctl) showConfigHelp() {
 	fmt.Println("Configuration mode commands:")
 	fmt.Println("  set <path>                   Set a configuration value")
 	fmt.Println("  delete <path>                Delete a configuration element")
+	fmt.Println("  load override terminal       Replace config from terminal input")
+	fmt.Println("  load merge terminal          Merge config from terminal input")
+	fmt.Println("  load override <file>         Replace config from file")
+	fmt.Println("  load merge <file>            Merge config from file")
 	fmt.Println("  show                         Show candidate configuration")
 	fmt.Println("  show | compare               Show pending changes vs active")
 	fmt.Println("  show | compare rollback N    Show changes vs rollback N")

@@ -168,6 +168,99 @@ func (s *Store) DeleteFromInput(input string) error {
 	return s.Delete(path)
 }
 
+// LoadOverride replaces the entire candidate config with the parsed input.
+// The input can be hierarchical Junos config or flat "set" commands.
+func (s *Store) LoadOverride(content string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.candidate == nil {
+		return fmt.Errorf("not in configuration mode")
+	}
+
+	tree, errs := config.NewParser(content).Parse()
+	if len(errs) > 0 {
+		return fmt.Errorf("parse error: %v", errs[0])
+	}
+
+	s.candidate = tree
+	s.dirty = true
+	return nil
+}
+
+// LoadMerge merges the parsed input into the existing candidate config.
+// For flat "set" commands, each line is applied individually.
+// For hierarchical input, it's converted to set commands and merged.
+func (s *Store) LoadMerge(content string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.candidate == nil {
+		return fmt.Errorf("not in configuration mode")
+	}
+
+	// Detect format: if content has "set " lines, process as set commands
+	lines := strings.Split(content, "\n")
+	isSetFormat := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "set ") || strings.HasPrefix(trimmed, "delete ") {
+			isSetFormat = true
+			break
+		}
+	}
+
+	if isSetFormat {
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			if strings.HasPrefix(trimmed, "set ") {
+				path, err := config.ParseSetCommand(trimmed)
+				if err != nil {
+					return fmt.Errorf("line %q: %w", trimmed, err)
+				}
+				if err := s.candidate.SetPath(path); err != nil {
+					return fmt.Errorf("line %q: %w", trimmed, err)
+				}
+			} else if strings.HasPrefix(trimmed, "delete ") {
+				path, err := config.ParseSetCommand(trimmed)
+				if err != nil {
+					return fmt.Errorf("line %q: %w", trimmed, err)
+				}
+				if err := s.candidate.DeletePath(path); err != nil {
+					return fmt.Errorf("line %q: %w", trimmed, err)
+				}
+			}
+		}
+	} else {
+		// Parse as hierarchical config and merge each top-level node
+		tree, errs := config.NewParser(content).Parse()
+		if len(errs) > 0 {
+			return fmt.Errorf("parse error: %v", errs[0])
+		}
+		// Convert hierarchical to set commands and apply each one
+		setLines := strings.Split(tree.FormatSet(), "\n")
+		for _, line := range setLines {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" {
+				continue
+			}
+			path, err := config.ParseSetCommand(trimmed)
+			if err != nil {
+				continue
+			}
+			if err := s.candidate.SetPath(path); err != nil {
+				return fmt.Errorf("merge: %w", err)
+			}
+		}
+	}
+
+	s.dirty = true
+	return nil
+}
+
 // CommitCheck validates the candidate configuration without applying it.
 func (s *Store) CommitCheck() (*config.Config, error) {
 	s.mu.RLock()
