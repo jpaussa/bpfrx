@@ -28,12 +28,39 @@ type ProbeResult struct {
 	LastProbeAt  time.Time
 }
 
+// Event represents an RPM event for event-options matching.
+type Event struct {
+	Name      string // "ping_test_failed", "ping_probe_failed", "ping_test_completed"
+	TestOwner string // probe name (matches attributes-match test-owner)
+	TestName  string // test name (matches attributes-match test-name)
+}
+
+// EventCallback is called when RPM probes generate events.
+type EventCallback func(Event)
+
 // Manager runs RPM probes and tracks their results.
 type Manager struct {
 	mu      sync.RWMutex
 	results map[string]*ProbeResult // key: "probe/test"
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
+	onEvent EventCallback
+}
+
+// SetEventCallback registers a callback for RPM events.
+func (m *Manager) SetEventCallback(fn EventCallback) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onEvent = fn
+}
+
+func (m *Manager) fireEvent(name, owner, testName string) {
+	m.mu.RLock()
+	fn := m.onEvent
+	m.mu.RUnlock()
+	if fn != nil {
+		fn(Event{Name: name, TestOwner: owner, TestName: testName})
+	}
 }
 
 // New creates a new RPM manager.
@@ -138,19 +165,19 @@ func (m *Manager) runProbeLoop(ctx context.Context, probe *config.RPMProbe, test
 	defer ticker.Stop()
 
 	// Run first probe immediately
-	m.runSingleTest(ctx, test, key, probeCount, probeInterval, threshold)
+	m.runSingleTest(ctx, probe.Name, test, key, probeCount, probeInterval, threshold)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			m.runSingleTest(ctx, test, key, probeCount, probeInterval, threshold)
+			m.runSingleTest(ctx, probe.Name, test, key, probeCount, probeInterval, threshold)
 		}
 	}
 }
 
-func (m *Manager) runSingleTest(ctx context.Context, test *config.RPMTest, key string, probeCount int, probeInterval time.Duration, threshold int) {
+func (m *Manager) runSingleTest(ctx context.Context, probeName string, test *config.RPMTest, key string, probeCount int, probeInterval time.Duration, threshold int) {
 	var successes, failures int
 
 	for i := 0; i < probeCount; i++ {
@@ -172,11 +199,19 @@ func (m *Manager) runSingleTest(ctx context.Context, test *config.RPMTest, key s
 		}
 		r.TotalSent++
 		r.LastProbeAt = time.Now()
+		prevStatus := r.LastStatus
 		if err != nil {
 			failures++
 			r.SuccFail++
 			if r.SuccFail >= threshold {
 				r.LastStatus = "fail"
+			}
+			m.mu.Unlock()
+			// Fire probe-level failure event
+			m.fireEvent("ping_probe_failed", probeName, test.Name)
+			// Fire test-level failure on transition
+			if r.SuccFail == threshold && prevStatus != "fail" {
+				m.fireEvent("ping_test_failed", probeName, test.Name)
 			}
 		} else {
 			successes++
@@ -184,8 +219,13 @@ func (m *Manager) runSingleTest(ctx context.Context, test *config.RPMTest, key s
 			r.LastRTT = rtt
 			r.SuccFail = 0
 			r.LastStatus = "pass"
+			m.mu.Unlock()
 		}
-		m.mu.Unlock()
+	}
+
+	// Fire test completed if all probes passed
+	if failures == 0 && successes > 0 {
+		m.fireEvent("ping_test_completed", probeName, test.Name)
 	}
 }
 

@@ -23,6 +23,7 @@ import (
 	"github.com/psaab/bpfrx/pkg/cli"
 	"github.com/psaab/bpfrx/pkg/config"
 	"github.com/psaab/bpfrx/pkg/configstore"
+	"github.com/psaab/bpfrx/pkg/eventengine"
 	"github.com/psaab/bpfrx/pkg/conntrack"
 	"github.com/psaab/bpfrx/pkg/dataplane"
 	"github.com/psaab/bpfrx/pkg/dhcp"
@@ -73,8 +74,9 @@ type Daemon struct {
 	snmpAgent    *snmp.Agent
 	scheduler    *scheduler.Scheduler
 	slogHandler  *logging.SyslogSlogHandler
-	traceWriter  *logging.TraceWriter
-	eventReader  *logging.EventReader
+	traceWriter   *logging.TraceWriter
+	eventReader   *logging.EventReader
+	eventEngine   *eventengine.Engine
 }
 
 // New creates a new Daemon.
@@ -218,14 +220,24 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.rpm.Apply(ctx, cfg.Services.RPM)
 	}
 
+	// Start event-options engine if configured.
+	if cfg := d.store.ActiveConfig(); cfg != nil && len(cfg.EventOptions) > 0 {
+		d.eventEngine = eventengine.New(d.store, d.applyConfig)
+		d.eventEngine.Apply(cfg.EventOptions)
+		if d.rpm != nil {
+			d.rpm.SetEventCallback(d.eventEngine.HandleEvent)
+		}
+		slog.Info("event-options engine started", "policies", len(cfg.EventOptions))
+	}
+
 	// Start DHCP relay if configured.
 	if cfg := d.store.ActiveConfig(); cfg != nil && cfg.ForwardingOptions.DHCPRelay != nil {
 		d.dhcpRelay = dhcprelay.NewManager()
 		d.dhcpRelay.Apply(ctx, cfg.ForwardingOptions.DHCPRelay)
 	}
 
-	// Start SNMP agent if configured.
-	if cfg := d.store.ActiveConfig(); cfg != nil && cfg.System.SNMP != nil && len(cfg.System.SNMP.Communities) > 0 {
+	// Start SNMP agent if configured (unless system processes snmp disable).
+	if cfg := d.store.ActiveConfig(); cfg != nil && cfg.System.SNMP != nil && len(cfg.System.SNMP.Communities) > 0 && !isProcessDisabled(cfg, "snmpd") {
 		d.snmpAgent = snmp.NewAgent(cfg.System.SNMP)
 		d.snmpAgent.SetIfDataFn(func() []snmp.IfData {
 			links, err := netlink.LinkList()
@@ -621,11 +633,22 @@ func (d *Daemon) applyConfig(cfg *config.Config) {
 	// 12. Apply SSH service configuration (root-login)
 	d.applySSHConfig(cfg)
 
-	// 13. Archive config to remote sites if transfer-on-commit is enabled
+	// 13. Apply root authentication (encrypted-password + SSH keys)
+	d.applyRootAuth(cfg)
+
+	// 14. Apply syslog file destinations (rsyslog configs)
+	d.applySyslogFiles(cfg)
+
+	// 15. Archive config to remote sites if transfer-on-commit is enabled
 	d.archiveConfig(cfg)
 
-	// 14. Update flow traceoptions (trace file + filters)
+	// 16. Update flow traceoptions (trace file + filters)
 	d.updateFlowTrace(cfg)
+
+	// 17. Update event-options policies (RPM-driven failover)
+	if d.eventEngine != nil {
+		d.eventEngine.Apply(cfg.EventOptions)
+	}
 }
 
 // startDHCPClients iterates the config and starts DHCP/DHCPv6 clients
@@ -1150,6 +1173,16 @@ func (d *Daemon) applyHostname(cfg *config.Config) {
 	slog.Info("hostname set", "hostname", cfg.System.HostName)
 }
 
+// isProcessDisabled checks if a Junos process name is in the disabled list.
+func isProcessDisabled(cfg *config.Config, name string) bool {
+	for _, p := range cfg.System.DisabledProcesses {
+		if p == name {
+			return true
+		}
+	}
+	return false
+}
+
 func (d *Daemon) applySystemDNS(cfg *config.Config) {
 	if len(cfg.System.NameServers) == 0 && cfg.System.DomainName == "" && len(cfg.System.DomainSearch) == 0 {
 		return
@@ -1182,11 +1215,17 @@ func (d *Daemon) applySystemDNS(cfg *config.Config) {
 
 // applySystemNTP configures systemd-timesyncd from system { ntp } config.
 func (d *Daemon) applySystemNTP(cfg *config.Config) {
-	if len(cfg.System.NTPServers) == 0 {
+	if len(cfg.System.NTPServers) == 0 || isProcessDisabled(cfg, "ntp") {
 		return
 	}
 
-	content := fmt.Sprintf("[Time]\nNTP=%s\n", strings.Join(cfg.System.NTPServers, " "))
+	var b strings.Builder
+	fmt.Fprintf(&b, "[Time]\nNTP=%s\n", strings.Join(cfg.System.NTPServers, " "))
+	// Junos ntp boot-server threshold maps to timesyncd RootDistanceMaxUSec
+	if cfg.System.NTPThreshold > 0 {
+		fmt.Fprintf(&b, "RootDistanceMaxUSec=%dms\n", cfg.System.NTPThreshold)
+	}
+	content := b.String()
 	confPath := "/etc/systemd/timesyncd.conf.d/bpfrx.conf"
 
 	current, _ := os.ReadFile(confPath)
@@ -1379,6 +1418,71 @@ func (d *Daemon) applySystemSyslog(cfg *config.Config) {
 	d.slogHandler.SetClients(clients)
 }
 
+// applySyslogFiles writes rsyslog drop-in configs for system { syslog { file ... } }
+// destinations. Each file entry generates a rule that directs matching
+// facility/severity messages to /var/log/<name>.
+func (d *Daemon) applySyslogFiles(cfg *config.Config) {
+	confDir := "/etc/rsyslog.d"
+	prefix := "10-bpfrx-"
+
+	// Collect desired configs
+	desired := make(map[string]string) // filename -> content
+	if cfg.System.Syslog != nil {
+		for _, f := range cfg.System.Syslog.Files {
+			if f.Name == "" {
+				continue
+			}
+			// Map Junos facility/severity to rsyslog selector
+			facility := f.Facility
+			if facility == "" || facility == "any" {
+				facility = "*"
+			}
+			severity := f.Severity
+			if severity == "" || severity == "any" {
+				severity = "*"
+			}
+			// Junos severity names map directly to rsyslog (info, warning, error, etc.)
+			selector := fmt.Sprintf("%s.%s", facility, severity)
+			logPath := fmt.Sprintf("/var/log/%s", f.Name)
+
+			content := fmt.Sprintf("# Managed by bpfrx — do not edit\n%s\t%s\n", selector, logPath)
+			confFile := prefix + f.Name + ".conf"
+			desired[confFile] = content
+		}
+	}
+
+	// Read existing bpfrx-managed files
+	entries, _ := os.ReadDir(confDir)
+	for _, e := range entries {
+		if !strings.HasPrefix(e.Name(), prefix) {
+			continue
+		}
+		if _, keep := desired[e.Name()]; !keep {
+			// Remove stale config
+			os.Remove(filepath.Join(confDir, e.Name()))
+		}
+	}
+
+	// Write desired configs
+	changed := false
+	for name, content := range desired {
+		path := filepath.Join(confDir, name)
+		current, _ := os.ReadFile(path)
+		if string(current) != content {
+			if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+				slog.Warn("failed to write rsyslog config", "file", name, "err", err)
+				continue
+			}
+			changed = true
+		}
+	}
+
+	if changed {
+		exec.Command("systemctl", "restart", "rsyslog").Run()
+		slog.Info("rsyslog file configs applied", "files", len(desired))
+	}
+}
+
 // applySystemLogin creates OS user accounts and SSH authorized_keys from
 // system { login { user ... } } configuration.
 func (d *Daemon) applySystemLogin(cfg *config.Config) {
@@ -1486,6 +1590,42 @@ func (d *Daemon) applySSHConfig(cfg *config.Config) {
 	// Reload sshd to pick up changes
 	exec.Command("systemctl", "reload", "sshd").Run()
 	slog.Info("SSH config applied", "permit_root_login", permitRoot)
+}
+
+// applyRootAuth applies root-authentication config: encrypted-password and SSH keys.
+func (d *Daemon) applyRootAuth(cfg *config.Config) {
+	ra := cfg.System.RootAuthentication
+	if ra == nil {
+		return
+	}
+
+	// Set root password from encrypted-password (crypt(3) hash)
+	if ra.EncryptedPassword != "" {
+		// Use chpasswd -e to set pre-hashed password
+		cmd := exec.Command("chpasswd", "-e")
+		cmd.Stdin = strings.NewReader("root:" + ra.EncryptedPassword + "\n")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			slog.Warn("failed to set root password", "err", err, "output", string(out))
+		} else {
+			slog.Info("root encrypted-password applied")
+		}
+	}
+
+	// Write SSH authorized_keys for root
+	if len(ra.SSHKeys) > 0 {
+		sshDir := "/root/.ssh"
+		os.MkdirAll(sshDir, 0700)
+		keysContent := strings.Join(ra.SSHKeys, "\n") + "\n"
+		keysFile := sshDir + "/authorized_keys"
+		current, _ := os.ReadFile(keysFile)
+		if string(current) != keysContent {
+			if err := os.WriteFile(keysFile, []byte(keysContent), 0600); err != nil {
+				slog.Warn("failed to write root authorized_keys", "err", err)
+			} else {
+				slog.Info("root SSH keys applied", "keys", len(ra.SSHKeys))
+			}
+		}
+	}
 }
 
 // archiveConfig transfers the active config to remote archive sites

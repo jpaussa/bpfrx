@@ -4122,18 +4122,13 @@ func compileEventOptions(node *Node, policies *[]*EventPolicy) error {
 		for _, child := range pInst.node.Children {
 			switch child.Name() {
 			case "events":
-				// events [ evt1 evt2 ] or events evt1;
-				if v := nodeVal(child); v != "" {
-					ep.Events = append(ep.Events, v)
-				}
-				// Check for bracket list in Keys
+				// Hierarchical: events [ evt1 evt2 ]; → Keys = ["events", "evt1", "evt2"]
+				// Hierarchical: events evt1;          → Keys = ["events", "evt1"]
+				// Brackets are stripped by the lexer, so just take Keys[1:]
 				for i := 1; i < len(child.Keys); i++ {
-					if child.Keys[i] == "[" || child.Keys[i] == "]" {
-						continue
-					}
 					ep.Events = append(ep.Events, child.Keys[i])
 				}
-				// Also pick up children as individual events
+				// Flat set format: children are individual event name nodes
 				for _, evtChild := range child.Children {
 					ep.Events = append(ep.Events, evtChild.Name())
 				}

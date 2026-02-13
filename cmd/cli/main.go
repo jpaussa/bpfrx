@@ -483,6 +483,10 @@ func (c *ctl) handleShow(args []string) error {
 		return c.showText("flow-monitoring")
 
 	case "log":
+		if len(args) > 1 {
+			// show log <filename> [count]
+			return c.showText("log:" + strings.Join(args[1:], ":"))
+		}
 		return c.showText("log")
 
 	case "services":

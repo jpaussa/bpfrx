@@ -4625,8 +4625,30 @@ func (c *CLI) showFlowMonitoring() error {
 	return nil
 }
 
-// showDaemonLog displays recent daemon log entries from journald.
+// showDaemonLog displays recent daemon log entries from journald,
+// or if a filename argument is given, reads from /var/log/<filename>.
 func (c *CLI) showDaemonLog(args []string) error {
+	// If first arg is not a number, treat it as a syslog file name
+	if len(args) > 0 {
+		if _, err := strconv.Atoi(args[0]); err != nil {
+			// Argument is a filename like "messages"
+			filename := args[0]
+			n := 50
+			if len(args) > 1 {
+				if v, err := strconv.Atoi(args[1]); err == nil && v > 0 {
+					n = v
+				}
+			}
+			logPath := filepath.Join("/var/log", filepath.Base(filename))
+			out, err := exec.Command("tail", "-n", strconv.Itoa(n), logPath).CombinedOutput()
+			if err != nil {
+				return fmt.Errorf("read %s: %w", logPath, err)
+			}
+			fmt.Print(string(out))
+			return nil
+		}
+	}
+
 	n := 50
 	if len(args) > 0 {
 		if v, err := strconv.Atoi(args[0]); err == nil && v > 0 {

@@ -3602,7 +3602,25 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 		}
 
 	default:
-		return nil, status.Errorf(codes.InvalidArgument, "unknown topic: %s", req.Topic)
+		// Handle "log:<filename>[:<count>]" for syslog file destinations
+		if strings.HasPrefix(req.Topic, "log:") {
+			parts := strings.SplitN(req.Topic, ":", 3)
+			filename := filepath.Base(parts[1]) // sanitize path
+			n := "50"
+			if len(parts) >= 3 {
+				if _, err := strconv.Atoi(parts[2]); err == nil {
+					n = parts[2]
+				}
+			}
+			logPath := filepath.Join("/var/log", filename)
+			out, err := exec.Command("tail", "-n", n, logPath).CombinedOutput()
+			if err != nil {
+				return nil, status.Errorf(codes.Internal, "read %s: %v", logPath, err)
+			}
+			buf.Write(out)
+		} else {
+			return nil, status.Errorf(codes.InvalidArgument, "unknown topic: %s", req.Topic)
+		}
 	}
 
 	return &pb.ShowTextResponse{Output: buf.String()}, nil
