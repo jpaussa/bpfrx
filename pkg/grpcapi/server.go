@@ -2431,49 +2431,90 @@ func (s *Server) GetNATRuleStats(_ context.Context, req *pb.GetNATRuleStatsReque
 	}
 
 	resp := &pb.GetNATRuleStatsResponse{}
-	for _, rs := range cfg.Security.NAT.Source {
-		if req.RuleSet != "" && rs.Name != req.RuleSet {
-			continue
-		}
-		for _, rule := range rs.Rules {
-			action := "interface"
-			if rule.Then.PoolName != "" {
-				action = "pool " + rule.Then.PoolName
-			}
-			srcMatch := "0.0.0.0/0"
-			if rule.Match.SourceAddress != "" {
-				srcMatch = rule.Match.SourceAddress
-			}
-			dstMatch := "0.0.0.0/0"
-			if rule.Match.DestinationAddress != "" {
-				dstMatch = rule.Match.DestinationAddress
-			}
 
-			var hitPkts, hitBytes uint64
-			if s.dp != nil && s.dp.IsLoaded() {
-				if cr := s.dp.LastCompileResult(); cr != nil {
-					ruleKey := rs.Name + "/" + rule.Name
-					if cid, ok := cr.NATCounterIDs[ruleKey]; ok {
-						cnt, err := s.dp.ReadNATRuleCounter(uint32(cid))
-						if err == nil {
-							hitPkts = cnt.Packets
-							hitBytes = cnt.Bytes
-						}
+	// Helper to read NAT rule counters
+	readCounter := func(rsName, ruleName string) (uint64, uint64) {
+		if s.dp != nil && s.dp.IsLoaded() {
+			if cr := s.dp.LastCompileResult(); cr != nil {
+				ruleKey := rsName + "/" + ruleName
+				if cid, ok := cr.NATCounterIDs[ruleKey]; ok {
+					cnt, err := s.dp.ReadNATRuleCounter(uint32(cid))
+					if err == nil {
+						return cnt.Packets, cnt.Bytes
 					}
 				}
 			}
+		}
+		return 0, 0
+	}
 
-			resp.Rules = append(resp.Rules, &pb.NATRuleStats{
-				RuleSet:          rs.Name,
-				RuleName:         rule.Name,
-				FromZone:         rs.FromZone,
-				ToZone:           rs.ToZone,
-				Action:           action,
-				SourceMatch:      srcMatch,
-				DestinationMatch: dstMatch,
-				HitPackets:       hitPkts,
-				HitBytes:         hitBytes,
-			})
+	// Source NAT rules (default when nat_type is empty or "source")
+	if req.NatType == "" || req.NatType == "source" {
+		for _, rs := range cfg.Security.NAT.Source {
+			if req.RuleSet != "" && rs.Name != req.RuleSet {
+				continue
+			}
+			for _, rule := range rs.Rules {
+				action := "interface"
+				if rule.Then.PoolName != "" {
+					action = "pool " + rule.Then.PoolName
+				}
+				srcMatch := "0.0.0.0/0"
+				if rule.Match.SourceAddress != "" {
+					srcMatch = rule.Match.SourceAddress
+				}
+				dstMatch := "0.0.0.0/0"
+				if rule.Match.DestinationAddress != "" {
+					dstMatch = rule.Match.DestinationAddress
+				}
+				hitPkts, hitBytes := readCounter(rs.Name, rule.Name)
+				resp.Rules = append(resp.Rules, &pb.NATRuleStats{
+					RuleSet:          rs.Name,
+					RuleName:         rule.Name,
+					FromZone:         rs.FromZone,
+					ToZone:           rs.ToZone,
+					Action:           action,
+					SourceMatch:      srcMatch,
+					DestinationMatch: dstMatch,
+					HitPackets:       hitPkts,
+					HitBytes:         hitBytes,
+				})
+			}
+		}
+	}
+
+	// Destination NAT rules
+	if req.NatType == "destination" {
+		if dnat := cfg.Security.NAT.Destination; dnat != nil {
+			for _, rs := range dnat.RuleSets {
+				if req.RuleSet != "" && rs.Name != req.RuleSet {
+					continue
+				}
+				for _, rule := range rs.Rules {
+					action := "off"
+					if rule.Then.PoolName != "" {
+						action = "pool " + rule.Then.PoolName
+					}
+					dstMatch := "0.0.0.0/0"
+					if rule.Match.DestinationAddress != "" {
+						dstMatch = rule.Match.DestinationAddress
+					}
+					if rule.Match.DestinationPort != 0 {
+						dstMatch += fmt.Sprintf(":%d", rule.Match.DestinationPort)
+					}
+					hitPkts, hitBytes := readCounter(rs.Name, rule.Name)
+					resp.Rules = append(resp.Rules, &pb.NATRuleStats{
+						RuleSet:          rs.Name,
+						RuleName:         rule.Name,
+						FromZone:         rs.FromZone,
+						ToZone:           rs.ToZone,
+						Action:           action,
+						DestinationMatch: dstMatch,
+						HitPackets:       hitPkts,
+						HitBytes:         hitBytes,
+					})
+				}
+			}
 		}
 	}
 

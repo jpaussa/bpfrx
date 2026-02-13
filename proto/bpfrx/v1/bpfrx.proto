@@ -497,6 +497,7 @@ message MatchPoliciesResponse {
 
 message GetNATRuleStatsRequest {
   string rule_set = 1;  // rule-set name (empty = all)
+  string nat_type = 2;  // "source", "destination", or "" (source only for backward compat)
 }
 message GetNATRuleStatsResponse {
   repeated NATRuleStats rules = 1;

@@ -2614,6 +2614,9 @@ func (c *CLI) handleShowNAT(args []string) error {
 		fmt.Println("  source rule-set <name>       Show source NAT rule-set details")
 		fmt.Println("  source persistent-nat-table  Show persistent NAT bindings")
 		fmt.Println("  destination                  Show destination NAT rules")
+		fmt.Println("  destination summary          Show destination NAT pool summary")
+		fmt.Println("  destination pool <name|all>  Show destination NAT pool details")
+		fmt.Println("  destination rule-set <name>  Show destination NAT rule-set details")
 		fmt.Println("  static                       Show static 1:1 NAT rules")
 		fmt.Println("  nat64                        Show NAT64 rule-sets")
 		return nil
@@ -2626,7 +2629,7 @@ func (c *CLI) handleShowNAT(args []string) error {
 		}
 		return c.showNATSource(cfg, args[1:])
 	case "destination":
-		return c.showNATDestination(cfg)
+		return c.showNATDestination(cfg, args[1:])
 	case "static":
 		return c.showNATStatic(cfg)
 	case "nat64":
@@ -2946,10 +2949,29 @@ func (c *CLI) showNATSourceRuleSet(cfg *config.Config, rsName string) error {
 	return nil
 }
 
-func (c *CLI) showNATDestination(cfg *config.Config) error {
+func (c *CLI) showNATDestination(cfg *config.Config, args []string) error {
 	if cfg == nil || cfg.Security.NAT.Destination == nil {
 		fmt.Println("No destination NAT rules configured.")
 		return nil
+	}
+
+	// Sub-command dispatch: summary, pool <name>, rule-set <name>
+	if len(args) > 0 {
+		switch args[0] {
+		case "summary":
+			return c.showNATDestinationSummary(cfg)
+		case "pool":
+			poolName := ""
+			if len(args) > 1 {
+				poolName = args[1]
+			}
+			return c.showNATDestinationPool(cfg, poolName)
+		case "rule-set":
+			if len(args) > 1 {
+				return c.showNATDestinationRuleSet(cfg, args[1])
+			}
+			return fmt.Errorf("usage: show security nat destination rule-set <name>")
+		}
 	}
 
 	dnat := cfg.Security.NAT.Destination
@@ -2982,6 +3004,18 @@ func (c *CLI) showNATDestination(cfg *config.Config) error {
 			if rule.Then.PoolName != "" {
 				fmt.Printf("    Then pool: %s\n", rule.Then.PoolName)
 			}
+
+			// Show hit counters if dataplane is loaded
+			if c.dp != nil && c.dp.LastCompileResult() != nil {
+				ruleKey := rs.Name + "/" + rule.Name
+				if cid, ok := c.dp.LastCompileResult().NATCounterIDs[ruleKey]; ok {
+					cnt, err := c.dp.ReadNATRuleCounter(uint32(cid))
+					if err == nil {
+						fmt.Printf("    Translation hits: %d packets  %d bytes\n",
+							cnt.Packets, cnt.Bytes)
+					}
+				}
+			}
 		}
 		fmt.Println()
 	}
@@ -3010,6 +3044,160 @@ func (c *CLI) showNATDestination(cfg *config.Config) error {
 		fmt.Printf("Active DNAT sessions: %d\n", dnatCount)
 	}
 
+	return nil
+}
+
+// showNATDestinationSummary displays a summary of all destination NAT pools.
+func (c *CLI) showNATDestinationSummary(cfg *config.Config) error {
+	dnat := cfg.Security.NAT.Destination
+	if dnat == nil || len(dnat.Pools) == 0 {
+		fmt.Println("No destination NAT pools configured")
+		return nil
+	}
+
+	// Count active DNAT sessions per pool
+	poolSessions := make(map[string]int)
+	if c.dp != nil && c.dp.IsLoaded() && c.dp.LastCompileResult() != nil {
+		cr := c.dp.LastCompileResult()
+		for _, rs := range dnat.RuleSets {
+			for _, rule := range rs.Rules {
+				if rule.Then.PoolName == "" {
+					continue
+				}
+				ruleKey := rs.Name + "/" + rule.Name
+				if cid, ok := cr.NATCounterIDs[ruleKey]; ok {
+					cnt, err := c.dp.ReadNATRuleCounter(uint32(cid))
+					if err == nil {
+						poolSessions[rule.Then.PoolName] += int(cnt.Packets)
+					}
+				}
+			}
+		}
+	}
+
+	fmt.Printf("Total pools: %d\n", len(dnat.Pools))
+	fmt.Printf("%-20s %-20s %-8s %-12s\n",
+		"Pool", "Address", "Port", "Hits")
+	for name, pool := range dnat.Pools {
+		portStr := "-"
+		if pool.Port != 0 {
+			portStr = fmt.Sprintf("%d", pool.Port)
+		}
+		hits := poolSessions[name]
+		fmt.Printf("%-20s %-20s %-8s %-12d\n",
+			name, pool.Address, portStr, hits)
+	}
+	return nil
+}
+
+// showNATDestinationPool displays detailed information about a specific DNAT pool.
+func (c *CLI) showNATDestinationPool(cfg *config.Config, poolName string) error {
+	dnat := cfg.Security.NAT.Destination
+	if dnat == nil || len(dnat.Pools) == 0 {
+		fmt.Println("No destination NAT pools configured")
+		return nil
+	}
+
+	showAll := poolName == "" || poolName == "all"
+
+	for name, pool := range dnat.Pools {
+		if !showAll && name != poolName {
+			continue
+		}
+		fmt.Printf("Pool name: %s\n", name)
+		fmt.Printf("  Address: %s\n", pool.Address)
+		if pool.Port != 0 {
+			fmt.Printf("  Port: %d\n", pool.Port)
+		}
+
+		// Show which rule-sets reference this pool
+		for _, rs := range dnat.RuleSets {
+			for _, rule := range rs.Rules {
+				if rule.Then.PoolName == name {
+					fmt.Printf("  Referenced by: %s/%s (from %s)\n",
+						rs.Name, rule.Name, rs.FromZone)
+				}
+			}
+		}
+
+		// Show hit counters from all rules referencing this pool
+		if c.dp != nil && c.dp.LastCompileResult() != nil {
+			cr := c.dp.LastCompileResult()
+			var totalPkts, totalBytes uint64
+			for _, rs := range dnat.RuleSets {
+				for _, rule := range rs.Rules {
+					if rule.Then.PoolName != name {
+						continue
+					}
+					ruleKey := rs.Name + "/" + rule.Name
+					if cid, ok := cr.NATCounterIDs[ruleKey]; ok {
+						cnt, err := c.dp.ReadNATRuleCounter(uint32(cid))
+						if err == nil {
+							totalPkts += cnt.Packets
+							totalBytes += cnt.Bytes
+						}
+					}
+				}
+			}
+			fmt.Printf("  Total hits: %d packets  %d bytes\n", totalPkts, totalBytes)
+		}
+		fmt.Println()
+	}
+
+	if !showAll {
+		if _, ok := dnat.Pools[poolName]; !ok {
+			fmt.Printf("Pool %q not found\n", poolName)
+		}
+	}
+	return nil
+}
+
+// showNATDestinationRuleSet displays a specific destination NAT rule-set with hit counters.
+func (c *CLI) showNATDestinationRuleSet(cfg *config.Config, rsName string) error {
+	dnat := cfg.Security.NAT.Destination
+	if dnat == nil {
+		fmt.Println("No destination NAT configured")
+		return nil
+	}
+
+	for _, rs := range dnat.RuleSets {
+		if rs.Name != rsName {
+			continue
+		}
+		fmt.Printf("Rule-set: %s\n", rs.Name)
+		fmt.Printf("  From zone: %s  To zone: %s\n", rs.FromZone, rs.ToZone)
+		for _, rule := range rs.Rules {
+			fmt.Printf("  Rule: %s\n", rule.Name)
+			dstMatch := "0.0.0.0/0"
+			if rule.Match.DestinationAddress != "" {
+				dstMatch = rule.Match.DestinationAddress
+			}
+			fmt.Printf("    Match destination-address: %s\n", dstMatch)
+			if rule.Match.DestinationPort != 0 {
+				fmt.Printf("    Match destination-port: %d\n", rule.Match.DestinationPort)
+			}
+			action := "off"
+			if rule.Then.PoolName != "" {
+				action = "pool " + rule.Then.PoolName
+			}
+			fmt.Printf("    Action: %s\n", action)
+
+			// Show hit counters if dataplane is loaded
+			if c.dp != nil && c.dp.LastCompileResult() != nil {
+				ruleKey := rs.Name + "/" + rule.Name
+				if cid, ok := c.dp.LastCompileResult().NATCounterIDs[ruleKey]; ok {
+					cnt, err := c.dp.ReadNATRuleCounter(uint32(cid))
+					if err == nil {
+						fmt.Printf("    Translation hits: %d packets  %d bytes\n",
+							cnt.Packets, cnt.Bytes)
+					}
+				}
+			}
+		}
+		fmt.Println()
+		return nil
+	}
+	fmt.Printf("Rule-set %q not found\n", rsName)
 	return nil
 }
 

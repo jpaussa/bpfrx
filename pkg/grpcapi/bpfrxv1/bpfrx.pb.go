@@ -5539,6 +5539,7 @@ func (x *MatchPoliciesResponse) GetMatched() bool {
 type GetNATRuleStatsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	RuleSet       string                 `protobuf:"bytes,1,opt,name=rule_set,json=ruleSet,proto3" json:"rule_set,omitempty"` // rule-set name (empty = all)
+	NatType       string                 `protobuf:"bytes,2,opt,name=nat_type,json=natType,proto3" json:"nat_type,omitempty"` // "source", "destination", or "" (source only for backward compat)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5576,6 +5577,13 @@ func (*GetNATRuleStatsRequest) Descriptor() ([]byte, []int) {
 func (x *GetNATRuleStatsRequest) GetRuleSet() string {
 	if x != nil {
 		return x.RuleSet
+	}
+	return ""
+}
+
+func (x *GetNATRuleStatsRequest) GetNatType() string {
+	if x != nil {
+		return x.NatType
 	}
 	return ""
 }
@@ -6483,9 +6491,10 @@ const file_bpfrx_proto_rawDesc = "" +
 	"\rsrc_addresses\x18\x03 \x03(\tR\fsrcAddresses\x12#\n" +
 	"\rdst_addresses\x18\x04 \x03(\tR\fdstAddresses\x12\"\n" +
 	"\fapplications\x18\x05 \x03(\tR\fapplications\x12\x18\n" +
-	"\amatched\x18\x06 \x01(\bR\amatched\"3\n" +
+	"\amatched\x18\x06 \x01(\bR\amatched\"N\n" +
 	"\x16GetNATRuleStatsRequest\x12\x19\n" +
-	"\brule_set\x18\x01 \x01(\tR\aruleSet\"G\n" +
+	"\brule_set\x18\x01 \x01(\tR\aruleSet\x12\x19\n" +
+	"\bnat_type\x18\x02 \x01(\tR\anatType\"G\n" +
 	"\x17GetNATRuleStatsResponse\x12,\n" +
 	"\x05rules\x18\x01 \x03(\v2\x16.bpfrx.v1.NATRuleStatsR\x05rules\"\xa2\x02\n" +
 	"\fNATRuleStats\x12\x19\n" +

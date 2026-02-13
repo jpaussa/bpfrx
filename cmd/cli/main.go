@@ -819,7 +819,10 @@ func (c *ctl) handleShowNAT(args []string) error {
 	if len(args) == 0 {
 		fmt.Println("show security nat:")
 		fmt.Println("  source           Show source NAT rules")
-		fmt.Println("  destination      Show destination NAT rules")
+		fmt.Println("  destination                  Show destination NAT rules")
+		fmt.Println("  destination summary          Show destination NAT pool summary")
+		fmt.Println("  destination pool <name|all>  Show destination NAT pool details")
+		fmt.Println("  destination rule-set <name>  Show destination NAT rule-set details")
 		fmt.Println("  static           Show static NAT rules")
 		fmt.Println("  nat64            Show NAT64 rule-sets")
 		return nil
@@ -856,6 +859,18 @@ func (c *ctl) handleShowNAT(args []string) error {
 		}
 		return nil
 	case "destination":
+		if len(args) >= 2 && args[1] == "summary" {
+			return c.showNATDestinationSummary()
+		}
+		if len(args) >= 2 && args[1] == "pool" {
+			return c.showNATDestinationPool()
+		}
+		if len(args) >= 3 && args[1] == "rule-set" {
+			return c.showNATDNATRuleStats(args[2])
+		}
+		if len(args) >= 2 && args[1] == "rule-set" {
+			return c.showNATDNATRuleStats("")
+		}
 		resp, err := c.client.GetNATDestination(context.Background(), &pb.GetNATDestinationRequest{})
 		if err != nil {
 			return fmt.Errorf("%v", err)
@@ -1043,6 +1058,112 @@ func (c *ctl) showNATRuleStats(ruleSet string) error {
 		}
 		fmt.Printf("  Rule: %s\n", r.RuleName)
 		fmt.Printf("    Match: source %s destination %s\n", r.SourceMatch, r.DestinationMatch)
+		fmt.Printf("    Action: %s\n", r.Action)
+		fmt.Printf("    Translation hits: %d packets  %d bytes\n", r.HitPackets, r.HitBytes)
+	}
+	fmt.Println()
+	return nil
+}
+
+func (c *ctl) showNATDestinationSummary() error {
+	resp, err := c.client.GetNATDestination(context.Background(), &pb.GetNATDestinationRequest{})
+	if err != nil {
+		return fmt.Errorf("%v", err)
+	}
+	if len(resp.Rules) == 0 {
+		fmt.Println("No destination NAT pools configured")
+		return nil
+	}
+
+	// Build pool info from rules
+	type poolInfo struct {
+		addr string
+		port uint32
+	}
+	pools := make(map[string]poolInfo)
+	for _, r := range resp.Rules {
+		if _, ok := pools[r.TranslateIp]; !ok {
+			pools[r.TranslateIp] = poolInfo{addr: r.TranslateIp, port: r.TranslatePort}
+		}
+	}
+
+	// Get hit counters via rule stats
+	statsResp, err := c.client.GetNATRuleStats(context.Background(), &pb.GetNATRuleStatsRequest{
+		NatType: "destination",
+	})
+	poolHits := make(map[string]uint64)
+	if err == nil {
+		for _, r := range statsResp.Rules {
+			poolHits[r.Action] += r.HitPackets
+		}
+	}
+
+	fmt.Printf("Total pools: %d\n", len(pools))
+	fmt.Printf("%-20s %-20s %-8s %-12s\n", "Pool", "Address", "Port", "Hits")
+	for addr, p := range pools {
+		portStr := "-"
+		if p.port > 0 {
+			portStr = fmt.Sprintf("%d", p.port)
+		}
+		fmt.Printf("%-20s %-20s %-8s %-12d\n", addr, addr, portStr, poolHits["pool "+addr])
+	}
+	return nil
+}
+
+func (c *ctl) showNATDestinationPool() error {
+	resp, err := c.client.GetNATDestination(context.Background(), &pb.GetNATDestinationRequest{})
+	if err != nil {
+		return fmt.Errorf("%v", err)
+	}
+	if len(resp.Rules) == 0 {
+		fmt.Println("No destination NAT pools configured")
+		return nil
+	}
+	for _, r := range resp.Rules {
+		fmt.Printf("Pool: %s\n", r.TranslateIp)
+		fmt.Printf("  Address: %s\n", r.TranslateIp)
+		if r.TranslatePort > 0 {
+			fmt.Printf("  Port: %d\n", r.TranslatePort)
+		}
+		fmt.Printf("  Rule: %s (dst %s", r.Name, r.DstAddr)
+		if r.DstPort > 0 {
+			fmt.Printf(":%d", r.DstPort)
+		}
+		fmt.Println(")")
+		fmt.Println()
+	}
+	return nil
+}
+
+func (c *ctl) showNATDNATRuleStats(ruleSet string) error {
+	resp, err := c.client.GetNATRuleStats(context.Background(), &pb.GetNATRuleStatsRequest{
+		RuleSet: ruleSet,
+		NatType: "destination",
+	})
+	if err != nil {
+		return fmt.Errorf("%v", err)
+	}
+	if len(resp.Rules) == 0 {
+		if ruleSet != "" {
+			fmt.Printf("Rule-set %q not found\n", ruleSet)
+		} else {
+			fmt.Println("No destination NAT rules configured")
+		}
+		return nil
+	}
+
+	curRS := ""
+	for _, r := range resp.Rules {
+		if r.RuleSet != curRS {
+			if curRS != "" {
+				fmt.Println()
+			}
+			curRS = r.RuleSet
+			fmt.Printf("Rule-set: %s\n", r.RuleSet)
+			fmt.Printf("  From zone: %s  To zone: %s\n", r.FromZone, r.ToZone)
+		}
+		fmt.Printf("  Rule: %s\n", r.RuleName)
+		fmt.Printf("    Match destination: %s\n", r.DestinationMatch)
 		fmt.Printf("    Action: %s\n", r.Action)
 		fmt.Printf("    Translation hits: %d packets  %d bytes\n", r.HitPackets, r.HitBytes)
 	}
