@@ -26,39 +26,47 @@ type Store struct {
 	configDir bool // true if in configuration mode
 	filePath  string
 
+	// Persistent storage
+	db      *DB
+	journal *Journal
+
 	// Commit confirmed state
 	confirmTimer    *time.Timer
 	confirmPrevTree *config.ConfigTree // active tree before confirmed commit
 	confirmPrevCfg  *config.Config     // compiled config before confirmed commit
-	autoRollbackFn  func(*config.Config) // callback for dataplane re-apply
+	centralRollbackFn func(*config.Config)   // callback for dataplane central-apply
 }
 
 // New creates a new config store.
 func New(filePath string) *Store {
+	dbDir := filepath.Join(filepath.Dir(filePath), ".configdb")
+	db, err := NewDB(dbDir)
+	if err != nil {
+		slog.Warn("failed to create config db, falling back to file-only", "err", err)
+	}
+
+	journalPath := filepath.Join(filepath.Dir(filePath), ".config.journal")
+
 	return &Store{
 		active:   &config.ConfigTree{},
 		history:  NewHistory(50),
 		filePath: filePath,
+		db:       db,
+		journal:  NewJournal(journalPath),
 	}
 }
 
-// Load loads the configuration from disk.
+// Load builds the configuration from disk.
 func (s *Store) Load() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	data, err := os.ReadFile(s.filePath)
+	tree, err := s.db.ReadActive()
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil // start with empty config
-		}
 		return fmt.Errorf("read config: %w", err)
 	}
-
-	parser := config.NewParser(string(data))
-	tree, errs := parser.Parse()
-	if len(errs) > 0 {
-		return fmt.Errorf("parse config: %s", errs[0].Error())
+	if tree == nil {
+		return nil // start fresh with empty config
 	}
 
 	compiled, err := config.CompileConfig(tree)
@@ -77,8 +85,7 @@ func (s *Store) Save() error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	data := s.active.Format()
-	return os.WriteFile(s.filePath, []byte(data), 0644)
+	return s.db.WriteActive(s.active)
 }
 
 // EnterConfigure enters configuration mode by cloning the active config.
@@ -306,23 +313,28 @@ func (s *Store) Commit() (*config.Config, error) {
 	s.dirty = false
 
 	// Persist to disk
-	data := s.active.Format()
-	if s.filePath != "" {
-		if err := os.WriteFile(s.filePath, []byte(data), 0644); err != nil {
-			// Non-fatal: log but don't fail the commit
-			fmt.Fprintf(os.Stderr, "warning: failed to save config: %v\n", err)
-		}
-		s.saveRollbackFiles()
+	if err := s.db.WriteActive(s.active); err != nil {
+		// Non-fatal: log but don't fail the commit
+		slog.Warn("failed to save config", "err", err)
 	}
+
+	// Log to journal
+	s.journal.Log(&JournalEntry{
+		Timestamp: time.Now(),
+		Action:    "commit",
+		After:     compiled,
+	})
+
+	s.saveRollbackFiles()
 
 	return compiled, nil
 }
 
-// SetAutoRollbackHandler registers a callback for auto-rollback dataplane re-apply.
-func (s *Store) SetAutoRollbackHandler(fn func(*config.Config)) {
+// SetCentralRollbackHandler registers a callback for central-rollback dataplane re-apply.
+func (s *Store) SetCentralRollbackHandler(fn func(*config.Config)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.autoRollbackFn = fn
+	s.centralRollbackFn = fn
 }
 
 // CommitConfirmed validates, compiles, and applies the candidate with an
@@ -368,13 +380,18 @@ func (s *Store) CommitConfirmed(minutes int) (*config.Config, error) {
 	s.dirty = false
 
 	// Persist to disk
-	data := s.active.Format()
-	if s.filePath != "" {
-		if err := os.WriteFile(s.filePath, []byte(data), 0644); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to save config: %v\n", err)
-		}
-		s.saveRollbackFiles()
+	if err := s.db.WriteActive(s.active); err != nil {
+		slog.Warn("failed to save config", "err", err)
 	}
+
+	// Log to journal
+	s.journal.Log(&JournalEntry{
+		Timestamp: time.Now(),
+		Action:    "commit_confirmed",
+		After:     compiled,
+	})
+
+	s.saveRollbackFiles()
 
 	// Start auto-rollback timer
 	s.confirmTimer = time.AfterFunc(time.Duration(minutes)*time.Minute, func() {
@@ -432,14 +449,18 @@ func (s *Store) performAutoRollback() {
 	s.confirmPrevCfg = nil
 
 	// Persist reverted config to disk
-	if s.filePath != "" {
-		data := s.active.Format()
-		if err := os.WriteFile(s.filePath, []byte(data), 0644); err != nil {
-			slog.Warn("failed to save reverted config", "err", err)
-		}
+	if err := s.db.WriteActive(s.active); err != nil {
+		slog.Warn("failed to save reverted config", "err", err)
 	}
 
-	fn := s.autoRollbackFn
+	// Log to journal
+	s.journal.Log(&JournalEntry{
+		Timestamp: time.Now(),
+		Action:    "auto_rollback",
+		After:     s.compiled,
+	})
+
+	fn := s.centralRollbackFn
 	s.mu.Unlock()
 
 	slog.Warn("commit confirmed timed out, configuration rolled back")
@@ -553,9 +574,9 @@ func (s *Store) saveRollbackFiles() {
 	s.cleanupRollbackFiles(len(entries) + 1)
 }
 
-// cleanupRollbackFiles removes stale rollback files starting from startIdx.
-func (s *Store) cleanupRollbackFiles(startIdx int) {
-	for i := startIdx; i <= s.history.MaxSize()+1; i++ {
+// cleanupRollbackFiles removes stale rollback files starting at startN.
+func (s *Store) cleanupRollbackFiles(startN int) {
+	for i := startN; i <= s.history.MaxSize()+1; i++ {
 		path := s.rollbackPath(i)
 		if err := os.Remove(path); err != nil {
 			break // stop on first not-found (contiguous sequence)
