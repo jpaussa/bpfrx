@@ -4516,3 +4516,237 @@ security {
 	}
 }
 
+func TestZoneSetSyntax(t *testing.T) {
+	tree := &ConfigTree{}
+	for _, cmd := range []string{
+		"set security zones security-zone trust interfaces trust0",
+		"set security zones security-zone trust interfaces trust1",
+		"set security zones security-zone trust screen untrust-screen",
+		"set security zones security-zone trust host-inbound-traffic system-services ping",
+		"set security zones security-zone trust host-inbound-traffic system-services ssh",
+		"set security zones security-zone trust host-inbound-traffic protocols ospf",
+		"set security zones security-zone untrust interfaces untrust0",
+	} {
+		if err := tree.SetPath(strings.Fields(cmd)[1:]); err != nil {
+			t.Fatalf("SetPath(%q): %v", cmd, err)
+		}
+	}
+
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+
+	trust := cfg.Security.Zones["trust"]
+	if trust == nil {
+		t.Fatal("trust zone not found")
+	}
+	if len(trust.Interfaces) != 2 {
+		t.Fatalf("trust interfaces = %v, want 2", trust.Interfaces)
+	}
+	if trust.ScreenProfile != "untrust-screen" {
+		t.Errorf("trust screen = %q, want untrust-screen", trust.ScreenProfile)
+	}
+	if trust.HostInboundTraffic == nil {
+		t.Fatal("trust host-inbound-traffic is nil")
+	}
+	if len(trust.HostInboundTraffic.SystemServices) != 2 {
+		t.Errorf("system-services = %v, want [ping ssh]", trust.HostInboundTraffic.SystemServices)
+	}
+	if len(trust.HostInboundTraffic.Protocols) != 1 || trust.HostInboundTraffic.Protocols[0] != "ospf" {
+		t.Errorf("protocols = %v, want [ospf]", trust.HostInboundTraffic.Protocols)
+	}
+
+	untrust := cfg.Security.Zones["untrust"]
+	if untrust == nil {
+		t.Fatal("untrust zone not found")
+	}
+	if len(untrust.Interfaces) != 1 || untrust.Interfaces[0] != "untrust0" {
+		t.Errorf("untrust interfaces = %v, want [untrust0]", untrust.Interfaces)
+	}
+}
+
+func TestScreenSetSyntax(t *testing.T) {
+	tree := &ConfigTree{}
+	for _, cmd := range []string{
+		"set security screen ids-option untrust-screen icmp ping-death",
+		"set security screen ids-option untrust-screen tcp land",
+		"set security screen ids-option untrust-screen tcp syn-flood alarm-threshold 1000",
+		"set security screen ids-option untrust-screen tcp syn-flood attack-threshold 500",
+		"set security screen ids-option untrust-screen ip source-route-option",
+	} {
+		if err := tree.SetPath(strings.Fields(cmd)[1:]); err != nil {
+			t.Fatalf("SetPath(%q): %v", cmd, err)
+		}
+	}
+
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+
+	profile := cfg.Security.Screen["untrust-screen"]
+	if profile == nil {
+		t.Fatal("screen profile not found")
+	}
+	if !profile.ICMP.PingDeath {
+		t.Error("PingDeath should be true")
+	}
+	if !profile.TCP.Land {
+		t.Error("Land should be true")
+	}
+	if profile.TCP.SynFlood == nil {
+		t.Fatal("SynFlood is nil")
+	}
+	if profile.TCP.SynFlood.AlarmThreshold != 1000 {
+		t.Errorf("AlarmThreshold = %d, want 1000", profile.TCP.SynFlood.AlarmThreshold)
+	}
+	if profile.TCP.SynFlood.AttackThreshold != 500 {
+		t.Errorf("AttackThreshold = %d, want 500", profile.TCP.SynFlood.AttackThreshold)
+	}
+	if !profile.IP.SourceRouteOption {
+		t.Error("SourceRouteOption should be true")
+	}
+}
+
+func TestNATSourceSetSyntax(t *testing.T) {
+	tree := &ConfigTree{}
+	for _, cmd := range []string{
+		"set security nat source pool snat-pool address 203.0.113.0/24",
+		"set security nat source rule-set trust-to-untrust from zone trust",
+		"set security nat source rule-set trust-to-untrust to zone untrust",
+		"set security nat source rule-set trust-to-untrust rule snat-rule match source-address 10.0.0.0/8",
+		"set security nat source rule-set trust-to-untrust rule snat-rule then source-nat interface",
+	} {
+		if err := tree.SetPath(strings.Fields(cmd)[1:]); err != nil {
+			t.Fatalf("SetPath(%q): %v", cmd, err)
+		}
+	}
+
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+
+	pool := cfg.Security.NAT.SourcePools["snat-pool"]
+	if pool == nil {
+		t.Fatal("source pool not found")
+	}
+	if len(pool.Addresses) != 1 || pool.Addresses[0] != "203.0.113.0/24" {
+		t.Errorf("pool addresses = %v, want [203.0.113.0/24]", pool.Addresses)
+	}
+
+	if len(cfg.Security.NAT.Source) != 1 {
+		t.Fatalf("got %d source rule-sets, want 1", len(cfg.Security.NAT.Source))
+	}
+	rs := cfg.Security.NAT.Source[0]
+	if rs.Name != "trust-to-untrust" {
+		t.Errorf("rule-set name = %q, want trust-to-untrust", rs.Name)
+	}
+	if rs.FromZone != "trust" {
+		t.Errorf("from zone = %q, want trust", rs.FromZone)
+	}
+	if rs.ToZone != "untrust" {
+		t.Errorf("to zone = %q, want untrust", rs.ToZone)
+	}
+	if len(rs.Rules) != 1 {
+		t.Fatalf("got %d rules, want 1", len(rs.Rules))
+	}
+	rule := rs.Rules[0]
+	if rule.Name != "snat-rule" {
+		t.Errorf("rule name = %q, want snat-rule", rule.Name)
+	}
+	if rule.Match.SourceAddress != "10.0.0.0/8" {
+		t.Errorf("match source = %q, want 10.0.0.0/8", rule.Match.SourceAddress)
+	}
+	if !rule.Then.Interface {
+		t.Error("then should be source-nat interface")
+	}
+}
+
+func TestPolicySetSyntax(t *testing.T) {
+	tree := &ConfigTree{}
+	for _, cmd := range []string{
+		"set security policies from-zone trust to-zone untrust policy allow-all match source-address any",
+		"set security policies from-zone trust to-zone untrust policy allow-all match destination-address any",
+		"set security policies from-zone trust to-zone untrust policy allow-all match application any",
+		"set security policies from-zone trust to-zone untrust policy allow-all then permit",
+		"set security policies from-zone trust to-zone untrust policy allow-all then log session-init",
+		"set security policies from-zone trust to-zone untrust policy allow-all then count",
+	} {
+		if err := tree.SetPath(strings.Fields(cmd)[1:]); err != nil {
+			t.Fatalf("SetPath(%q): %v", cmd, err)
+		}
+	}
+
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+
+	if len(cfg.Security.Policies) != 1 {
+		t.Fatalf("got %d zone-pair policies, want 1", len(cfg.Security.Policies))
+	}
+	zpp := cfg.Security.Policies[0]
+	if zpp.FromZone != "trust" || zpp.ToZone != "untrust" {
+		t.Errorf("zones = %s->%s, want trust->untrust", zpp.FromZone, zpp.ToZone)
+	}
+	if len(zpp.Policies) != 1 {
+		t.Fatalf("got %d policies, want 1", len(zpp.Policies))
+	}
+	pol := zpp.Policies[0]
+	if pol.Name != "allow-all" {
+		t.Errorf("policy name = %q, want allow-all", pol.Name)
+	}
+	if pol.Action != PolicyPermit {
+		t.Errorf("action = %d, want permit", pol.Action)
+	}
+	if pol.Log == nil || !pol.Log.SessionInit {
+		t.Error("log session-init should be true")
+	}
+	if !pol.Count {
+		t.Error("count should be true")
+	}
+	if len(pol.Match.SourceAddresses) != 1 || pol.Match.SourceAddresses[0] != "any" {
+		t.Errorf("source-address = %v, want [any]", pol.Match.SourceAddresses)
+	}
+}
+
+func TestApplicationSetSyntax(t *testing.T) {
+	tree := &ConfigTree{}
+	for _, cmd := range []string{
+		"set applications application my-http protocol tcp",
+		"set applications application my-http destination-port 8080",
+		"set applications application-set web-apps application my-http",
+		"set applications application-set web-apps application junos-https",
+	} {
+		if err := tree.SetPath(strings.Fields(cmd)[1:]); err != nil {
+			t.Fatalf("SetPath(%q): %v", cmd, err)
+		}
+	}
+
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+
+	app := cfg.Applications.Applications["my-http"]
+	if app == nil {
+		t.Fatal("application my-http not found")
+	}
+	if app.Protocol != "tcp" {
+		t.Errorf("protocol = %q, want tcp", app.Protocol)
+	}
+	if app.DestinationPort != "8080" {
+		t.Errorf("destination-port = %q, want 8080", app.DestinationPort)
+	}
+
+	as := cfg.Applications.ApplicationSets["web-apps"]
+	if as == nil {
+		t.Fatal("application-set web-apps not found")
+	}
+	if len(as.Applications) != 2 {
+		t.Fatalf("got %d apps in set, want 2", len(as.Applications))
+	}
+}
+
