@@ -327,3 +327,136 @@ site-b: #2, CONNECTING
 		t.Errorf("sa[1] state = %q, want CONNECTING", sas[1].State)
 	}
 }
+
+func TestGenerateConfig_IKEChain(t *testing.T) {
+	m := &Manager{configDir: "/tmp", configPath: "/tmp/bpfrx.conf"}
+	cfg := &config.IPsecConfig{
+		IKEProposals: map[string]*config.IKEProposal{
+			"ike-p1": {
+				Name:          "ike-p1",
+				EncryptionAlg: "aes-256-cbc",
+				AuthAlg:       "sha-256",
+				DHGroup:       14,
+			},
+		},
+		IKEPolicies: map[string]*config.IKEPolicy{
+			"ike-pol": {
+				Name:      "ike-pol",
+				Mode:      "main",
+				Proposals: "ike-p1",
+				PSK:       "secret123",
+			},
+		},
+		Gateways: map[string]*config.IPsecGateway{
+			"gw1": {
+				Name:            "gw1",
+				Address:         "203.0.113.1",
+				LocalAddress:    "198.51.100.1",
+				IKEPolicy:       "ike-pol",
+				Version:         "v2-only",
+				NoNATTraversal:  true,
+				DeadPeerDetect:  "always-send",
+				LocalIDType:     "hostname",
+				LocalIDValue:    "vpn.example.com",
+				RemoteIDType:    "inet",
+				RemoteIDValue:   "203.0.113.1",
+			},
+		},
+		Proposals: map[string]*config.IPsecProposal{
+			"esp-p2": {
+				Name:          "esp-p2",
+				EncryptionAlg: "aes-256-cbc",
+				AuthAlg:       "hmac-sha-256-128",
+				DHGroup:       14,
+			},
+		},
+		Policies: map[string]*config.IPsecPolicyDef{
+			"ipsec-pol": {
+				Name:      "ipsec-pol",
+				PFSGroup:  14,
+				Proposals: "esp-p2",
+			},
+		},
+		VPNs: map[string]*config.IPsecVPN{
+			"site-a": {
+				Name:             "site-a",
+				Gateway:          "gw1",
+				IPsecPolicy:      "ipsec-pol",
+				BindInterface:    "st0.0",
+				DFBit:            "copy",
+				EstablishTunnels: "immediately",
+			},
+		},
+	}
+	got := m.generateConfig(cfg)
+
+	checks := []struct {
+		name string
+		want string
+	}{
+		{"IKE version", "version = 2"},
+		{"local addr", "local_addrs = 198.51.100.1"},
+		{"remote addr", "remote_addrs = 203.0.113.1"},
+		{"no NAT-T", "encap = no"},
+		{"DPD", "dpd_delay = 10s"},
+		{"local identity", "id = @vpn.example.com"},
+		{"remote identity", "id = 203.0.113.1"},
+		{"IKE proposal", "proposals = aes256-sha256-modp2048"},
+		{"ESP proposal", "esp_proposals = aes256-sha256128-modp2048"},
+		{"copy DF", "copy_df = yes"},
+		{"start action", "start_action = start"},
+		{"XFRM if_id", "if_id_in = 1"},
+		{"PSK from IKE policy", `secret = "secret123"`},
+	}
+	for _, c := range checks {
+		if !strings.Contains(got, c.want) {
+			t.Errorf("%s: missing %q in:\n%s", c.name, c.want, got)
+		}
+	}
+}
+
+func TestGenerateConfig_DynamicHostname(t *testing.T) {
+	m := &Manager{configDir: "/tmp", configPath: "/tmp/bpfrx.conf"}
+	cfg := &config.IPsecConfig{
+		Gateways: map[string]*config.IPsecGateway{
+			"dyn-gw": {
+				Name:            "dyn-gw",
+				DynamicHostname: "peer.example.com",
+				IKEPolicy:       "pol1",
+				Version:         "v2-only",
+			},
+		},
+		Proposals: map[string]*config.IPsecProposal{},
+		VPNs: map[string]*config.IPsecVPN{
+			"tun1": {
+				Gateway:       "dyn-gw",
+				BindInterface: "st0.1",
+				PSK:           "key456",
+			},
+		},
+	}
+	got := m.generateConfig(cfg)
+	if !strings.Contains(got, "remote_addrs = peer.example.com") {
+		t.Errorf("dynamic hostname not used as remote_addrs: %s", got)
+	}
+	if !strings.Contains(got, "version = 2") {
+		t.Errorf("version not set: %s", got)
+	}
+}
+
+func TestFormatIdentity(t *testing.T) {
+	tests := []struct {
+		idType, idValue, want string
+	}{
+		{"hostname", "vpn.example.com", "@vpn.example.com"},
+		{"fqdn", "peer.example.com", "@peer.example.com"},
+		{"inet", "10.0.0.1", "10.0.0.1"},
+		{"", "10.0.0.1", "10.0.0.1"},
+	}
+	for _, tt := range tests {
+		got := formatIdentity(tt.idType, tt.idValue)
+		if got != tt.want {
+			t.Errorf("formatIdentity(%q, %q) = %q, want %q", tt.idType, tt.idValue, got, tt.want)
+		}
+	}
+}

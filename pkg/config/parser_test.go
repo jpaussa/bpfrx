@@ -2911,6 +2911,275 @@ func TestIPsecGatewaySetSyntax(t *testing.T) {
 	}
 }
 
+func TestIKEAdvancedFeatures(t *testing.T) {
+	input := `security {
+    ike {
+        proposal ike-phase1 {
+            authentication-method pre-shared-keys;
+            dh-group group14;
+            authentication-algorithm sha-256;
+            encryption-algorithm aes-256-cbc;
+            lifetime-seconds 28800;
+        }
+        policy ike-pol {
+            mode main;
+            proposals ike-phase1;
+            pre-shared-key ascii-text "secret123";
+        }
+        gateway remote-gw {
+            ike-policy ike-pol;
+            address 203.0.113.1;
+            dead-peer-detection always-send;
+            no-nat-traversal;
+            local-identity hostname vpn.example.com;
+            remote-identity inet 203.0.113.1;
+            external-interface wan0;
+            local-address 198.51.100.1;
+            version v2-only;
+        }
+        gateway dynamic-gw {
+            ike-policy ike-pol;
+            dynamic hostname peer.example.com;
+            local-identity hostname vpn.example.com;
+            external-interface wan0;
+            version v2-only;
+        }
+    }
+    ipsec {
+        proposal esp-phase2 {
+            protocol esp;
+            encryption-algorithm aes-256-cbc;
+            authentication-algorithm hmac-sha-256-128;
+            lifetime-seconds 3600;
+        }
+        policy ipsec-pol {
+            perfect-forward-secrecy {
+                keys group14;
+            }
+            proposals esp-phase2;
+        }
+        vpn site-a {
+            bind-interface st0.0;
+            df-bit copy;
+            ike {
+                gateway remote-gw;
+                ipsec-policy ipsec-pol;
+            }
+            establish-tunnels immediately;
+        }
+    }
+}`
+	parser := NewParser(input)
+	tree, errs := parser.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	// IKE proposal
+	ikeProp := cfg.Security.IPsec.IKEProposals["ike-phase1"]
+	if ikeProp == nil {
+		t.Fatal("missing IKE proposal ike-phase1")
+	}
+	if ikeProp.AuthMethod != "pre-shared-keys" {
+		t.Errorf("IKE proposal auth-method = %q", ikeProp.AuthMethod)
+	}
+	if ikeProp.DHGroup != 14 {
+		t.Errorf("IKE proposal dh-group = %d, want 14", ikeProp.DHGroup)
+	}
+	if ikeProp.EncryptionAlg != "aes-256-cbc" {
+		t.Errorf("IKE proposal enc = %q", ikeProp.EncryptionAlg)
+	}
+	if ikeProp.LifetimeSeconds != 28800 {
+		t.Errorf("IKE proposal lifetime = %d", ikeProp.LifetimeSeconds)
+	}
+
+	// IKE policy
+	ikePol := cfg.Security.IPsec.IKEPolicies["ike-pol"]
+	if ikePol == nil {
+		t.Fatal("missing IKE policy ike-pol")
+	}
+	if ikePol.Mode != "main" {
+		t.Errorf("IKE policy mode = %q", ikePol.Mode)
+	}
+	if ikePol.Proposals != "ike-phase1" {
+		t.Errorf("IKE policy proposals = %q", ikePol.Proposals)
+	}
+	if ikePol.PSK != "secret123" {
+		t.Errorf("IKE policy PSK = %q", ikePol.PSK)
+	}
+
+	// Gateway with static address
+	gw := cfg.Security.IPsec.Gateways["remote-gw"]
+	if gw == nil {
+		t.Fatal("missing gateway remote-gw")
+	}
+	if gw.Address != "203.0.113.1" {
+		t.Errorf("gateway address = %q", gw.Address)
+	}
+	if gw.Version != "v2-only" {
+		t.Errorf("gateway version = %q", gw.Version)
+	}
+	if !gw.NoNATTraversal {
+		t.Error("gateway no-nat-traversal not set")
+	}
+	if gw.DeadPeerDetect != "always-send" {
+		t.Errorf("gateway dpd = %q", gw.DeadPeerDetect)
+	}
+	if gw.LocalIDType != "hostname" || gw.LocalIDValue != "vpn.example.com" {
+		t.Errorf("gateway local-identity = %q %q", gw.LocalIDType, gw.LocalIDValue)
+	}
+	if gw.RemoteIDType != "inet" || gw.RemoteIDValue != "203.0.113.1" {
+		t.Errorf("gateway remote-identity = %q %q", gw.RemoteIDType, gw.RemoteIDValue)
+	}
+
+	// Gateway with dynamic hostname
+	dynGw := cfg.Security.IPsec.Gateways["dynamic-gw"]
+	if dynGw == nil {
+		t.Fatal("missing gateway dynamic-gw")
+	}
+	if dynGw.DynamicHostname != "peer.example.com" {
+		t.Errorf("dynamic gateway hostname = %q", dynGw.DynamicHostname)
+	}
+
+	// IPsec policy (PFS)
+	ipsecPol := cfg.Security.IPsec.Policies["ipsec-pol"]
+	if ipsecPol == nil {
+		t.Fatal("missing IPsec policy ipsec-pol")
+	}
+	if ipsecPol.PFSGroup != 14 {
+		t.Errorf("IPsec policy PFS group = %d, want 14", ipsecPol.PFSGroup)
+	}
+	if ipsecPol.Proposals != "esp-phase2" {
+		t.Errorf("IPsec policy proposals = %q", ipsecPol.Proposals)
+	}
+
+	// VPN with nested ike {} block
+	vpn := cfg.Security.IPsec.VPNs["site-a"]
+	if vpn == nil {
+		t.Fatal("missing VPN site-a")
+	}
+	if vpn.Gateway != "remote-gw" {
+		t.Errorf("vpn gateway = %q", vpn.Gateway)
+	}
+	if vpn.IPsecPolicy != "ipsec-pol" {
+		t.Errorf("vpn ipsec-policy = %q", vpn.IPsecPolicy)
+	}
+	if vpn.DFBit != "copy" {
+		t.Errorf("vpn df-bit = %q", vpn.DFBit)
+	}
+	if vpn.EstablishTunnels != "immediately" {
+		t.Errorf("vpn establish-tunnels = %q", vpn.EstablishTunnels)
+	}
+	if vpn.BindInterface != "st0.0" {
+		t.Errorf("vpn bind-interface = %q", vpn.BindInterface)
+	}
+}
+
+func TestIKEAdvancedSetSyntax(t *testing.T) {
+	setCommands := []string{
+		`set security ike proposal ike-p1 authentication-method pre-shared-keys`,
+		`set security ike proposal ike-p1 dh-group group14`,
+		`set security ike proposal ike-p1 encryption-algorithm aes-256-cbc`,
+		`set security ike policy pol1 mode main`,
+		`set security ike policy pol1 proposals ike-p1`,
+		`set security ike policy pol1 pre-shared-key ascii-text mysecret`,
+		`set security ike gateway gw1 ike-policy pol1`,
+		`set security ike gateway gw1 address 10.0.0.1`,
+		`set security ike gateway gw1 version v2-only`,
+		`set security ike gateway gw1 no-nat-traversal`,
+		`set security ike gateway gw1 dead-peer-detection always-send`,
+		`set security ike gateway gw1 local-identity hostname vpn.test.com`,
+		`set security ike gateway gw1 remote-identity inet 10.0.0.1`,
+		`set security ipsec policy ipsec-pol perfect-forward-secrecy keys group5`,
+		`set security ipsec policy ipsec-pol proposals esp-p2`,
+		`set security ipsec vpn tun1 bind-interface st0.0`,
+		`set security ipsec vpn tun1 df-bit copy`,
+		`set security ipsec vpn tun1 establish-tunnels immediately`,
+		`set security ipsec vpn tun1 ike gateway gw1`,
+		`set security ipsec vpn tun1 ike ipsec-policy ipsec-pol`,
+	}
+
+	tree := &ConfigTree{}
+	for _, cmd := range setCommands {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%v): %v", path, err)
+		}
+	}
+
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	// IKE proposal
+	ikeProp := cfg.Security.IPsec.IKEProposals["ike-p1"]
+	if ikeProp == nil {
+		t.Fatal("missing IKE proposal")
+	}
+	if ikeProp.DHGroup != 14 {
+		t.Errorf("dh-group = %d, want 14", ikeProp.DHGroup)
+	}
+
+	// IKE policy
+	ikePol := cfg.Security.IPsec.IKEPolicies["pol1"]
+	if ikePol == nil {
+		t.Fatal("missing IKE policy")
+	}
+	if ikePol.PSK != "mysecret" {
+		t.Errorf("PSK = %q", ikePol.PSK)
+	}
+
+	// Gateway
+	gw := cfg.Security.IPsec.Gateways["gw1"]
+	if gw == nil {
+		t.Fatal("missing gateway")
+	}
+	if gw.Version != "v2-only" {
+		t.Errorf("version = %q", gw.Version)
+	}
+	if !gw.NoNATTraversal {
+		t.Error("no-nat-traversal not set")
+	}
+	if gw.LocalIDType != "hostname" || gw.LocalIDValue != "vpn.test.com" {
+		t.Errorf("local-identity = %q %q", gw.LocalIDType, gw.LocalIDValue)
+	}
+
+	// IPsec policy
+	ipsecPol := cfg.Security.IPsec.Policies["ipsec-pol"]
+	if ipsecPol == nil {
+		t.Fatal("missing IPsec policy")
+	}
+	if ipsecPol.PFSGroup != 5 {
+		t.Errorf("PFS group = %d, want 5", ipsecPol.PFSGroup)
+	}
+
+	// VPN
+	vpn := cfg.Security.IPsec.VPNs["tun1"]
+	if vpn == nil {
+		t.Fatal("missing VPN")
+	}
+	if vpn.DFBit != "copy" {
+		t.Errorf("df-bit = %q", vpn.DFBit)
+	}
+	if vpn.EstablishTunnels != "immediately" {
+		t.Errorf("establish-tunnels = %q", vpn.EstablishTunnels)
+	}
+	if vpn.Gateway != "gw1" {
+		t.Errorf("gateway = %q", vpn.Gateway)
+	}
+	if vpn.IPsecPolicy != "ipsec-pol" {
+		t.Errorf("ipsec-policy = %q", vpn.IPsecPolicy)
+	}
+}
+
 func TestHostInboundIPsec(t *testing.T) {
 	input := `security {
     zones {

@@ -716,12 +716,36 @@ type TunnelConfig struct {
 
 // IPsecConfig holds IPsec VPN configuration.
 type IPsecConfig struct {
+	// Phase 1 (IKE)
+	IKEProposals map[string]*IKEProposal
+	IKEPolicies  map[string]*IKEPolicy
+	Gateways     map[string]*IPsecGateway
+
+	// Phase 2 (IPsec)
 	Proposals map[string]*IPsecProposal
-	Gateways  map[string]*IPsecGateway
+	Policies  map[string]*IPsecPolicyDef
 	VPNs      map[string]*IPsecVPN
 }
 
-// IPsecProposal defines encryption and authentication parameters.
+// IKEProposal defines Phase 1 (IKE) negotiation parameters.
+type IKEProposal struct {
+	Name            string
+	AuthMethod      string // "pre-shared-keys"
+	EncryptionAlg   string // "aes-256-cbc"
+	AuthAlg         string // "sha-256"
+	DHGroup         int    // DH group number
+	LifetimeSeconds int
+}
+
+// IKEPolicy defines Phase 1 policy (mode, proposal reference, PSK).
+type IKEPolicy struct {
+	Name      string
+	Mode      string // "main" or "aggressive"
+	Proposals string // IKE proposal reference
+	PSK       string // pre-shared key
+}
+
+// IPsecProposal defines Phase 2 (ESP) encryption and authentication parameters.
 type IPsecProposal struct {
 	Name            string
 	Protocol        string // "esp"
@@ -731,25 +755,42 @@ type IPsecProposal struct {
 	LifetimeSeconds int
 }
 
+// IPsecPolicyDef defines Phase 2 policy (PFS + proposal reference).
+type IPsecPolicyDef struct {
+	Name       string
+	PFSGroup   int    // PFS DH group number (0 = disabled)
+	Proposals  string // IPsec proposal reference
+}
+
 // IPsecGateway defines a remote IKE gateway.
 type IPsecGateway struct {
-	Name          string
-	Address       string // remote gateway IP
-	LocalAddress  string // local IP
-	IKEPolicy     string // ike proposal reference
-	ExternalIface string // external-facing interface
+	Name             string
+	Address          string // remote gateway IP
+	DynamicHostname  string // dynamic peer hostname (DNS-resolved)
+	LocalAddress     string // local IP
+	IKEPolicy        string // IKE policy reference
+	ExternalIface    string // external-facing interface
+	Version          string // "v1-only", "v2-only" (empty = both)
+	NoNATTraversal   bool   // disable NAT-T
+	DeadPeerDetect   string // "always-send", "optimized", "probe-idle"
+	LocalIDType      string // "hostname", "inet", "fqdn"
+	LocalIDValue     string // identity value
+	RemoteIDType     string // "hostname", "inet", "fqdn"
+	RemoteIDValue    string // identity value
 }
 
 // IPsecVPN defines an IPsec VPN tunnel.
 type IPsecVPN struct {
-	Name          string
-	Gateway       string // remote gateway IP or gateway reference
-	IPsecPolicy   string // reference to IPsecProposal
-	LocalID       string // local traffic selector (CIDR)
-	RemoteID      string // remote traffic selector (CIDR)
-	PSK           string // pre-shared key
-	LocalAddr     string // local address
-	BindInterface string // tunnel interface (e.g. "st0.0") — creates xfrmi with if_id
+	Name             string
+	Gateway          string // gateway reference
+	IPsecPolicy      string // IPsec policy reference
+	LocalID          string // local traffic selector (CIDR)
+	RemoteID         string // remote traffic selector (CIDR)
+	PSK              string // pre-shared key (legacy, prefer IKE policy)
+	LocalAddr        string // local address
+	BindInterface    string // tunnel interface (e.g. "st0.0") — creates xfrmi with if_id
+	DFBit            string // "copy", "set", "clear"
+	EstablishTunnels string // "immediately", "on-traffic"
 }
 
 // RoutingInstanceConfig represents a VRF-based routing instance.

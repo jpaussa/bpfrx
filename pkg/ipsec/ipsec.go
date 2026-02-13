@@ -81,19 +81,27 @@ func (m *Manager) generateConfig(ipsecCfg *config.IPsecConfig) string {
 	for name, vpn := range ipsecCfg.VPNs {
 		fmt.Fprintf(&b, "  %s {\n", name)
 
-		// Resolve gateway reference: if vpn.Gateway matches a named gateway,
-		// use the gateway's address and local-address.
+		// Resolve gateway reference
 		remoteAddr := vpn.Gateway
 		localAddr := vpn.LocalAddr
-		ikePolicy := ""
-		if gw, ok := ipsecCfg.Gateways[vpn.Gateway]; ok {
+		var gw *config.IPsecGateway
+		if g, ok := ipsecCfg.Gateways[vpn.Gateway]; ok {
+			gw = g
 			if gw.Address != "" {
 				remoteAddr = gw.Address
+			} else if gw.DynamicHostname != "" {
+				remoteAddr = gw.DynamicHostname
 			}
 			if gw.LocalAddress != "" && localAddr == "" {
 				localAddr = gw.LocalAddress
 			}
-			ikePolicy = gw.IKEPolicy
+		}
+
+		// IKE version
+		if gw != nil && gw.Version == "v2-only" {
+			b.WriteString("    version = 2\n")
+		} else if gw != nil && gw.Version == "v1-only" {
+			b.WriteString("    version = 1\n")
 		}
 
 		if localAddr != "" {
@@ -103,26 +111,69 @@ func (m *Manager) generateConfig(ipsecCfg *config.IPsecConfig) string {
 			fmt.Fprintf(&b, "    remote_addrs = %s\n", remoteAddr)
 		}
 
+		// NAT traversal
+		if gw != nil && gw.NoNATTraversal {
+			b.WriteString("    encap = no\n")
+		}
+
+		// DPD
+		if gw != nil && gw.DeadPeerDetect != "" {
+			b.WriteString("    dpd_delay = 10s\n")
+		}
+
+		// Local auth section
 		b.WriteString("    local {\n")
 		b.WriteString("      auth = psk\n")
-		b.WriteString("    }\n")
-		b.WriteString("    remote {\n")
-		b.WriteString("      auth = psk\n")
+		if gw != nil && gw.LocalIDValue != "" {
+			fmt.Fprintf(&b, "      id = %s\n", formatIdentity(gw.LocalIDType, gw.LocalIDValue))
+		}
 		b.WriteString("    }\n")
 
-		// Build IKE proposals from gateway's ike-policy reference
-		if ikePolicy != "" {
-			if prop, ok := ipsecCfg.Proposals[ikePolicy]; ok {
-				fmt.Fprintf(&b, "    proposals = %s\n", buildIKEProposal(prop))
+		// Remote auth section
+		b.WriteString("    remote {\n")
+		b.WriteString("      auth = psk\n")
+		if gw != nil && gw.RemoteIDValue != "" {
+			fmt.Fprintf(&b, "      id = %s\n", formatIdentity(gw.RemoteIDType, gw.RemoteIDValue))
+		}
+		b.WriteString("    }\n")
+
+		// Build IKE proposals: gateway.IKEPolicy -> IKEPolicy -> IKEProposal
+		if gw != nil && gw.IKEPolicy != "" {
+			if ikePol, ok := ipsecCfg.IKEPolicies[gw.IKEPolicy]; ok {
+				if ikeProp, ok := ipsecCfg.IKEProposals[ikePol.Proposals]; ok {
+					fmt.Fprintf(&b, "    proposals = %s\n", buildIKEProposalFromIKE(ikeProp))
+				}
+			}
+			// Fallback: try IPsec proposals directly (legacy config)
+			if !hasIKEChain(ipsecCfg, gw.IKEPolicy) {
+				if prop, ok := ipsecCfg.Proposals[gw.IKEPolicy]; ok {
+					fmt.Fprintf(&b, "    proposals = %s\n", buildIKEProposal(prop))
+				}
 			}
 		}
 
-		// Build ESP proposals string from referenced proposal
+		// Build ESP proposals: vpn.IPsecPolicy -> IPsecPolicyDef -> IPsecProposal
 		espProposals := "default"
+		pfsGroup := 0
 		if vpn.IPsecPolicy != "" {
-			if prop, ok := ipsecCfg.Proposals[vpn.IPsecPolicy]; ok {
+			if ipsecPol, ok := ipsecCfg.Policies[vpn.IPsecPolicy]; ok {
+				pfsGroup = ipsecPol.PFSGroup
+				propRef := ipsecPol.Proposals
+				if propRef == "" {
+					propRef = vpn.IPsecPolicy
+				}
+				if prop, ok := ipsecCfg.Proposals[propRef]; ok {
+					espProposals = buildESPProposal(prop)
+				}
+			} else if prop, ok := ipsecCfg.Proposals[vpn.IPsecPolicy]; ok {
+				// Fallback: direct proposal reference (legacy)
 				espProposals = buildESPProposal(prop)
 			}
+		}
+
+		// Start immediately?
+		if vpn.EstablishTunnels == "immediately" {
+			b.WriteString("    start_action = start\n")
 		}
 
 		// Compute XFRM interface ID from bind-interface name
@@ -137,6 +188,17 @@ func (m *Manager) generateConfig(ipsecCfg *config.IPsecConfig) string {
 			fmt.Fprintf(&b, "        remote_ts = %s\n", vpn.RemoteID)
 		}
 		fmt.Fprintf(&b, "        esp_proposals = %s\n", espProposals)
+		if pfsGroup > 0 {
+			fmt.Fprintf(&b, "        dpd_action = restart\n")
+		}
+		if vpn.DFBit == "copy" {
+			fmt.Fprintf(&b, "        copy_df = yes\n")
+		} else if vpn.DFBit == "set" {
+			fmt.Fprintf(&b, "        copy_df = no\n")
+		}
+		if vpn.EstablishTunnels == "immediately" {
+			fmt.Fprintf(&b, "        start_action = start\n")
+		}
 		if ifID > 0 {
 			fmt.Fprintf(&b, "        if_id_in = %d\n", ifID)
 			fmt.Fprintf(&b, "        if_id_out = %d\n", ifID)
@@ -148,14 +210,16 @@ func (m *Manager) generateConfig(ipsecCfg *config.IPsecConfig) string {
 	}
 	b.WriteString("}\n\n")
 
-	// Secrets
+	// Secrets — resolve PSK from IKE policy chain
 	b.WriteString("secrets {\n")
 	for name, vpn := range ipsecCfg.VPNs {
 		secret := vpn.PSK
-		// If VPN references a gateway, check gateway for PSK too
+		// Resolve PSK from IKE policy chain: VPN -> gateway -> IKE policy -> PSK
 		if secret == "" {
 			if gw, ok := ipsecCfg.Gateways[vpn.Gateway]; ok {
-				_ = gw // gateway PSK stored in VPN.PSK for now
+				if ikePol, ok := ipsecCfg.IKEPolicies[gw.IKEPolicy]; ok {
+					secret = ikePol.PSK
+				}
 			}
 		}
 		if secret != "" {
@@ -167,6 +231,58 @@ func (m *Manager) generateConfig(ipsecCfg *config.IPsecConfig) string {
 	b.WriteString("}\n")
 
 	return b.String()
+}
+
+// hasIKEChain checks if the IKE policy -> IKE proposal chain is available.
+func hasIKEChain(cfg *config.IPsecConfig, ikePolicyName string) bool {
+	if cfg.IKEPolicies == nil {
+		return false
+	}
+	pol, ok := cfg.IKEPolicies[ikePolicyName]
+	if !ok {
+		return false
+	}
+	if cfg.IKEProposals == nil {
+		return false
+	}
+	_, ok = cfg.IKEProposals[pol.Proposals]
+	return ok
+}
+
+// formatIdentity formats an IKE identity for strongSwan.
+func formatIdentity(idType, idValue string) string {
+	switch idType {
+	case "hostname", "fqdn":
+		return "@" + idValue
+	default: // "inet", "ipv4", etc.
+		return idValue
+	}
+}
+
+// buildIKEProposalFromIKE builds a swanctl IKE proposal string from an IKE proposal.
+func buildIKEProposalFromIKE(prop *config.IKEProposal) string {
+	var parts []string
+
+	enc := prop.EncryptionAlg
+	if enc == "" {
+		enc = "aes256"
+	}
+	enc = strings.ReplaceAll(enc, "-cbc", "")
+	enc = strings.ReplaceAll(enc, "-", "")
+	parts = append(parts, enc)
+
+	if prop.AuthAlg != "" && !strings.Contains(prop.EncryptionAlg, "gcm") {
+		auth := prop.AuthAlg
+		auth = strings.ReplaceAll(auth, "hmac-", "")
+		auth = strings.ReplaceAll(auth, "-", "")
+		parts = append(parts, auth)
+	}
+
+	if prop.DHGroup > 0 {
+		parts = append(parts, fmt.Sprintf("modp%d", dhGroupBits(prop.DHGroup)))
+	}
+
+	return strings.Join(parts, "-")
 }
 
 // buildIKEProposal builds a swanctl IKE (Phase 1) proposal string from a proposal config.
