@@ -261,6 +261,13 @@ func parseSAOutput(output string) []SAStatus {
 			}
 			name := strings.TrimSuffix(strings.Fields(trimmed)[0], ":")
 			current = &SAStatus{Name: name}
+			// Extract state from the connection name line (e.g. "site-a: #1, ESTABLISHED")
+			for _, word := range []string{"ESTABLISHED", "CONNECTING", "INSTALLED", "REKEYING"} {
+				if strings.Contains(trimmed, word) {
+					current.State = word
+					break
+				}
+			}
 			continue
 		}
 
