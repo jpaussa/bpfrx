@@ -24,6 +24,7 @@ const (
 	BpfrxService_GetConfigModeStatus_FullMethodName       = "/bpfrx.v1.BpfrxService/GetConfigModeStatus"
 	BpfrxService_Set_FullMethodName                       = "/bpfrx.v1.BpfrxService/Set"
 	BpfrxService_Delete_FullMethodName                    = "/bpfrx.v1.BpfrxService/Delete"
+	BpfrxService_Load_FullMethodName                      = "/bpfrx.v1.BpfrxService/Load"
 	BpfrxService_Commit_FullMethodName                    = "/bpfrx.v1.BpfrxService/Commit"
 	BpfrxService_CommitCheck_FullMethodName               = "/bpfrx.v1.BpfrxService/CommitCheck"
 	BpfrxService_CommitConfirmed_FullMethodName           = "/bpfrx.v1.BpfrxService/CommitConfirmed"
@@ -78,6 +79,7 @@ type BpfrxServiceClient interface {
 	GetConfigModeStatus(ctx context.Context, in *GetConfigModeStatusRequest, opts ...grpc.CallOption) (*GetConfigModeStatusResponse, error)
 	Set(ctx context.Context, in *SetRequest, opts ...grpc.CallOption) (*SetResponse, error)
 	Delete(ctx context.Context, in *DeleteRequest, opts ...grpc.CallOption) (*DeleteResponse, error)
+	Load(ctx context.Context, in *LoadRequest, opts ...grpc.CallOption) (*LoadResponse, error)
 	Commit(ctx context.Context, in *CommitRequest, opts ...grpc.CallOption) (*CommitResponse, error)
 	CommitCheck(ctx context.Context, in *CommitCheckRequest, opts ...grpc.CallOption) (*CommitCheckResponse, error)
 	CommitConfirmed(ctx context.Context, in *CommitConfirmedRequest, opts ...grpc.CallOption) (*CommitConfirmedResponse, error)
@@ -179,6 +181,16 @@ func (c *bpfrxServiceClient) Delete(ctx context.Context, in *DeleteRequest, opts
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DeleteResponse)
 	err := c.cc.Invoke(ctx, BpfrxService_Delete_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *bpfrxServiceClient) Load(ctx context.Context, in *LoadRequest, opts ...grpc.CallOption) (*LoadResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LoadResponse)
+	err := c.cc.Invoke(ctx, BpfrxService_Load_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -597,6 +609,7 @@ type BpfrxServiceServer interface {
 	GetConfigModeStatus(context.Context, *GetConfigModeStatusRequest) (*GetConfigModeStatusResponse, error)
 	Set(context.Context, *SetRequest) (*SetResponse, error)
 	Delete(context.Context, *DeleteRequest) (*DeleteResponse, error)
+	Load(context.Context, *LoadRequest) (*LoadResponse, error)
 	Commit(context.Context, *CommitRequest) (*CommitResponse, error)
 	CommitCheck(context.Context, *CommitCheckRequest) (*CommitCheckResponse, error)
 	CommitConfirmed(context.Context, *CommitConfirmedRequest) (*CommitConfirmedResponse, error)
@@ -668,6 +681,9 @@ func (UnimplementedBpfrxServiceServer) Set(context.Context, *SetRequest) (*SetRe
 }
 func (UnimplementedBpfrxServiceServer) Delete(context.Context, *DeleteRequest) (*DeleteResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Delete not implemented")
+}
+func (UnimplementedBpfrxServiceServer) Load(context.Context, *LoadRequest) (*LoadResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Load not implemented")
 }
 func (UnimplementedBpfrxServiceServer) Commit(context.Context, *CommitRequest) (*CommitResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Commit not implemented")
@@ -896,6 +912,24 @@ func _BpfrxService_Delete_Handler(srv interface{}, ctx context.Context, dec func
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(BpfrxServiceServer).Delete(ctx, req.(*DeleteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BpfrxService_Load_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LoadRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BpfrxServiceServer).Load(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BpfrxService_Load_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BpfrxServiceServer).Load(ctx, req.(*LoadRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1646,6 +1680,10 @@ var BpfrxService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Delete",
 			Handler:    _BpfrxService_Delete_Handler,
+		},
+		{
+			MethodName: "Load",
+			Handler:    _BpfrxService_Load_Handler,
 		},
 		{
 			MethodName: "Commit",

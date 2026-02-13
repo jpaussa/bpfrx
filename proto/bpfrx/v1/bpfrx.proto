@@ -12,6 +12,7 @@ service BpfrxService {
   rpc GetConfigModeStatus(GetConfigModeStatusRequest) returns (GetConfigModeStatusResponse);
   rpc Set(SetRequest) returns (SetResponse);
   rpc Delete(DeleteRequest) returns (DeleteResponse);
+  rpc Load(LoadRequest) returns (LoadResponse);
   rpc Commit(CommitRequest) returns (CommitResponse);
   rpc CommitCheck(CommitCheckRequest) returns (CommitCheckResponse);
   rpc CommitConfirmed(CommitConfirmedRequest) returns (CommitConfirmedResponse);
@@ -88,6 +89,12 @@ message SetResponse {}
 
 message DeleteRequest { string input = 1; }
 message DeleteResponse {}
+
+message LoadRequest {
+  string mode = 1;    // "override", "merge", or "replace"
+  string content = 2; // full config text (hierarchical or set format)
+}
+message LoadResponse {}
 
 message CommitRequest {}
 message CommitResponse {}
