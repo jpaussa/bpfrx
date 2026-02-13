@@ -67,6 +67,10 @@ func CompileConfig(tree *ConfigTree) (*Config, error) {
 			if err := compileSchedulers(node, cfg); err != nil {
 				return nil, fmt.Errorf("schedulers: %w", err)
 			}
+		case "policy-options":
+			if err := compilePolicyOptions(node, &cfg.PolicyOptions); err != nil {
+				return nil, fmt.Errorf("policy-options: %w", err)
+			}
 		}
 	}
 
@@ -2612,4 +2616,158 @@ func compileSchedulers(node *Node, cfg *Config) error {
 		cfg.Schedulers[sched.Name] = sched
 	}
 	return nil
+}
+
+func compilePolicyOptions(node *Node, po *PolicyOptionsConfig) error {
+	if po.PrefixLists == nil {
+		po.PrefixLists = make(map[string]*PrefixList)
+	}
+	if po.PolicyStatements == nil {
+		po.PolicyStatements = make(map[string]*PolicyStatement)
+	}
+
+	// Parse prefix-lists
+	for _, child := range node.FindChildren("prefix-list") {
+		if len(child.Keys) < 2 {
+			continue
+		}
+		pl := &PrefixList{Name: child.Keys[1]}
+		for _, entry := range child.Children {
+			// Each child is a leaf with the prefix as its only key
+			if len(entry.Keys) > 0 {
+				pl.Prefixes = append(pl.Prefixes, entry.Keys[0])
+			}
+		}
+		po.PrefixLists[pl.Name] = pl
+	}
+
+	// Parse policy-statements
+	for _, child := range node.FindChildren("policy-statement") {
+		if len(child.Keys) < 2 {
+			continue
+		}
+		ps := &PolicyStatement{Name: child.Keys[1]}
+		termsByName := make(map[string]*PolicyTerm)
+
+		for _, prop := range child.Children {
+			switch prop.Name() {
+			case "term":
+				if len(prop.Keys) < 2 {
+					continue
+				}
+				termName := prop.Keys[1]
+
+				// Find or create term (flat set syntax may create multiple
+				// nodes for the same term name)
+				term, exists := termsByName[termName]
+				if !exists {
+					term = &PolicyTerm{Name: termName}
+					termsByName[termName] = term
+					ps.Terms = append(ps.Terms, term)
+				}
+
+				// Handle both hierarchical children and flat inline keys.
+				// Flat: Keys=["term","t1","from","protocol","direct"] with no children
+				// Hierarchical: Keys=["term","t1"] with from/then children
+				if len(prop.Children) > 0 {
+					// Hierarchical form
+					parsePolicyTermChildren(term, prop.Children)
+				} else if len(prop.Keys) > 2 {
+					// Flat form: remaining keys after term name are key-value pairs
+					parsePolicyTermInlineKeys(term, prop.Keys[2:])
+				}
+			case "then":
+				// Default action at the policy level
+				for _, ac := range prop.Children {
+					switch ac.Name() {
+					case "accept":
+						ps.DefaultAction = "accept"
+					case "reject":
+						ps.DefaultAction = "reject"
+					}
+				}
+				if len(prop.Keys) >= 2 {
+					ps.DefaultAction = prop.Keys[1]
+				}
+			}
+		}
+
+		po.PolicyStatements[ps.Name] = ps
+	}
+
+	return nil
+}
+
+// parsePolicyTermChildren handles hierarchical form of policy term
+// where "from" and "then" are child nodes.
+func parsePolicyTermChildren(term *PolicyTerm, children []*Node) {
+	for _, tc := range children {
+		switch tc.Name() {
+		case "from":
+			for _, fc := range tc.Children {
+				switch fc.Name() {
+				case "protocol":
+					if len(fc.Keys) >= 2 {
+						term.FromProtocol = fc.Keys[1]
+					}
+				case "route-filter":
+					if len(fc.Keys) >= 3 {
+						rf := &RouteFilter{
+							Prefix:    fc.Keys[1],
+							MatchType: fc.Keys[2],
+						}
+						term.RouteFilters = append(term.RouteFilters, rf)
+					}
+				}
+			}
+		case "then":
+			for _, ac := range tc.Children {
+				switch ac.Name() {
+				case "accept":
+					term.Action = "accept"
+				case "reject":
+					term.Action = "reject"
+				}
+			}
+			if len(tc.Keys) >= 2 {
+				term.Action = tc.Keys[1]
+			}
+		}
+	}
+}
+
+// parsePolicyTermInlineKeys handles flat set syntax where remaining keys
+// after the term name are inline key-value pairs like:
+// "from", "protocol", "direct" or "from", "route-filter", "10.0.0.0/8", "exact"
+// or "then", "accept"
+func parsePolicyTermInlineKeys(term *PolicyTerm, keys []string) {
+	for i := 0; i < len(keys); i++ {
+		switch keys[i] {
+		case "from":
+			continue
+		case "then":
+			if i+1 < len(keys) {
+				i++
+				term.Action = keys[i]
+			}
+		case "protocol":
+			if i+1 < len(keys) {
+				i++
+				term.FromProtocol = keys[i]
+			}
+		case "route-filter":
+			if i+2 < len(keys) {
+				rf := &RouteFilter{
+					Prefix:    keys[i+1],
+					MatchType: keys[i+2],
+				}
+				term.RouteFilters = append(term.RouteFilters, rf)
+				i += 2
+			}
+		case "accept":
+			term.Action = "accept"
+		case "reject":
+			term.Action = "reject"
+		}
+	}
 }

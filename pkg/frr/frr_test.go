@@ -397,3 +397,46 @@ func TestWriteManagedSection_NoExistingFile(t *testing.T) {
 		t.Error("route missing")
 	}
 }
+
+func TestGeneratePolicyOptions(t *testing.T) {
+	m := &Manager{frrConf: "/dev/null"}
+	po := &config.PolicyOptionsConfig{
+		PrefixLists: map[string]*config.PrefixList{
+			"mgmt": {
+				Name:     "mgmt",
+				Prefixes: []string{"10.0.0.0/8", "172.16.0.0/12"},
+			},
+		},
+		PolicyStatements: map[string]*config.PolicyStatement{
+			"export-connected": {
+				Name: "export-connected",
+				Terms: []*config.PolicyTerm{
+					{
+						Name:         "t1",
+						FromProtocol: "direct",
+						RouteFilters: []*config.RouteFilter{
+							{Prefix: "10.0.0.0/8", MatchType: "exact"},
+						},
+						Action: "accept",
+					},
+				},
+				DefaultAction: "reject",
+			},
+		},
+	}
+
+	got := m.generatePolicyOptions(po)
+
+	checks := []string{
+		"ip prefix-list mgmt seq 5 permit 10.0.0.0/8",
+		"ip prefix-list mgmt seq 10 permit 172.16.0.0/12",
+		"route-map export-connected permit 10",
+		"match source-protocol connected",
+		"route-map export-connected deny 20",
+	}
+	for _, want := range checks {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+}

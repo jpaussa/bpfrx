@@ -286,6 +286,10 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 			"route": {args: 1, children: nil}, // route <prefix/len>
 		}},
 	}},
+	"policy-options": {children: map[string]*schemaNode{
+		"prefix-list":      {args: 1, children: nil},
+		"policy-statement": {args: 1, children: nil},
+	}},
 	"protocols": {children: map[string]*schemaNode{
 		"ospf": {children: map[string]*schemaNode{
 			"router-id": {args: 1, children: nil},

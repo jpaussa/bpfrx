@@ -12,8 +12,43 @@ type Config struct {
 	Services          ServicesConfig
 	ForwardingOptions ForwardingOptionsConfig
 	System            SystemConfig
+	PolicyOptions     PolicyOptionsConfig
 	Schedulers        map[string]*SchedulerConfig
 	Warnings          []string // non-fatal validation warnings
+}
+
+// PolicyOptionsConfig holds prefix-lists and policy-statements for routing control.
+type PolicyOptionsConfig struct {
+	PrefixLists      map[string]*PrefixList
+	PolicyStatements map[string]*PolicyStatement
+}
+
+// PrefixList defines a named list of IP prefixes.
+type PrefixList struct {
+	Name     string
+	Prefixes []string // CIDR entries ("10.0.0.0/8", "2001:db8::/32")
+}
+
+// PolicyStatement defines a routing policy with terms.
+type PolicyStatement struct {
+	Name          string
+	Terms         []*PolicyTerm
+	DefaultAction string // "accept", "reject", or "" (implicit reject)
+}
+
+// PolicyTerm is a single match+action clause within a policy-statement.
+type PolicyTerm struct {
+	Name         string
+	FromProtocol string         // "direct", "static", "bgp", "ospf"
+	RouteFilters []*RouteFilter // prefix matching
+	Action       string         // "accept", "reject"
+}
+
+// RouteFilter matches a prefix with a match type.
+type RouteFilter struct {
+	Prefix    string // CIDR ("192.168.50.0/24")
+	MatchType string // "exact", "longer", "orlonger", "upto"
+	UptoLen   int    // for "upto" match type
 }
 
 // SchedulerConfig defines a time-based policy scheduler.

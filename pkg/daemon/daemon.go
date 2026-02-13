@@ -523,12 +523,13 @@ func (d *Daemon) applyConfig(cfg *config.Config) {
 	// 3. Apply all routes + dynamic protocols via FRR
 	if d.frr != nil {
 		fc := &frr.FullConfig{
-			OSPF:         cfg.Protocols.OSPF,
-			BGP:          cfg.Protocols.BGP,
-			RIP:          cfg.Protocols.RIP,
-			ISIS:         cfg.Protocols.ISIS,
-			StaticRoutes: cfg.RoutingOptions.StaticRoutes,
-			DHCPRoutes:   d.collectDHCPRoutes(),
+			OSPF:          cfg.Protocols.OSPF,
+			BGP:           cfg.Protocols.BGP,
+			RIP:           cfg.Protocols.RIP,
+			ISIS:          cfg.Protocols.ISIS,
+			StaticRoutes:  cfg.RoutingOptions.StaticRoutes,
+			DHCPRoutes:    d.collectDHCPRoutes(),
+			PolicyOptions: &cfg.PolicyOptions,
 		}
 		for _, ri := range cfg.RoutingInstances {
 			fc.Instances = append(fc.Instances, frr.InstanceConfig{

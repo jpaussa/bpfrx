@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 
@@ -53,13 +54,14 @@ type DHCPRoute struct {
 
 // FullConfig holds the complete routing config for a single FRR apply.
 type FullConfig struct {
-	OSPF         *config.OSPFConfig
-	BGP          *config.BGPConfig
-	RIP          *config.RIPConfig
-	ISIS         *config.ISISConfig
-	StaticRoutes []*config.StaticRoute
-	DHCPRoutes   []DHCPRoute
-	Instances    []InstanceConfig
+	OSPF          *config.OSPFConfig
+	BGP           *config.BGPConfig
+	RIP           *config.RIPConfig
+	ISIS          *config.ISISConfig
+	StaticRoutes  []*config.StaticRoute
+	DHCPRoutes    []DHCPRoute
+	Instances     []InstanceConfig
+	PolicyOptions *config.PolicyOptionsConfig
 }
 
 // Apply generates an FRR config from OSPF/BGP settings and reloads FRR.
@@ -224,6 +226,11 @@ func (m *Manager) ApplyFull(fc *FullConfig) error {
 			}
 			b.WriteString("!\n")
 		}
+	}
+
+	// Policy options: prefix-lists and route-maps
+	if fc.PolicyOptions != nil {
+		b.WriteString(m.generatePolicyOptions(fc.PolicyOptions))
 	}
 
 	// Global dynamic protocols
@@ -617,6 +624,105 @@ func (m *Manager) GetBGPRoutes() ([]BGPRoute, error) {
 		routes = append(routes, r)
 	}
 	return routes, nil
+}
+
+func (m *Manager) generatePolicyOptions(po *config.PolicyOptionsConfig) string {
+	var b strings.Builder
+
+	// Generate FRR prefix-lists from Junos prefix-lists
+	names := make([]string, 0, len(po.PrefixLists))
+	for name := range po.PrefixLists {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		pl := po.PrefixLists[name]
+		for i, prefix := range pl.Prefixes {
+			if strings.Contains(prefix, ":") {
+				fmt.Fprintf(&b, "ipv6 prefix-list %s seq %d permit %s\n", name, (i+1)*5, prefix)
+			} else {
+				fmt.Fprintf(&b, "ip prefix-list %s seq %d permit %s\n", name, (i+1)*5, prefix)
+			}
+		}
+	}
+	if len(po.PrefixLists) > 0 {
+		b.WriteString("!\n")
+	}
+
+	// Generate FRR route-maps from Junos policy-statements
+	psNames := make([]string, 0, len(po.PolicyStatements))
+	for name := range po.PolicyStatements {
+		psNames = append(psNames, name)
+	}
+	sort.Strings(psNames)
+	for _, name := range psNames {
+		ps := po.PolicyStatements[name]
+		seq := 10
+		for _, term := range ps.Terms {
+			action := "permit"
+			if term.Action == "reject" {
+				action = "deny"
+			}
+			fmt.Fprintf(&b, "route-map %s %s %d\n", name, action, seq)
+
+			// Generate an inline prefix-list for route-filters
+			if len(term.RouteFilters) > 0 {
+				plName := name + "-" + term.Name
+				for i, rf := range term.RouteFilters {
+					matchStr := "le 32"
+					if strings.Contains(rf.Prefix, ":") {
+						matchStr = "le 128"
+					}
+					switch rf.MatchType {
+					case "exact":
+						matchStr = ""
+					case "longer":
+						matchStr = "ge 1"
+					case "orlonger":
+						// orlonger = exact match or any longer prefix
+						matchStr = "" // already matches prefix itself
+					}
+					if strings.Contains(rf.Prefix, ":") {
+						fmt.Fprintf(&b, "ipv6 prefix-list %s seq %d permit %s", plName, (i+1)*5, rf.Prefix)
+					} else {
+						fmt.Fprintf(&b, "ip prefix-list %s seq %d permit %s", plName, (i+1)*5, rf.Prefix)
+					}
+					if matchStr != "" {
+						fmt.Fprintf(&b, " %s", matchStr)
+					}
+					b.WriteString("\n")
+				}
+				if strings.Contains(term.RouteFilters[0].Prefix, ":") {
+					fmt.Fprintf(&b, " match ipv6 address prefix-list %s\n", plName)
+				} else {
+					fmt.Fprintf(&b, " match ip address prefix-list %s\n", plName)
+				}
+			}
+
+			if term.FromProtocol != "" {
+				proto := term.FromProtocol
+				if proto == "direct" {
+					proto = "connected"
+				}
+				fmt.Fprintf(&b, " match source-protocol %s\n", proto)
+			}
+
+			b.WriteString("exit\n")
+			seq += 10
+		}
+
+		// Default action
+		if ps.DefaultAction == "reject" || ps.DefaultAction == "" {
+			fmt.Fprintf(&b, "route-map %s deny %d\n", name, seq)
+			b.WriteString("exit\n")
+		} else if ps.DefaultAction == "accept" {
+			fmt.Fprintf(&b, "route-map %s permit %d\n", name, seq)
+			b.WriteString("exit\n")
+		}
+		b.WriteString("!\n")
+	}
+
+	return b.String()
 }
 
 func vtyshCmd(command string) (string, error) {

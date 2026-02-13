@@ -3601,3 +3601,182 @@ func TestMultiTermApplicationSetSyntax(t *testing.T) {
 	}
 }
 
+func TestFormatPath(t *testing.T) {
+	input := `interfaces {
+    wan0 {
+        unit 0 {
+            family inet {
+                address 10.0.1.1/24;
+            }
+        }
+    }
+    trust0 {
+        unit 0 {
+            family inet {
+                address 10.0.2.1/24;
+            }
+        }
+    }
+}
+security {
+    zones {
+        security-zone trust {
+            interfaces {
+                trust0.0;
+            }
+        }
+    }
+}`
+
+	parser := NewParser(input)
+	tree, errs := parser.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+
+	// Show just interfaces section
+	out := tree.FormatPath([]string{"interfaces"})
+	if !strings.Contains(out, "wan0") || !strings.Contains(out, "trust0") {
+		t.Errorf("FormatPath(interfaces) should contain both interfaces, got:\n%s", out)
+	}
+	if strings.Contains(out, "security") {
+		t.Error("FormatPath(interfaces) should not contain security section")
+	}
+
+	// Show specific interface
+	out = tree.FormatPath([]string{"interfaces", "wan0"})
+	if !strings.Contains(out, "10.0.1.1/24") {
+		t.Errorf("FormatPath(interfaces, wan0) should contain wan0 address, got:\n%s", out)
+	}
+	if strings.Contains(out, "trust0") {
+		t.Error("FormatPath(interfaces, wan0) should not contain trust0")
+	}
+
+	// Non-existent path
+	out = tree.FormatPath([]string{"interfaces", "nonexistent"})
+	if out != "" {
+		t.Errorf("FormatPath for non-existent should return empty, got:\n%s", out)
+	}
+
+	// Empty path = full config
+	out = tree.FormatPath(nil)
+	if !strings.Contains(out, "interfaces") || !strings.Contains(out, "security") {
+		t.Error("FormatPath(nil) should return full config")
+	}
+}
+
+func TestPolicyOptions(t *testing.T) {
+	input := `policy-options {
+    prefix-list management-hosts {
+        10.9.9.0/24;
+        172.16.50.0/24;
+        2001:559:8585:100::d/128;
+    }
+    policy-statement to_BV-FIREHOUSE {
+        term default_v4 {
+            from {
+                protocol direct;
+                route-filter 192.168.50.0/24 exact;
+                route-filter 192.168.99.0/24 exact;
+            }
+            then accept;
+        }
+        then reject;
+    }
+}`
+
+	parser := NewParser(input)
+	tree, errs := parser.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	// Check prefix-list
+	pl := cfg.PolicyOptions.PrefixLists["management-hosts"]
+	if pl == nil {
+		t.Fatal("missing prefix-list management-hosts")
+	}
+	if len(pl.Prefixes) != 3 {
+		t.Fatalf("management-hosts: expected 3 prefixes, got %d", len(pl.Prefixes))
+	}
+	if pl.Prefixes[0] != "10.9.9.0/24" {
+		t.Errorf("first prefix: got %q, want 10.9.9.0/24", pl.Prefixes[0])
+	}
+
+	// Check policy-statement
+	ps := cfg.PolicyOptions.PolicyStatements["to_BV-FIREHOUSE"]
+	if ps == nil {
+		t.Fatal("missing policy-statement to_BV-FIREHOUSE")
+	}
+	if len(ps.Terms) != 1 {
+		t.Fatalf("expected 1 term, got %d", len(ps.Terms))
+	}
+	term := ps.Terms[0]
+	if term.Name != "default_v4" {
+		t.Errorf("term name: got %q, want default_v4", term.Name)
+	}
+	if term.FromProtocol != "direct" {
+		t.Errorf("from protocol: got %q, want direct", term.FromProtocol)
+	}
+	if len(term.RouteFilters) != 2 {
+		t.Fatalf("expected 2 route-filters, got %d", len(term.RouteFilters))
+	}
+	if term.RouteFilters[0].Prefix != "192.168.50.0/24" {
+		t.Errorf("route-filter 0: got %q", term.RouteFilters[0].Prefix)
+	}
+	if term.RouteFilters[0].MatchType != "exact" {
+		t.Errorf("match-type: got %q, want exact", term.RouteFilters[0].MatchType)
+	}
+	if term.Action != "accept" {
+		t.Errorf("action: got %q, want accept", term.Action)
+	}
+	if ps.DefaultAction != "reject" {
+		t.Errorf("default action: got %q, want reject", ps.DefaultAction)
+	}
+}
+
+func TestPolicyOptionsSetSyntax(t *testing.T) {
+	tree := &ConfigTree{}
+	cmds := []string{
+		"set policy-options prefix-list mgmt 10.0.0.0/8",
+		"set policy-options prefix-list mgmt 172.16.0.0/12",
+		"set policy-options policy-statement export-policy term t1 from protocol direct",
+		"set policy-options policy-statement export-policy term t1 from route-filter 10.0.0.0/8 exact",
+		"set policy-options policy-statement export-policy term t1 then accept",
+	}
+	for _, cmd := range cmds {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%v): %v", path, err)
+		}
+	}
+
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	pl := cfg.PolicyOptions.PrefixLists["mgmt"]
+	if pl == nil {
+		t.Fatal("missing prefix-list mgmt")
+	}
+	if len(pl.Prefixes) != 2 {
+		t.Fatalf("expected 2 prefixes, got %d", len(pl.Prefixes))
+	}
+
+	ps := cfg.PolicyOptions.PolicyStatements["export-policy"]
+	if ps == nil {
+		t.Fatal("missing policy-statement export-policy")
+	}
+	if len(ps.Terms) != 1 {
+		t.Fatalf("expected 1 term, got %d", len(ps.Terms))
+	}
+}
+
