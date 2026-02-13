@@ -456,6 +456,13 @@ func (c *ctl) handleShow(args []string) error {
 		if len(args) >= 3 && args[1] == "table" {
 			return c.showText("route-table:" + args[2])
 		}
+		if len(args) >= 3 && args[1] == "protocol" {
+			return c.showText("route-protocol:" + args[2])
+		}
+		// Single arg: treat as prefix filter (e.g. "show route 10.0.1.0/24")
+		if len(args) >= 2 && (strings.Contains(args[1], "/") || strings.Contains(args[1], ".") || strings.Contains(args[1], ":")) {
+			return c.showText("route-prefix:" + args[1])
+		}
 		return c.showRoutes()
 
 	case "security":

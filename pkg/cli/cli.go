@@ -110,8 +110,9 @@ var operationalTree = map[string]*completionNode{
 		"flow-monitoring": {desc: "Show flow monitoring/NetFlow configuration"},
 		"log":             {desc: "Show daemon log entries [N]"},
 		"route": {desc: "Show routing table [instance <name>]", children: map[string]*completionNode{
-			"summary": {desc: "Show route summary by protocol"},
-			"table":   {desc: "Show routes for a VRF table"},
+			"summary":  {desc: "Show route summary by protocol"},
+			"table":    {desc: "Show routes for a VRF table"},
+			"protocol": {desc: "Show routes by protocol (static, connected, bgp, ospf, dhcp)"},
 			"instance": {desc: "Show routes for a routing instance", dynamicFn: func(cfg *config.Config) []string {
 				if cfg == nil {
 					return nil
@@ -3561,8 +3562,15 @@ func (c *CLI) handleShowRoute(args []string) error {
 	if len(args) >= 2 && args[0] == "table" {
 		return c.showRoutesForVRF(args[1])
 	}
+	if len(args) >= 2 && args[0] == "protocol" {
+		return c.showRoutesForProtocol(args[1])
+	}
 	if len(args) >= 1 && args[0] == "summary" {
 		return c.showRouteSummary()
+	}
+	// Treat a single arg as prefix filter (e.g. "show route 10.0.1.0/24")
+	if len(args) == 1 && (strings.Contains(args[0], "/") || strings.Contains(args[0], ".") || strings.Contains(args[0], ":")) {
+		return c.showRoutesForPrefix(args[0])
 	}
 	return c.showRoutes()
 }
@@ -3652,6 +3660,96 @@ func (c *CLI) showRoutesForVRF(vrfName string) error {
 			e.Destination, e.NextHop, e.Interface, e.Protocol, e.Preference)
 	}
 	return nil
+}
+
+func (c *CLI) showRoutesForProtocol(proto string) error {
+	if c.routing == nil {
+		fmt.Println("Routing manager not available")
+		return nil
+	}
+
+	entries, err := c.routing.GetRoutes()
+	if err != nil {
+		return fmt.Errorf("get routes: %w", err)
+	}
+
+	proto = strings.ToLower(proto)
+	fmt.Printf("Routes matching protocol: %s\n", proto)
+	fmt.Printf("  %-24s %-20s %-14s %-12s %s\n",
+		"Destination", "Next-hop", "Interface", "Proto", "Pref")
+	count := 0
+	for _, e := range entries {
+		if strings.ToLower(e.Protocol) == proto {
+			fmt.Printf("  %-24s %-20s %-14s %-12s %d\n",
+				e.Destination, e.NextHop, e.Interface, e.Protocol, e.Preference)
+			count++
+		}
+	}
+	if count == 0 {
+		fmt.Printf("  (no routes)\n")
+	}
+	return nil
+}
+
+func (c *CLI) showRoutesForPrefix(prefix string) error {
+	if c.routing == nil {
+		fmt.Println("Routing manager not available")
+		return nil
+	}
+
+	entries, err := c.routing.GetRoutes()
+	if err != nil {
+		return fmt.Errorf("get routes: %w", err)
+	}
+
+	// Parse the filter as a CIDR prefix for subnet matching.
+	// If no mask given, auto-add /32 or /128.
+	filterPrefix := prefix
+	if !strings.Contains(filterPrefix, "/") {
+		if strings.Contains(filterPrefix, ":") {
+			filterPrefix += "/128"
+		} else {
+			filterPrefix += "/32"
+		}
+	}
+
+	fmt.Printf("Routes matching %s:\n", prefix)
+	fmt.Printf("  %-24s %-20s %-14s %-12s %s\n",
+		"Destination", "Next-hop", "Interface", "Proto", "Pref")
+	count := 0
+	for _, e := range entries {
+		if routePrefixMatches(e.Destination, filterPrefix) {
+			fmt.Printf("  %-24s %-20s %-14s %-12s %d\n",
+				e.Destination, e.NextHop, e.Interface, e.Protocol, e.Preference)
+			count++
+		}
+	}
+	if count == 0 {
+		fmt.Printf("  (no matching routes)\n")
+	}
+	return nil
+}
+
+// routePrefixMatches returns true if the route destination is within or equal to the filter prefix.
+func routePrefixMatches(routeDst, filterCIDR string) bool {
+	_, filterNet, err := net.ParseCIDR(filterCIDR)
+	if err != nil {
+		// Fallback to exact match
+		return routeDst == filterCIDR
+	}
+	_, routeNet, err := net.ParseCIDR(routeDst)
+	if err != nil {
+		return false
+	}
+	// Route matches if the filter contains the route network, or the route contains the filter
+	filterOnes, _ := filterNet.Mask.Size()
+	routeOnes, _ := routeNet.Mask.Size()
+	if filterOnes <= routeOnes {
+		// Filter is broader or equal: route must be within filter
+		return filterNet.Contains(routeNet.IP)
+	}
+	// Filter is more specific: check if route contains the filter address
+	return routeNet.Contains(filterNet.IP)
 }
 
 func (c *CLI) showRouteSummary() error {
