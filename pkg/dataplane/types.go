@@ -601,7 +601,7 @@ type FilterRule struct {
 	ICMPCode     uint8
 	Family       uint8
 	DstPort      uint16 // network byte order
-	Pad          uint16
+	SrcPort      uint16 // network byte order
 	SrcAddr      [16]byte
 	SrcMask      [16]byte
 	DstAddr      [16]byte
@@ -618,6 +618,7 @@ const (
 	FilterMatchDstPort  = 1 << 4
 	FilterMatchICMPType = 1 << 5
 	FilterMatchICMPCode = 1 << 6
+	FilterMatchSrcPort  = 1 << 7
 )
 
 // Filter action constants.

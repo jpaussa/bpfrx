@@ -2935,12 +2935,12 @@ func compileFilterFrom(node *Node, term *FirewallFilterTerm) {
 	for _, child := range node.Children {
 		switch child.Name() {
 		case "dscp", "traffic-class":
-			if len(child.Keys) >= 2 {
-				term.DSCP = child.Keys[1]
+			if v := nodeVal(child); v != "" {
+				term.DSCP = v
 			}
 		case "protocol":
-			if len(child.Keys) >= 2 {
-				term.Protocol = child.Keys[1]
+			if v := nodeVal(child); v != "" {
+				term.Protocol = v
 			}
 		case "source-address":
 			// Can be a leaf with value or a block with address entries
@@ -2968,6 +2968,12 @@ func compileFilterFrom(node *Node, term *FirewallFilterTerm) {
 					term.DestinationPorts = append(term.DestinationPorts, k)
 				}
 			}
+			// Flat set syntax: port value as child node
+			for _, portNode := range child.Children {
+				if len(portNode.Keys) >= 1 {
+					term.DestinationPorts = append(term.DestinationPorts, portNode.Keys[0])
+				}
+			}
 		case "source-prefix-list":
 			// Block form: source-prefix-list { mgmt-hosts except; }
 			for _, plNode := range child.Children {
@@ -2991,16 +2997,23 @@ func compileFilterFrom(node *Node, term *FirewallFilterTerm) {
 					term.SourcePorts = append(term.SourcePorts, k)
 				}
 			}
+			for _, portNode := range child.Children {
+				if len(portNode.Keys) >= 1 {
+					term.SourcePorts = append(term.SourcePorts, portNode.Keys[0])
+				}
+			}
 		case "icmp-type":
-			if len(child.Keys) >= 2 {
-				if v, err := strconv.Atoi(child.Keys[1]); err == nil {
-					term.ICMPType = v
+			v := nodeVal(child)
+			if v != "" {
+				if n, err := strconv.Atoi(v); err == nil {
+					term.ICMPType = n
 				}
 			}
 		case "icmp-code":
-			if len(child.Keys) >= 2 {
-				if v, err := strconv.Atoi(child.Keys[1]); err == nil {
-					term.ICMPCode = v
+			v := nodeVal(child)
+			if v != "" {
+				if n, err := strconv.Atoi(v); err == nil {
+					term.ICMPCode = n
 				}
 			}
 		}

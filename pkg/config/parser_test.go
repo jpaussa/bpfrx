@@ -1658,6 +1658,75 @@ routing-instances {
 	}
 }
 
+func TestFirewallFilterSourcePort(t *testing.T) {
+	input := `firewall {
+    family inet {
+        filter rate-limit {
+            term match-dns {
+                from {
+                    protocol udp;
+                    source-port 53;
+                }
+                then discard;
+            }
+            term default {
+                then accept;
+            }
+        }
+    }
+}`
+	parser := NewParser(input)
+	tree, errs := parser.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+	f, ok := cfg.Firewall.FiltersInet["rate-limit"]
+	if !ok {
+		t.Fatal("expected rate-limit filter")
+	}
+	if len(f.Terms) != 2 {
+		t.Fatalf("expected 2 terms, got %d", len(f.Terms))
+	}
+	if len(f.Terms[0].SourcePorts) != 1 || f.Terms[0].SourcePorts[0] != "53" {
+		t.Errorf("expected source-port [53], got %v", f.Terms[0].SourcePorts)
+	}
+	if f.Terms[0].Protocol != "udp" {
+		t.Errorf("expected protocol udp, got %q", f.Terms[0].Protocol)
+	}
+
+	// Test set-command format
+	tree2 := &ConfigTree{}
+	cmds := []string{
+		"set firewall family inet filter test-sp term t1 from protocol tcp",
+		"set firewall family inet filter test-sp term t1 from source-port 8080",
+		"set firewall family inet filter test-sp term t1 then accept",
+	}
+	for _, cmd := range cmds {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree2.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%q): %v", cmd, err)
+		}
+	}
+	cfg2, err := CompileConfig(tree2)
+	if err != nil {
+		t.Fatalf("set-command compile: %v", err)
+	}
+	sp, ok := cfg2.Firewall.FiltersInet["test-sp"]
+	if !ok {
+		t.Fatal("expected test-sp filter")
+	}
+	if len(sp.Terms[0].SourcePorts) != 1 || sp.Terms[0].SourcePorts[0] != "8080" {
+		t.Errorf("expected source-port [8080], got %v", sp.Terms[0].SourcePorts)
+	}
+}
+
 func TestFirewallPrefixList(t *testing.T) {
 	input := `policy-options {
     prefix-list management-hosts {

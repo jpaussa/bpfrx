@@ -1869,18 +1869,34 @@ func (m *Manager) compileFlowConfig(cfg *config.Config) error {
 	if flow.AllowEmbeddedICMP {
 		fc.AllowEmbeddedICMP = 1
 	}
+	if flow.GREPerformanceAcceleration {
+		fc.GREAccel = 1
+	}
+
+	// ALG disable flags (bitfield)
+	alg := &cfg.Security.ALG
+	if alg.DNSDisable {
+		fc.ALGFlags |= 0x01
+	}
+	if alg.FTPDisable {
+		fc.ALGFlags |= 0x02
+	}
+	if alg.SIPDisable {
+		fc.ALGFlags |= 0x04
+	}
+	if alg.TFTPDisable {
+		fc.ALGFlags |= 0x08
+	}
 
 	if err := m.SetFlowConfig(fc); err != nil {
 		return err
 	}
 
-	if fc.TCPMSSIPsec > 0 || fc.TCPMSSGre > 0 {
-		slog.Info("flow config compiled",
-			"tcp_mss_ipsec", fc.TCPMSSIPsec,
-			"tcp_mss_gre", fc.TCPMSSGre,
-			"allow_dns_reply", fc.AllowDNSReply,
-			"allow_embedded_icmp", fc.AllowEmbeddedICMP)
-	}
+	slog.Info("flow config compiled",
+		"tcp_mss_ipsec", fc.TCPMSSIPsec,
+		"tcp_mss_gre", fc.TCPMSSGre,
+		"allow_dns_reply", fc.AllowDNSReply,
+		"allow_embedded_icmp", fc.AllowEmbeddedICMP)
 
 	return nil
 }
@@ -2293,6 +2309,14 @@ func expandFilterTerm(term *config.FirewallFilterTerm, family uint8, riTableIDs 
 		// Resolve well-known port names
 		portNum := resolvePortName(portStr)
 		base.DstPort = htons(portNum)
+	}
+
+	// Source port (first port only for now)
+	if len(term.SourcePorts) > 0 {
+		base.MatchFlags |= FilterMatchSrcPort
+		portStr := term.SourcePorts[0]
+		portNum := resolvePortName(portStr)
+		base.SrcPort = htons(portNum)
 	}
 
 	// Expand source/destination address combinations

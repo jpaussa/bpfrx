@@ -511,6 +511,7 @@ struct nat_port_counter {
 #define FILTER_MATCH_DST_PORT  (1 << 4)
 #define FILTER_MATCH_ICMP_TYPE (1 << 5)
 #define FILTER_MATCH_ICMP_CODE (1 << 6)
+#define FILTER_MATCH_SRC_PORT  (1 << 7)
 
 /* Filter actions */
 #define FILTER_ACTION_ACCEPT   0
@@ -593,7 +594,7 @@ struct filter_rule {
 	__u8   icmp_code;       /* ICMP code, valid if FILTER_MATCH_ICMP_CODE */
 	__u8   family;          /* AF_INET or AF_INET6 */
 	__be16 dst_port;        /* network byte order, 0=any */
-	__u16  pad;
+	__be16 src_port;        /* network byte order, 0=any */
 	__u8   src_addr[16];    /* v4: first 4 bytes, v6: all 16 */
 	__u8   src_mask[16];    /* prefix mask */
 	__u8   dst_addr[16];
@@ -610,7 +611,9 @@ struct flow_config {
 	__u16 tcp_mss_gre;     /* TCP MSS clamp for GRE tunnels (0=disabled) */
 	__u8  allow_dns_reply;
 	__u8  allow_embedded_icmp;
-	__u8  pad[2];
+	__u8  gre_accel;       /* GRE performance acceleration */
+	__u8  alg_flags;       /* bit 0: DNS disable, bit 1: FTP disable,
+	                          bit 2: SIP disable, bit 3: TFTP disable */
 };
 
 #endif /* __BPFRX_COMMON_H__ */

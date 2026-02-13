@@ -109,7 +109,7 @@ type bpfrxXdpCpumapFilterRule struct {
 	IcmpCode     uint8
 	Family       uint8
 	DstPort      uint16
-	Pad          uint16
+	SrcPort      uint16
 	SrcAddr      [16]uint8
 	SrcMask      [16]uint8
 	DstAddr      [16]uint8
@@ -131,7 +131,8 @@ type bpfrxXdpCpumapFlowConfig struct {
 	TcpMssGre         uint16
 	AllowDnsReply     uint8
 	AllowEmbeddedIcmp uint8
-	Pad               [2]uint8
+	GreAccel          uint8
+	AlgFlags          uint8
 }
 
 type bpfrxXdpCpumapIfaceCounterValue struct {

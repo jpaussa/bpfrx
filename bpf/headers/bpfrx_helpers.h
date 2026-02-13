@@ -906,6 +906,11 @@ evaluate_firewall_filter(struct pkt_meta *meta)
 		    rule->dst_port != meta->dst_port)
 			match = 0;
 
+		/* Check source port */
+		if (match && (flags & FILTER_MATCH_SRC_PORT) &&
+		    rule->src_port != meta->src_port)
+			match = 0;
+
 		/* Check ICMP type */
 		if (match && (flags & FILTER_MATCH_ICMP_TYPE) &&
 		    rule->icmp_type != meta->icmp_type)
@@ -1032,6 +1037,9 @@ evaluate_firewall_filter_output(struct pkt_meta *meta, __u32 egress_ifindex)
 			match = 0;
 		if (match && (flags & FILTER_MATCH_DST_PORT) &&
 		    rule->dst_port != meta->dst_port)
+			match = 0;
+		if (match && (flags & FILTER_MATCH_SRC_PORT) &&
+		    rule->src_port != meta->src_port)
 			match = 0;
 		if (match && (flags & FILTER_MATCH_ICMP_TYPE) &&
 		    rule->icmp_type != meta->icmp_type)
