@@ -1610,7 +1610,8 @@ func (m *Manager) compileScreenProfiles(cfg *config.Config, result *CompileResul
 		if profile.TCP.SynFrag {
 			flags |= ScreenSynFrag
 		}
-		if profile.TCP.TearDrop {
+		// IP flags (early, before IP section for co-location with related checks)
+		if profile.IP.TearDrop {
 			flags |= ScreenTearDrop
 		}
 		if profile.TCP.SynFlood != nil && profile.TCP.SynFlood.AttackThreshold > 0 {
