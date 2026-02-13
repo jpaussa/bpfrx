@@ -493,6 +493,10 @@ func rtProtoName(p netlink.RouteProtocol) string {
 // Lower values = higher priority. We use 100-199 range for next-table rules.
 const nextTableRulePriority = 100
 
+// ribGroupRulePriority is the base priority for rib-group ip rules.
+// We use 200-299 range for rib-group route leaking rules.
+const ribGroupRulePriority = 200
+
 // ApplyNextTableRules creates Linux policy routing rules (ip rule) for
 // static routes with next-table directives. This implements inter-VRF
 // route leaking: "route X/Y next-table Instance.inet.0" means traffic
@@ -568,4 +572,138 @@ func (m *Manager) clearNextTableRules() error {
 		}
 	}
 	return nil
+}
+
+// ApplyRibGroupRules creates Linux policy routing rules (ip rule) for
+// rib-group route leaking. When a routing instance has interface-routes
+// with a rib-group reference, the instance's routes are leaked to other
+// tables listed in the rib-group's import-rib list.
+//
+// For example, if dmz-vr (table 101) has interface-routes rib-group "dmz-leak",
+// and dmz-leak has import-rib [ dmz-vr.inet.0 inet.0 ], then an ip rule is
+// created to make table 101 visible to main table lookups:
+//
+//	ip rule add from all lookup 101 pref 200
+func (m *Manager) ApplyRibGroupRules(ribGroups map[string]*config.RibGroup, instances []*config.RoutingInstanceConfig) error {
+	// Clean up old rib-group rules
+	if err := m.clearRibGroupRules(); err != nil {
+		slog.Warn("failed to clear old rib-group rules", "err", err)
+	}
+
+	if len(ribGroups) == 0 || len(instances) == 0 {
+		return nil
+	}
+
+	// Build instance name → table ID map
+	tableIDs := make(map[string]int)
+	for _, inst := range instances {
+		tableIDs[inst.Name] = inst.TableID
+	}
+
+	// Track which source tables we've already added rules for
+	// (avoid duplicate rules if multiple rib-groups reference the same table)
+	leakedTables := make(map[int]bool)
+
+	prio := ribGroupRulePriority
+	for _, inst := range instances {
+		rgName := inst.InterfaceRoutesRibGroup
+		if rgName == "" {
+			continue
+		}
+		rg, ok := ribGroups[rgName]
+		if !ok {
+			slog.Warn("interface-routes references unknown rib-group",
+				"instance", inst.Name, "rib-group", rgName)
+			continue
+		}
+
+		sourceTable := inst.TableID
+
+		// Check if any import-rib entry targets a different table (i.e., route leaking needed)
+		needsLeak := false
+		for _, ribName := range rg.ImportRibs {
+			targetTable := resolveRibTable(ribName, tableIDs)
+			if targetTable != sourceTable {
+				needsLeak = true
+				break
+			}
+		}
+		if !needsLeak {
+			continue
+		}
+
+		if leakedTables[sourceTable] {
+			continue
+		}
+		leakedTables[sourceTable] = true
+
+		// Add IPv4 rule
+		rule := netlink.NewRule()
+		rule.Table = sourceTable
+		rule.Priority = prio
+		rule.Family = unix.AF_INET
+
+		if err := m.nlHandle.RuleAdd(rule); err != nil {
+			slog.Warn("failed to add rib-group IPv4 rule",
+				"instance", inst.Name, "table", sourceTable, "err", err)
+		} else {
+			slog.Info("rib-group rule added",
+				"instance", inst.Name, "rib-group", rg.Name,
+				"table", sourceTable, "family", "inet", "pref", prio)
+		}
+		prio++
+
+		// Add IPv6 rule
+		rule6 := netlink.NewRule()
+		rule6.Table = sourceTable
+		rule6.Priority = prio
+		rule6.Family = unix.AF_INET6
+
+		if err := m.nlHandle.RuleAdd(rule6); err != nil {
+			slog.Warn("failed to add rib-group IPv6 rule",
+				"instance", inst.Name, "table", sourceTable, "err", err)
+		} else {
+			slog.Info("rib-group rule added",
+				"instance", inst.Name, "rib-group", rg.Name,
+				"table", sourceTable, "family", "inet6", "pref", prio)
+		}
+		prio++
+	}
+	return nil
+}
+
+// clearRibGroupRules removes all ip rules in the rib-group priority range.
+func (m *Manager) clearRibGroupRules() error {
+	for _, family := range []int{unix.AF_INET, unix.AF_INET6} {
+		rules, err := m.nlHandle.RuleList(family)
+		if err != nil {
+			continue
+		}
+		for _, r := range rules {
+			if r.Priority >= ribGroupRulePriority && r.Priority < ribGroupRulePriority+100 {
+				if err := m.nlHandle.RuleDel(&r); err != nil {
+					slog.Debug("failed to delete stale rib-group rule",
+						"priority", r.Priority, "err", err)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// resolveRibTable maps a Junos RIB name to a Linux routing table ID.
+// "inet.0" or "inet6.0" maps to main table (254).
+// "<instance>.inet.0" or "<instance>.inet6.0" maps to the instance's table.
+func resolveRibTable(ribName string, tableIDs map[string]int) int {
+	if ribName == "inet.0" || ribName == "inet6.0" {
+		return 254 // main table
+	}
+	// Parse "instance-name.inet.0" or "instance-name.inet6.0"
+	if idx := strings.Index(ribName, ".inet"); idx > 0 {
+		instanceName := ribName[:idx]
+		if tableID, ok := tableIDs[instanceName]; ok {
+			return tableID
+		}
+	}
+	return 0
 }

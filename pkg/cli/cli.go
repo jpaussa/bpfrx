@@ -290,7 +290,7 @@ func (c *CLI) Run() error {
 	defer c.rl.Close()
 
 	// Register auto-rollback handler for commit confirmed
-	c.store.SetAutoRollbackHandler(func(cfg *config.Config) {
+	c.store.SetCentralRollbackHandler(func(cfg *config.Config) {
 		if c.dp != nil {
 			if err := c.applyToDataplane(cfg); err != nil {
 				fmt.Fprintf(os.Stderr, "\nwarning: auto-rollback dataplane apply failed: %v\n", err)
@@ -4671,6 +4671,30 @@ func (c *CLI) handleShowSystem(args []string) error {
 
 	case "buffers":
 		return c.showSystemBuffers()
+
+	case "login":
+		cfg := c.store.ActiveConfig()
+		if cfg == nil {
+			return fmt.Errorf("no active configuration")
+		}
+		fmt.Print(c.store.ShowActivePath([]string{"system", "login"}))
+		return nil
+
+	case "internet-options":
+		cfg := c.store.ActiveConfig()
+		if cfg == nil {
+			return fmt.Errorf("no active configuration")
+		}
+		fmt.Print(c.store.ShowActivePath([]string{"system", "internet-options"}))
+		return nil
+
+	case "root-authentication":
+		cfg := c.store.ActiveConfig()
+		if cfg == nil {
+			return fmt.Errorf("no active configuration")
+		}
+		fmt.Print(c.store.ShowActivePath([]string{"system", "root-authentication"}))
+		return nil
 
 	default:
 		return fmt.Errorf("unknown show system target: %s", args[0])

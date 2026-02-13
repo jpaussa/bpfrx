@@ -7069,6 +7069,166 @@ func TestRoutingInstanceInterfaceRoutesRibGroup(t *testing.T) {
 	}
 }
 
+func TestMultipleRoutingInstances(t *testing.T) {
+	input := `routing-instances {
+    tunnel-vr {
+        instance-type virtual-router;
+        interface tunnel0;
+        routing-options {
+            static {
+                route 10.0.50.0/24 { next-hop 10.0.40.1; }
+            }
+        }
+    }
+    dmz-vr {
+        instance-type virtual-router;
+        interface dmz0;
+        routing-options {
+            interface-routes {
+                rib-group inet dmz-leak;
+            }
+            static {
+                route 0.0.0.0/0 { next-hop 10.0.30.1; }
+            }
+        }
+    }
+}
+routing-options {
+    rib-groups {
+        dmz-leak {
+            import-rib [ dmz-vr.inet.0 inet.0 ];
+        }
+    }
+}`
+	p := NewParser(input)
+	tree, errs := p.Parse()
+	if errs != nil {
+		t.Fatal(errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify two routing instances
+	if len(cfg.RoutingInstances) != 2 {
+		t.Fatalf("RoutingInstances = %d, want 2", len(cfg.RoutingInstances))
+	}
+
+	// Table IDs should be 100 and 101 (auto-assigned)
+	for _, ri := range cfg.RoutingInstances {
+		if ri.TableID != 100 && ri.TableID != 101 {
+			t.Errorf("instance %s: TableID = %d, want 100 or 101", ri.Name, ri.TableID)
+		}
+	}
+
+	// Find dmz-vr and verify rib-group reference
+	var dmzVR *RoutingInstanceConfig
+	for _, ri := range cfg.RoutingInstances {
+		if ri.Name == "dmz-vr" {
+			dmzVR = ri
+			break
+		}
+	}
+	if dmzVR == nil {
+		t.Fatal("dmz-vr not found")
+	}
+	if dmzVR.InterfaceRoutesRibGroup != "dmz-leak" {
+		t.Errorf("dmz-vr InterfaceRoutesRibGroup = %q, want dmz-leak", dmzVR.InterfaceRoutesRibGroup)
+	}
+	if len(dmzVR.StaticRoutes) != 1 {
+		t.Fatalf("dmz-vr StaticRoutes = %d, want 1", len(dmzVR.StaticRoutes))
+	}
+	if dmzVR.StaticRoutes[0].Destination != "0.0.0.0/0" {
+		t.Errorf("dmz-vr route destination = %q, want 0.0.0.0/0", dmzVR.StaticRoutes[0].Destination)
+	}
+
+	// Verify rib-group was parsed
+	rg, ok := cfg.RoutingOptions.RibGroups["dmz-leak"]
+	if !ok {
+		t.Fatal("rib-group dmz-leak not found")
+	}
+	if len(rg.ImportRibs) != 2 {
+		t.Fatalf("ImportRibs = %d, want 2", len(rg.ImportRibs))
+	}
+	if rg.ImportRibs[0] != "dmz-vr.inet.0" {
+		t.Errorf("ImportRibs[0] = %q, want dmz-vr.inet.0", rg.ImportRibs[0])
+	}
+	if rg.ImportRibs[1] != "inet.0" {
+		t.Errorf("ImportRibs[1] = %q, want inet.0", rg.ImportRibs[1])
+	}
+
+	// Verify tunnel-vr
+	var tunnelVR *RoutingInstanceConfig
+	for _, ri := range cfg.RoutingInstances {
+		if ri.Name == "tunnel-vr" {
+			tunnelVR = ri
+			break
+		}
+	}
+	if tunnelVR == nil {
+		t.Fatal("tunnel-vr not found")
+	}
+	if len(tunnelVR.Interfaces) != 1 || tunnelVR.Interfaces[0] != "tunnel0" {
+		t.Errorf("tunnel-vr Interfaces = %v, want [tunnel0]", tunnelVR.Interfaces)
+	}
+}
+
+func TestMultipleRoutingInstancesSetSyntax(t *testing.T) {
+	lines := []string{
+		"set routing-instances tunnel-vr instance-type virtual-router",
+		"set routing-instances tunnel-vr interface tunnel0",
+		"set routing-instances tunnel-vr routing-options static route 10.0.50.0/24 next-hop 10.0.40.1",
+		"set routing-instances dmz-vr instance-type virtual-router",
+		"set routing-instances dmz-vr interface dmz0",
+		"set routing-instances dmz-vr routing-options interface-routes rib-group inet dmz-leak",
+		"set routing-instances dmz-vr routing-options static route 0.0.0.0/0 next-hop 10.0.30.1",
+		"set routing-options rib-groups dmz-leak import-rib dmz-vr.inet.0",
+		"set routing-options rib-groups dmz-leak import-rib inet.0",
+	}
+	tree := &ConfigTree{}
+	for _, line := range lines {
+		path, err := ParseSetCommand(line)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", line, err)
+		}
+		if err := tree.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%v): %v", path, err)
+		}
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.RoutingInstances) != 2 {
+		t.Fatalf("RoutingInstances = %d, want 2", len(cfg.RoutingInstances))
+	}
+
+	// Find dmz-vr
+	var dmzVR *RoutingInstanceConfig
+	for _, ri := range cfg.RoutingInstances {
+		if ri.Name == "dmz-vr" {
+			dmzVR = ri
+			break
+		}
+	}
+	if dmzVR == nil {
+		t.Fatal("dmz-vr not found")
+	}
+	if dmzVR.InterfaceRoutesRibGroup != "dmz-leak" {
+		t.Errorf("InterfaceRoutesRibGroup = %q, want dmz-leak", dmzVR.InterfaceRoutesRibGroup)
+	}
+
+	// Verify rib-group
+	rg, ok := cfg.RoutingOptions.RibGroups["dmz-leak"]
+	if !ok {
+		t.Fatal("rib-group dmz-leak not found")
+	}
+	if len(rg.ImportRibs) != 2 {
+		t.Fatalf("ImportRibs = %d, want 2", len(rg.ImportRibs))
+	}
+}
+
 func TestPreferredAddress(t *testing.T) {
 	input := `interfaces {
     ge-0/0/0 {

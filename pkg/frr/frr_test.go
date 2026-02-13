@@ -575,6 +575,89 @@ func TestApplyFull_BackupRouter(t *testing.T) {
 	}
 }
 
+func TestFRRMultiVRF(t *testing.T) {
+	dir := t.TempDir()
+	confPath := filepath.Join(dir, "frr.conf")
+	os.WriteFile(confPath, []byte("log syslog informational\n"), 0644)
+
+	m := &Manager{frrConf: confPath}
+
+	fc := &FullConfig{
+		StaticRoutes: []*config.StaticRoute{
+			{Destination: "0.0.0.0/0", NextHops: []config.NextHopEntry{{Address: "172.16.50.1"}}},
+		},
+		Instances: []InstanceConfig{
+			{
+				VRFName: "vrf-tunnel-vr",
+				StaticRoutes: []*config.StaticRoute{
+					{Destination: "10.0.50.0/24", NextHops: []config.NextHopEntry{{Address: "10.0.40.1"}}},
+				},
+			},
+			{
+				VRFName: "vrf-dmz-vr",
+				StaticRoutes: []*config.StaticRoute{
+					{Destination: "0.0.0.0/0", NextHops: []config.NextHopEntry{{Address: "10.0.30.1"}}},
+				},
+				OSPF: &config.OSPFConfig{
+					RouterID: "3.3.3.3",
+					Areas: []*config.OSPFArea{
+						{ID: "0.0.0.0", Interfaces: []*config.OSPFInterface{{Name: "dmz0"}}},
+					},
+				},
+			},
+		},
+	}
+
+	// Build the section that ApplyFull would generate (without calling reload)
+	var b strings.Builder
+	b.WriteString("! bpfrx managed config - do not edit\n!\n")
+	for _, sr := range fc.StaticRoutes {
+		b.WriteString(m.generateStaticRoute(sr, ""))
+	}
+	b.WriteString("!\n")
+	for _, inst := range fc.Instances {
+		if len(inst.StaticRoutes) > 0 {
+			for _, sr := range inst.StaticRoutes {
+				b.WriteString(m.generateStaticRoute(sr, inst.VRFName))
+			}
+			b.WriteString("!\n")
+		}
+	}
+	for _, inst := range fc.Instances {
+		if inst.OSPF != nil || inst.BGP != nil || inst.RIP != nil || inst.ISIS != nil {
+			b.WriteString(m.generateProtocols(inst.OSPF, inst.BGP, inst.RIP, inst.ISIS, inst.VRFName, 0))
+		}
+	}
+
+	if err := m.writeManagedSection(b.String()); err != nil {
+		t.Fatal(err)
+	}
+
+	data, _ := os.ReadFile(confPath)
+	got := string(data)
+
+	// Verify global static route
+	if !strings.Contains(got, "ip route 0.0.0.0/0 172.16.50.1\n") {
+		t.Error("missing global default route")
+	}
+
+	// Verify per-VRF static routes
+	if !strings.Contains(got, "ip route 10.0.50.0/24 10.0.40.1 vrf vrf-tunnel-vr\n") {
+		t.Errorf("missing tunnel-vr static route, got:\n%s", got)
+	}
+	if !strings.Contains(got, "ip route 0.0.0.0/0 10.0.30.1 vrf vrf-dmz-vr\n") {
+		t.Errorf("missing dmz-vr static route, got:\n%s", got)
+	}
+
+	// Verify per-VRF OSPF
+	if !strings.Contains(got, "router ospf vrf vrf-dmz-vr\n") {
+		t.Errorf("missing VRF OSPF block, got:\n%s", got)
+	}
+	if !strings.Contains(got, "ospf router-id 3.3.3.3\n") {
+		t.Errorf("missing OSPF router-id, got:\n%s", got)
+	}
+}
+
 func TestApplyFull_BackupRouterWithPrefix(t *testing.T) {
 	fc := &FullConfig{
 		BackupRouter:    "10.0.1.1",

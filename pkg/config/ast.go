@@ -474,11 +474,9 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 		"forwarding-table": {children: map[string]*schemaNode{
 			"export": {args: 1, children: nil},
 		}},
-		"rib-groups": {children: map[string]*schemaNode{
-			"*": {children: map[string]*schemaNode{
-				"import-rib": {children: nil},
-			}},
-		}},
+		"rib-groups": {wildcard: &schemaNode{children: map[string]*schemaNode{
+			"import-rib": {children: nil},
+		}}},
 		"interface-routes": {children: map[string]*schemaNode{
 			"rib-group": {children: map[string]*schemaNode{
 				"inet":  {args: 1, children: nil},

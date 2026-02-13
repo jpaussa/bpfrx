@@ -49,6 +49,7 @@ TC Egress:   main -> screen_egress -> conntrack -> nat -> forward
 - **HTTP REST** on 127.0.0.1:8080 — health, Prometheus metrics, config endpoints
 - **CLI** — Interactive Junos-style with tab completion, `?` help, `| match` pipe
 - **Remote CLI** — `cli` binary connects via gRPC
+- **Command Trees** — `pkg/cmdtree/tree.go` is single source of truth for all CLI command trees, tab completion, and `?` help across local CLI, remote CLI, and gRPC server
 
 ## Code Layout
 | Path | Description |
@@ -57,7 +58,8 @@ TC Egress:   main -> screen_egress -> conntrack -> nat -> forward
 | `bpf/xdp/*.c` | 9 XDP ingress programs (includes cpumap entry) |
 | `bpf/tc/*.c` | 5 TC egress programs |
 | `pkg/config/` | Junos parser, AST, typed config, compiler |
-| `pkg/configstore/` | Candidate/active/commit/rollback management |
+| `pkg/cmdtree/` | Single source of truth for all CLI command trees |
+| `pkg/configstore/` | Candidate/active/commit/rollback, atomic DB persistence, JSONL audit journal |
 | `pkg/dataplane/` | eBPF loader, map management, bpf2go bindings |
 | `pkg/daemon/` | Daemon lifecycle (TTY detection, signal handling) |
 | `pkg/cli/` | Interactive Junos-style CLI |
@@ -66,13 +68,14 @@ TC Egress:   main -> screen_egress -> conntrack -> nat -> forward
 | `pkg/dhcp/` | DHCPv4/DHCPv6 clients |
 | `pkg/frr/` | FRR config generation + managed section in frr.conf |
 | `pkg/networkd/` | systemd-networkd .link/.network file generation |
-| `pkg/routing/` | GRE tunnel + VRF management via netlink |
+| `pkg/routing/` | GRE tunnels, VRFs, XFRM interfaces, rib-group + next-table route leaking via netlink |
 | `pkg/ipsec/` | strongSwan config + SA queries |
 | `pkg/api/` | HTTP REST API + Prometheus collector |
 | `pkg/grpcapi/` | gRPC server + protobuf bindings |
 | `pkg/flowexport/` | NetFlow v9 exporter |
 | `pkg/feeds/` | Dynamic address feed fetcher |
 | `pkg/dhcpserver/` | Kea DHCP server management |
+| `pkg/eventengine/` | Event-driven automation engine |
 | `pkg/rpm/` | RPM probe manager |
 | `proto/bpfrx/v1/` | Protobuf service definition |
 | `cmd/bpfrxd/` | Daemon main binary |
@@ -139,7 +142,7 @@ TC Egress:   main -> screen_egress -> conntrack -> nat -> forward
 - **NAT**: SNAT (interface + pool, address-persistent), DNAT (with hit counters), static 1:1, NAT64 (native BPF)
 - **IPv4 + IPv6**: Dual-stack, DHCPv4/v6 clients, Router Advertisements
 - **Screen/IDS**: 11 checks (land, syn-flood, ping-death, teardrop, rate-limiting)
-- **Routing**: FRR integration (static, OSPF, BGP, IS-IS, RIP), VRFs, GRE tunnels, export/redistribute, ECMP multipath, next-table inter-VRF route leaking, route filtering by protocol/CIDR
+- **Routing**: FRR integration (static, OSPF, BGP, IS-IS, RIP), VRFs, GRE tunnels, export/redistribute, ECMP multipath, next-table + rib-group inter-VRF route leaking, route filtering by protocol/CIDR
 - **VLANs**: 802.1Q tagging in BPF, trunk ports
 - **IPsec**: strongSwan config generation, IKE proposals, gateway compilation, XFRM interfaces
 - **Observability**: Syslog (facility/severity/category filtering), NetFlow v9, Prometheus, RPM probes, dynamic feeds, SNMP (ifTable MIB), BPF map utilization (`show system buffers`)

@@ -2,9 +2,10 @@
 package configstore
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/psaab/bpfrx/pkg/config"

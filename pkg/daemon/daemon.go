@@ -594,6 +594,13 @@ func (d *Daemon) applyConfig(cfg *config.Config) {
 		}
 	}
 
+	// 3c. Apply rib-group route leaking rules (ip rule)
+	if d.routing != nil && len(cfg.RoutingOptions.RibGroups) > 0 {
+		if err := d.routing.ApplyRibGroupRules(cfg.RoutingOptions.RibGroups, cfg.RoutingInstances); err != nil {
+			slog.Warn("failed to apply rib-group rules", "err", err)
+		}
+	}
+
 	// 4. Proactive neighbor resolution for all known next-hops/gateways.
 	// This ensures bpf_fib_lookup returns SUCCESS (with valid MACs)
 	// instead of NO_NEIGH for the first forwarded packet.

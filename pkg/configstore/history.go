@@ -3,6 +3,7 @@ package configstore
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/psaab/bpfrx/pkg/config"
 )
@@ -33,6 +34,11 @@ func NewHistory(max int) *History {
 // MaxSize returns the maximum history size.
 func (h *History) MaxSize() int {
 	return h.maxSize
+}
+
+// Len returns the current number of entries in the history.
+func (h *History) Len() int {
+	return h.size
 }
 
 // Push adds an entry, overwriting the oldest if full.

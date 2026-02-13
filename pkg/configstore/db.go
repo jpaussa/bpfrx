@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/psaab/bpfrx/pkg/config"
 )
 
 // DB handles atomic persistence of configuration trees to disk.

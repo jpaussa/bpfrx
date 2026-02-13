@@ -299,7 +299,7 @@ func TestCommitConfirmedAutoRollback(t *testing.T) {
 
 	// Track rollback callback
 	rollbackCalled := make(chan struct{}, 1)
-	s.SetAutoRollbackHandler(func(cfg *config.Config) {
+	s.SetCentralRollbackHandler(func(cfg *config.Config) {
 		rollbackCalled <- struct{}{}
 	})
 
