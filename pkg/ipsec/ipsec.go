@@ -81,11 +81,26 @@ func (m *Manager) generateConfig(ipsecCfg *config.IPsecConfig) string {
 	for name, vpn := range ipsecCfg.VPNs {
 		fmt.Fprintf(&b, "  %s {\n", name)
 
-		if vpn.LocalAddr != "" {
-			fmt.Fprintf(&b, "    local_addrs = %s\n", vpn.LocalAddr)
+		// Resolve gateway reference: if vpn.Gateway matches a named gateway,
+		// use the gateway's address and local-address.
+		remoteAddr := vpn.Gateway
+		localAddr := vpn.LocalAddr
+		ikePolicy := ""
+		if gw, ok := ipsecCfg.Gateways[vpn.Gateway]; ok {
+			if gw.Address != "" {
+				remoteAddr = gw.Address
+			}
+			if gw.LocalAddress != "" && localAddr == "" {
+				localAddr = gw.LocalAddress
+			}
+			ikePolicy = gw.IKEPolicy
 		}
-		if vpn.Gateway != "" {
-			fmt.Fprintf(&b, "    remote_addrs = %s\n", vpn.Gateway)
+
+		if localAddr != "" {
+			fmt.Fprintf(&b, "    local_addrs = %s\n", localAddr)
+		}
+		if remoteAddr != "" {
+			fmt.Fprintf(&b, "    remote_addrs = %s\n", remoteAddr)
 		}
 
 		b.WriteString("    local {\n")
@@ -94,6 +109,13 @@ func (m *Manager) generateConfig(ipsecCfg *config.IPsecConfig) string {
 		b.WriteString("    remote {\n")
 		b.WriteString("      auth = psk\n")
 		b.WriteString("    }\n")
+
+		// Build IKE proposals from gateway's ike-policy reference
+		if ikePolicy != "" {
+			if prop, ok := ipsecCfg.Proposals[ikePolicy]; ok {
+				fmt.Fprintf(&b, "    proposals = %s\n", buildIKEProposal(prop))
+			}
+		}
 
 		// Build ESP proposals string from referenced proposal
 		espProposals := "default"
@@ -129,15 +151,49 @@ func (m *Manager) generateConfig(ipsecCfg *config.IPsecConfig) string {
 	// Secrets
 	b.WriteString("secrets {\n")
 	for name, vpn := range ipsecCfg.VPNs {
-		if vpn.PSK != "" {
+		secret := vpn.PSK
+		// If VPN references a gateway, check gateway for PSK too
+		if secret == "" {
+			if gw, ok := ipsecCfg.Gateways[vpn.Gateway]; ok {
+				_ = gw // gateway PSK stored in VPN.PSK for now
+			}
+		}
+		if secret != "" {
 			fmt.Fprintf(&b, "  ike-%s {\n", name)
-			fmt.Fprintf(&b, "    secret = \"%s\"\n", vpn.PSK)
+			fmt.Fprintf(&b, "    secret = \"%s\"\n", secret)
 			fmt.Fprintf(&b, "  }\n")
 		}
 	}
 	b.WriteString("}\n")
 
 	return b.String()
+}
+
+// buildIKEProposal builds a swanctl IKE (Phase 1) proposal string from a proposal config.
+func buildIKEProposal(prop *config.IPsecProposal) string {
+	var parts []string
+
+	enc := prop.EncryptionAlg
+	if enc == "" {
+		enc = "aes256"
+	}
+	enc = strings.ReplaceAll(enc, "-cbc", "")
+	enc = strings.ReplaceAll(enc, "-", "")
+	parts = append(parts, enc)
+
+	// IKE always includes integrity/PRF (even for GCM, swanctl adds PRFHMACSHA256 implicitly)
+	if prop.AuthAlg != "" && !strings.Contains(prop.EncryptionAlg, "gcm") {
+		auth := prop.AuthAlg
+		auth = strings.ReplaceAll(auth, "hmac-", "")
+		auth = strings.ReplaceAll(auth, "-", "")
+		parts = append(parts, auth)
+	}
+
+	if prop.DHGroup > 0 {
+		parts = append(parts, fmt.Sprintf("modp%d", dhGroupBits(prop.DHGroup)))
+	}
+
+	return strings.Join(parts, "-")
 }
 
 func buildESPProposal(prop *config.IPsecProposal) string {

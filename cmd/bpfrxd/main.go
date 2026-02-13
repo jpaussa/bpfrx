@@ -16,7 +16,19 @@ import (
 	"github.com/psaab/bpfrx/pkg/frr"
 )
 
+// Version information set at build time via ldflags.
+var (
+	version   = "dev"
+	buildTime = "unknown"
+	commit    = "unknown"
+)
+
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "version" {
+		fmt.Printf("bpfrxd %s (commit %s, built %s)\n", version, commit, buildTime)
+		return
+	}
+
 	if len(os.Args) > 1 && os.Args[1] == "cleanup" {
 		if err := dataplane.Cleanup(); err != nil {
 			fmt.Fprintf(os.Stderr, "cleanup BPF: %v\n", err)
@@ -49,6 +61,7 @@ func main() {
 		NoDataplane: *noDataplane,
 		APIAddr:     *apiAddr,
 		GRPCAddr:    *grpcAddr,
+		Version:     version,
 	})
 
 	if err := d.Run(context.Background()); err != nil {

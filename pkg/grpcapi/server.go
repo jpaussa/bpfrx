@@ -45,6 +45,7 @@ type Config struct {
 	DHCP         *dhcp.Manager
 	RPMResultsFn func() []*rpm.ProbeResult // returns live RPM results
 	ApplyFn      func(*config.Config)      // daemon's applyConfig callback
+	Version      string                    // software version string
 }
 
 // Server implements the BpfrxService gRPC service.
@@ -62,6 +63,7 @@ type Server struct {
 	applyFn      func(*config.Config)
 	startTime    time.Time
 	addr         string
+	version      string
 }
 
 // NewServer creates a new gRPC server.
@@ -79,6 +81,7 @@ func NewServer(addr string, cfg Config) *Server {
 		applyFn:      cfg.ApplyFn,
 		startTime:    time.Now(),
 		addr:         addr,
+		version:      cfg.Version,
 	}
 }
 
@@ -2451,6 +2454,23 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 				}
 			}
 		}
+
+	case "version":
+		ver := s.version
+		if ver == "" {
+			ver = "dev"
+		}
+		fmt.Fprintf(&buf, "bpfrx eBPF firewall %s\n", ver)
+		var uts unix.Utsname
+		if err := unix.Uname(&uts); err == nil {
+			sysname := strings.TrimRight(string(uts.Sysname[:]), "\x00")
+			release := strings.TrimRight(string(uts.Release[:]), "\x00")
+			machine := strings.TrimRight(string(uts.Machine[:]), "\x00")
+			nodename := strings.TrimRight(string(uts.Nodename[:]), "\x00")
+			fmt.Fprintf(&buf, "Hostname: %s\n", nodename)
+			fmt.Fprintf(&buf, "Kernel: %s %s (%s)\n", sysname, release, machine)
+		}
+		fmt.Fprintf(&buf, "Daemon uptime: %s\n", time.Since(s.startTime).Truncate(time.Second))
 
 	case "chassis":
 		// CPU info

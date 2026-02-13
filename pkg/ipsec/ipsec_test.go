@@ -197,6 +197,109 @@ func TestParseSAOutput(t *testing.T) {
 	}
 }
 
+func TestGenerateConfig_GatewayReference(t *testing.T) {
+	m := &Manager{configDir: "/tmp", configPath: "/tmp/bpfrx.conf"}
+	cfg := &config.IPsecConfig{
+		Gateways: map[string]*config.IPsecGateway{
+			"remote-gw": {
+				Name:         "remote-gw",
+				Address:      "10.0.2.1",
+				LocalAddress: "10.0.1.1",
+				IKEPolicy:    "ike-aes256",
+			},
+		},
+		VPNs: map[string]*config.IPsecVPN{
+			"site-a": {
+				Gateway:       "remote-gw", // reference to gateway name
+				IPsecPolicy:   "esp-aes256",
+				PSK:           "mysecret",
+				BindInterface: "st0.0",
+			},
+		},
+		Proposals: map[string]*config.IPsecProposal{
+			"ike-aes256": {
+				Name:          "ike-aes256",
+				EncryptionAlg: "aes256-cbc",
+				AuthAlg:       "hmac-sha256-128",
+				DHGroup:       14,
+			},
+			"esp-aes256": {
+				Name:          "esp-aes256",
+				EncryptionAlg: "aes256-cbc",
+				AuthAlg:       "hmac-sha256-128",
+				DHGroup:       14,
+			},
+		},
+	}
+	got := m.generateConfig(cfg)
+
+	// Should resolve gateway address, not use "remote-gw" as IP
+	if !strings.Contains(got, "remote_addrs = 10.0.2.1") {
+		t.Errorf("gateway address not resolved: %s", got)
+	}
+	// Should use gateway's local address
+	if !strings.Contains(got, "local_addrs = 10.0.1.1") {
+		t.Errorf("gateway local address not resolved: %s", got)
+	}
+	// Should have IKE proposals from gateway's ike-policy
+	if !strings.Contains(got, "proposals = aes256-sha256128-modp2048") {
+		t.Errorf("IKE proposals not generated: %s", got)
+	}
+	// Should have ESP proposals from VPN's ipsec-policy
+	if !strings.Contains(got, "esp_proposals = aes256-sha256128-modp2048") {
+		t.Errorf("ESP proposals not generated: %s", got)
+	}
+}
+
+func TestGenerateConfig_DirectGatewayIP(t *testing.T) {
+	// When gateway is an IP (not a reference), it should be used directly
+	m := &Manager{configDir: "/tmp", configPath: "/tmp/bpfrx.conf"}
+	cfg := &config.IPsecConfig{
+		Gateways:  map[string]*config.IPsecGateway{},
+		Proposals: map[string]*config.IPsecProposal{},
+		VPNs: map[string]*config.IPsecVPN{
+			"direct": {
+				Gateway:   "172.16.0.1",
+				LocalAddr: "172.16.0.2",
+				PSK:       "key123",
+			},
+		},
+	}
+	got := m.generateConfig(cfg)
+	if !strings.Contains(got, "remote_addrs = 172.16.0.1") {
+		t.Errorf("direct gateway IP not used: %s", got)
+	}
+	if !strings.Contains(got, "local_addrs = 172.16.0.2") {
+		t.Errorf("direct local addr not used: %s", got)
+	}
+}
+
+func TestBuildIKEProposal(t *testing.T) {
+	tests := []struct {
+		name string
+		prop *config.IPsecProposal
+		want string
+	}{
+		{
+			"aes-sha256-dh14",
+			&config.IPsecProposal{EncryptionAlg: "aes256-cbc", AuthAlg: "hmac-sha256-128", DHGroup: 14},
+			"aes256-sha256128-modp2048",
+		},
+		{
+			"defaults",
+			&config.IPsecProposal{},
+			"aes256",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := buildIKEProposal(tt.prop); got != tt.want {
+				t.Errorf("buildIKEProposal() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseSAOutput_Empty(t *testing.T) {
 	sas := parseSAOutput("")
 	if len(sas) != 0 {

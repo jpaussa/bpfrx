@@ -47,6 +47,7 @@ type Options struct {
 	NoDataplane bool   // set to true to run without eBPF (config-only mode)
 	APIAddr     string // HTTP API listen address (empty = disabled)
 	GRPCAddr    string // gRPC API listen address (empty = disabled)
+	Version     string // software version string
 }
 
 // Daemon is the main bpfrx daemon.

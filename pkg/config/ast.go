@@ -237,7 +237,13 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 		}},
 		"ipsec": {children: map[string]*schemaNode{
 			"proposal": {args: 1, children: nil},
-			"vpn":      {args: 1, children: nil},
+			"gateway": {args: 1, children: map[string]*schemaNode{
+				"address":            {args: 1, children: nil},
+				"local-address":      {args: 1, children: nil},
+				"ike-policy":         {args: 1, children: nil},
+				"external-interface": {args: 1, children: nil},
+			}},
+			"vpn": {args: 1, children: nil},
 		}},
 		"dynamic-address": {children: map[string]*schemaNode{
 			"feed-server": {args: 1, children: nil},

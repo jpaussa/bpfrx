@@ -1540,6 +1540,36 @@ func compileIPsec(node *Node, sec *SecurityConfig) error {
 		sec.IPsec.Proposals[prop.Name] = prop
 	}
 
+	for _, child := range node.FindChildren("gateway") {
+		if len(child.Keys) < 2 {
+			continue
+		}
+		gw := &IPsecGateway{Name: child.Keys[1]}
+
+		for _, p := range child.Children {
+			switch p.Name() {
+			case "address":
+				if len(p.Keys) >= 2 {
+					gw.Address = p.Keys[1]
+				}
+			case "local-address":
+				if len(p.Keys) >= 2 {
+					gw.LocalAddress = p.Keys[1]
+				}
+			case "ike-policy":
+				if len(p.Keys) >= 2 {
+					gw.IKEPolicy = p.Keys[1]
+				}
+			case "external-interface":
+				if len(p.Keys) >= 2 {
+					gw.ExternalIface = p.Keys[1]
+				}
+			}
+		}
+
+		sec.IPsec.Gateways[gw.Name] = gw
+	}
+
 	for _, child := range node.FindChildren("vpn") {
 		if len(child.Keys) < 2 {
 			continue

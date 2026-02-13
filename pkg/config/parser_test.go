@@ -2797,6 +2797,120 @@ func TestIPsecBindInterfaceSetSyntax(t *testing.T) {
 	}
 }
 
+func TestIPsecGateway(t *testing.T) {
+	input := `security {
+    ipsec {
+        proposal ike-strong {
+            encryption-algorithm aes-256-cbc;
+            authentication-algorithm hmac-sha256-128;
+            dh-group 14;
+        }
+        proposal esp-strong {
+            protocol esp;
+            encryption-algorithm aes-256-cbc;
+            authentication-algorithm hmac-sha256-128;
+            dh-group 14;
+        }
+        gateway remote-gw {
+            address 203.0.113.1;
+            local-address 198.51.100.1;
+            ike-policy ike-strong;
+            external-interface untrust0;
+        }
+        vpn site-a {
+            gateway remote-gw;
+            ipsec-policy esp-strong;
+            bind-interface st0.0;
+            local-identity 10.0.0.0/24;
+            remote-identity 10.1.0.0/24;
+            pre-shared-key "secret123";
+        }
+    }
+}`
+	parser := NewParser(input)
+	tree, errs := parser.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	// Verify gateway is compiled
+	gw := cfg.Security.IPsec.Gateways["remote-gw"]
+	if gw == nil {
+		t.Fatal("missing gateway remote-gw")
+	}
+	if gw.Address != "203.0.113.1" {
+		t.Errorf("gateway address = %q, want 203.0.113.1", gw.Address)
+	}
+	if gw.LocalAddress != "198.51.100.1" {
+		t.Errorf("gateway local-address = %q, want 198.51.100.1", gw.LocalAddress)
+	}
+	if gw.IKEPolicy != "ike-strong" {
+		t.Errorf("gateway ike-policy = %q, want ike-strong", gw.IKEPolicy)
+	}
+	if gw.ExternalIface != "untrust0" {
+		t.Errorf("gateway external-interface = %q, want untrust0", gw.ExternalIface)
+	}
+
+	// Verify VPN references gateway by name
+	vpn := cfg.Security.IPsec.VPNs["site-a"]
+	if vpn == nil {
+		t.Fatal("missing VPN site-a")
+	}
+	if vpn.Gateway != "remote-gw" {
+		t.Errorf("vpn gateway = %q, want remote-gw", vpn.Gateway)
+	}
+}
+
+func TestIPsecGatewaySetSyntax(t *testing.T) {
+	setCommands := []string{
+		`set security ipsec gateway remote-gw address 203.0.113.1`,
+		`set security ipsec gateway remote-gw local-address 198.51.100.1`,
+		`set security ipsec gateway remote-gw ike-policy ike-strong`,
+		`set security ipsec gateway remote-gw external-interface untrust0`,
+		`set security ipsec vpn site-a gateway remote-gw`,
+		`set security ipsec vpn site-a bind-interface st0.0`,
+	}
+
+	tree := &ConfigTree{}
+	for _, cmd := range setCommands {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%v): %v", path, err)
+		}
+	}
+
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	gw := cfg.Security.IPsec.Gateways["remote-gw"]
+	if gw == nil {
+		t.Fatal("missing gateway remote-gw")
+	}
+	if gw.Address != "203.0.113.1" {
+		t.Errorf("gateway address = %q", gw.Address)
+	}
+	if gw.IKEPolicy != "ike-strong" {
+		t.Errorf("gateway ike-policy = %q", gw.IKEPolicy)
+	}
+
+	vpn := cfg.Security.IPsec.VPNs["site-a"]
+	if vpn == nil {
+		t.Fatal("missing VPN site-a")
+	}
+	if vpn.Gateway != "remote-gw" {
+		t.Errorf("vpn gateway = %q", vpn.Gateway)
+	}
+}
+
 func TestHostInboundIPsec(t *testing.T) {
 	input := `security {
     zones {

@@ -3,6 +3,12 @@ GO ?= go
 BINARY := bpfrxd
 PREFIX ?= /usr/local
 
+# Version info embedded at build time
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+BUILD_TIME ?= $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
+LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.buildTime=$(BUILD_TIME)
+
 # eBPF compilation flags
 BPF_CFLAGS := -O2 -g -Wall -Werror -target bpf
 
@@ -16,7 +22,7 @@ generate:
 
 # Build the daemon binary
 build:
-	CGO_ENABLED=0 $(GO) build -o $(BINARY) ./cmd/bpfrxd
+	CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/bpfrxd
 
 # Build the remote CLI client
 build-ctl:
