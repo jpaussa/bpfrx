@@ -3480,3 +3480,124 @@ security {
 	}
 }
 
+func TestMultiTermApplication(t *testing.T) {
+	input := `applications {
+    application ssh-long {
+        description "Long SSH sessions";
+        term 22 alg ssh protocol tcp destination-port 22 inactivity-timeout 86400;
+        term 2222 alg ssh protocol tcp destination-port 2222 inactivity-timeout 86400;
+    }
+    application FaceTime {
+        term 41642_65535 protocol udp source-port 41642-65535 destination-port 3478-3497;
+        term 0_41640 protocol udp source-port 0-41640 destination-port 3478-3497;
+    }
+    application simple-app {
+        protocol tcp;
+        destination-port 8080;
+    }
+}`
+
+	parser := NewParser(input)
+	tree, errs := parser.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	// ssh-long should become an implicit application-set with 2 term apps
+	as, ok := cfg.Applications.ApplicationSets["ssh-long"]
+	if !ok {
+		t.Fatal("multi-term app 'ssh-long' should create an implicit application-set")
+	}
+	if len(as.Applications) != 2 {
+		t.Fatalf("ssh-long set: expected 2 members, got %d", len(as.Applications))
+	}
+
+	// Check individual term apps
+	term22 := cfg.Applications.Applications["ssh-long-22"]
+	if term22 == nil {
+		t.Fatal("missing term app ssh-long-22")
+	}
+	if term22.Protocol != "tcp" {
+		t.Errorf("ssh-long-22 protocol: got %q, want tcp", term22.Protocol)
+	}
+	if term22.DestinationPort != "22" {
+		t.Errorf("ssh-long-22 dest-port: got %q, want 22", term22.DestinationPort)
+	}
+	if term22.ALG != "ssh" {
+		t.Errorf("ssh-long-22 ALG: got %q, want ssh", term22.ALG)
+	}
+	if term22.InactivityTimeout != 86400 {
+		t.Errorf("ssh-long-22 timeout: got %d, want 86400", term22.InactivityTimeout)
+	}
+
+	// Check FaceTime source-port
+	ft := cfg.Applications.Applications["FaceTime-41642_65535"]
+	if ft == nil {
+		t.Fatal("missing term app FaceTime-41642_65535")
+	}
+	if ft.SourcePort != "41642-65535" {
+		t.Errorf("FaceTime source-port: got %q, want 41642-65535", ft.SourcePort)
+	}
+	if ft.DestinationPort != "3478-3497" {
+		t.Errorf("FaceTime dest-port: got %q, want 3478-3497", ft.DestinationPort)
+	}
+
+	// simple-app should remain a plain Application (not an app-set)
+	if _, isSet := cfg.Applications.ApplicationSets["simple-app"]; isSet {
+		t.Error("simple-app should NOT be an application-set")
+	}
+	simpleApp := cfg.Applications.Applications["simple-app"]
+	if simpleApp == nil {
+		t.Fatal("missing simple-app")
+	}
+	if simpleApp.Protocol != "tcp" || simpleApp.DestinationPort != "8080" {
+		t.Errorf("simple-app: got proto=%q port=%q", simpleApp.Protocol, simpleApp.DestinationPort)
+	}
+}
+
+func TestMultiTermApplicationSetSyntax(t *testing.T) {
+	// Test flat set syntax for multi-term apps
+	tree := &ConfigTree{}
+	setCommands := []string{
+		"set applications application plex term 32400 protocol tcp destination-port 32400 inactivity-timeout 1800",
+		"set applications application plex term 32480 protocol tcp destination-port 32480",
+		"set applications application plex term 5001-udp protocol udp destination-port 5001",
+	}
+	for _, cmd := range setCommands {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%v): %v", path, err)
+		}
+	}
+
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	// plex should become an implicit application-set
+	as, ok := cfg.Applications.ApplicationSets["plex"]
+	if !ok {
+		t.Fatal("multi-term 'plex' should create an implicit application-set")
+	}
+	if len(as.Applications) != 3 {
+		t.Fatalf("plex set: expected 3 members, got %d", len(as.Applications))
+	}
+
+	// Check a term
+	term := cfg.Applications.Applications["plex-32400"]
+	if term == nil {
+		t.Fatal("missing plex-32400")
+	}
+	if term.InactivityTimeout != 1800 {
+		t.Errorf("plex-32400 timeout: got %d, want 1800", term.InactivityTimeout)
+	}
+}
+
