@@ -932,3 +932,371 @@ func (m *Manager) ReadNATPortCounter(poolID uint32) (uint64, error) {
 	}
 	return total, nil
 }
+
+// --- Hitless restart: delete-stale methods ---
+// These methods remove map entries that are no longer present in the new config,
+// AFTER new entries have been written. This avoids the clear-then-repopulate
+// window where BPF programs see empty maps.
+
+// DeleteStaleIfaceZone removes iface_zone_map entries not in the written set.
+func (m *Manager) DeleteStaleIfaceZone(written map[IfaceZoneKey]bool) {
+	zm, ok := m.maps["iface_zone_map"]
+	if !ok {
+		return
+	}
+	var key IfaceZoneKey
+	var val IfaceZoneValue
+	iter := zm.Iterate()
+	var stale []IfaceZoneKey
+	for iter.Next(&key, &val) {
+		if !written[key] {
+			stale = append(stale, key)
+		}
+	}
+	for _, k := range stale {
+		zm.Delete(k)
+	}
+	if len(stale) > 0 {
+		slog.Info("deleted stale iface_zone entries", "count", len(stale))
+	}
+}
+
+// DeleteStaleVlanIface removes vlan_iface_map entries not in the written set.
+func (m *Manager) DeleteStaleVlanIface(written map[uint32]bool) {
+	zm, ok := m.maps["vlan_iface_map"]
+	if !ok {
+		return
+	}
+	var key uint32
+	var val VlanIfaceInfo
+	iter := zm.Iterate()
+	var stale []uint32
+	for iter.Next(&key, &val) {
+		if !written[key] {
+			stale = append(stale, key)
+		}
+	}
+	for _, k := range stale {
+		zm.Delete(k)
+	}
+	if len(stale) > 0 {
+		slog.Info("deleted stale vlan_iface entries", "count", len(stale))
+	}
+}
+
+// DeleteStaleZonePairPolicies removes zone_pair_policies entries not in the written set.
+func (m *Manager) DeleteStaleZonePairPolicies(written map[ZonePairKey]bool) {
+	zm, ok := m.maps["zone_pair_policies"]
+	if !ok {
+		return
+	}
+	var key ZonePairKey
+	var val []byte
+	iter := zm.Iterate()
+	var stale []ZonePairKey
+	for iter.Next(&key, &val) {
+		if !written[key] {
+			stale = append(stale, key)
+		}
+	}
+	for _, k := range stale {
+		zm.Delete(k)
+	}
+	if len(stale) > 0 {
+		slog.Info("deleted stale zone_pair_policies entries", "count", len(stale))
+	}
+}
+
+// DeleteStaleApplications removes application entries not in the written set.
+func (m *Manager) DeleteStaleApplications(written map[AppKey]bool) {
+	zm, ok := m.maps["applications"]
+	if !ok {
+		return
+	}
+	var key AppKey
+	var val []byte
+	iter := zm.Iterate()
+	var stale []AppKey
+	for iter.Next(&key, &val) {
+		if !written[key] {
+			stale = append(stale, key)
+		}
+	}
+	for _, k := range stale {
+		zm.Delete(k)
+	}
+	if len(stale) > 0 {
+		slog.Info("deleted stale application entries", "count", len(stale))
+	}
+}
+
+// DeleteStaleSNATRules removes snat_rules entries not in the written set.
+func (m *Manager) DeleteStaleSNATRules(written map[SNATKey]bool) {
+	zm, ok := m.maps["snat_rules"]
+	if !ok {
+		return
+	}
+	var key SNATKey
+	var val []byte
+	iter := zm.Iterate()
+	var stale []SNATKey
+	for iter.Next(&key, &val) {
+		if !written[key] {
+			stale = append(stale, key)
+		}
+	}
+	for _, k := range stale {
+		zm.Delete(k)
+	}
+	if len(stale) > 0 {
+		slog.Info("deleted stale snat_rules entries", "count", len(stale))
+	}
+}
+
+// DeleteStaleSNATRulesV6 removes snat_rules_v6 entries not in the written set.
+func (m *Manager) DeleteStaleSNATRulesV6(written map[SNATKey]bool) {
+	zm, ok := m.maps["snat_rules_v6"]
+	if !ok {
+		return
+	}
+	var key SNATKey
+	var val []byte
+	iter := zm.Iterate()
+	var stale []SNATKey
+	for iter.Next(&key, &val) {
+		if !written[key] {
+			stale = append(stale, key)
+		}
+	}
+	for _, k := range stale {
+		zm.Delete(k)
+	}
+	if len(stale) > 0 {
+		slog.Info("deleted stale snat_rules_v6 entries", "count", len(stale))
+	}
+}
+
+// DeleteStaleDNATStatic removes static dnat_table entries not in the written set.
+func (m *Manager) DeleteStaleDNATStatic(written map[DNATKey]bool) {
+	zm, ok := m.maps["dnat_table"]
+	if !ok {
+		return
+	}
+	var key DNATKey
+	var val DNATValue
+	iter := zm.Iterate()
+	var stale []DNATKey
+	for iter.Next(&key, &val) {
+		if val.Flags == DNATFlagStatic && !written[key] {
+			stale = append(stale, key)
+		}
+	}
+	for _, k := range stale {
+		zm.Delete(k)
+	}
+	if len(stale) > 0 {
+		slog.Info("deleted stale dnat_table entries", "count", len(stale))
+	}
+}
+
+// DeleteStaleDNATStaticV6 removes static dnat_table_v6 entries not in the written set.
+func (m *Manager) DeleteStaleDNATStaticV6(written map[DNATKeyV6]bool) {
+	zm, ok := m.maps["dnat_table_v6"]
+	if !ok {
+		return
+	}
+	var key DNATKeyV6
+	var val DNATValueV6
+	iter := zm.Iterate()
+	var stale []DNATKeyV6
+	for iter.Next(&key, &val) {
+		if val.Flags == DNATFlagStatic && !written[key] {
+			stale = append(stale, key)
+		}
+	}
+	for _, k := range stale {
+		zm.Delete(k)
+	}
+	if len(stale) > 0 {
+		slog.Info("deleted stale dnat_table_v6 entries", "count", len(stale))
+	}
+}
+
+// DeleteStaleStaticNAT removes static_nat entries not in the written sets.
+func (m *Manager) DeleteStaleStaticNAT(writtenV4 map[StaticNATKeyV4]bool, writtenV6 map[StaticNATKeyV6]bool) {
+	if zm, ok := m.maps["static_nat_v4"]; ok {
+		var key StaticNATKeyV4
+		var val []byte
+		iter := zm.Iterate()
+		var stale []StaticNATKeyV4
+		for iter.Next(&key, &val) {
+			if !writtenV4[key] {
+				stale = append(stale, key)
+			}
+		}
+		for _, k := range stale {
+			zm.Delete(k)
+		}
+		if len(stale) > 0 {
+			slog.Info("deleted stale static_nat_v4 entries", "count", len(stale))
+		}
+	}
+	if zm, ok := m.maps["static_nat_v6"]; ok {
+		var key StaticNATKeyV6
+		var val []byte
+		iter := zm.Iterate()
+		var stale []StaticNATKeyV6
+		for iter.Next(&key, &val) {
+			if !writtenV6[key] {
+				stale = append(stale, key)
+			}
+		}
+		for _, k := range stale {
+			zm.Delete(k)
+		}
+		if len(stale) > 0 {
+			slog.Info("deleted stale static_nat_v6 entries", "count", len(stale))
+		}
+	}
+}
+
+// DeleteStaleNAT64 zeroes stale nat64_configs entries and removes stale prefix map entries.
+func (m *Manager) DeleteStaleNAT64(count uint32, writtenPrefixes map[NAT64PrefixKey]bool) {
+	if zm, ok := m.maps["nat64_configs"]; ok {
+		var empty NAT64Config
+		for i := count; i < 4; i++ {
+			zm.Update(i, empty, ebpf.UpdateAny)
+		}
+	}
+	if hm, ok := m.maps["nat64_prefix_map"]; ok {
+		var key NAT64PrefixKey
+		var val []byte
+		iter := hm.Iterate()
+		var stale []NAT64PrefixKey
+		for iter.Next(&key, &val) {
+			if !writtenPrefixes[key] {
+				stale = append(stale, key)
+			}
+		}
+		for _, k := range stale {
+			hm.Delete(k)
+		}
+	}
+}
+
+// ZeroStaleScreenConfigs zeroes screen_configs entries above maxID.
+func (m *Manager) ZeroStaleScreenConfigs(maxID uint32) {
+	zm, ok := m.maps["screen_configs"]
+	if !ok {
+		return
+	}
+	empty := ScreenConfig{}
+	for i := maxID + 1; i < 64; i++ {
+		zm.Update(i, empty, ebpf.UpdateAny)
+	}
+}
+
+// ZeroStaleNATPoolConfigs zeroes nat_pool_configs and nat_pool_ips entries
+// for pool IDs from startID onwards.
+func (m *Manager) ZeroStaleNATPoolConfigs(startID uint32) {
+	if zm, ok := m.maps["nat_pool_configs"]; ok {
+		empty := NATPoolConfig{}
+		for i := startID; i < 32; i++ {
+			zm.Update(i, empty, ebpf.UpdateAny)
+		}
+	}
+	if v4Map, ok := m.maps["nat_pool_ips_v4"]; ok {
+		var zeroV4 uint32
+		start := startID * MaxNATPoolIPsPerPool
+		end := uint32(32) * MaxNATPoolIPsPerPool
+		for i := start; i < end; i++ {
+			v4Map.Update(i, zeroV4, ebpf.UpdateAny)
+		}
+	}
+	if v6Map, ok := m.maps["nat_pool_ips_v6"]; ok {
+		zeroV6 := NATPoolIPV6{}
+		start := startID * MaxNATPoolIPsPerPool
+		end := uint32(32) * MaxNATPoolIPsPerPool
+		for i := start; i < end; i++ {
+			v6Map.Update(i, zeroV6, ebpf.UpdateAny)
+		}
+	}
+}
+
+// DeleteStaleIfaceFilter removes iface_filter_map entries not in the written set.
+func (m *Manager) DeleteStaleIfaceFilter(written map[IfaceFilterKey]bool) {
+	zm, ok := m.maps["iface_filter_map"]
+	if !ok {
+		return
+	}
+	var key IfaceFilterKey
+	var val []byte
+	iter := zm.Iterate()
+	var stale []IfaceFilterKey
+	for iter.Next(&key, &val) {
+		if !written[key] {
+			stale = append(stale, key)
+		}
+	}
+	for _, k := range stale {
+		zm.Delete(k)
+	}
+	if len(stale) > 0 {
+		slog.Info("deleted stale iface_filter entries", "count", len(stale))
+	}
+}
+
+// ZeroStaleFilterConfigs zeroes filter_configs entries from startID onwards.
+func (m *Manager) ZeroStaleFilterConfigs(startID uint32) {
+	zm, ok := m.maps["filter_configs"]
+	if !ok {
+		return
+	}
+	var empty FilterConfig
+	for i := startID; i < MaxFilterConfigs; i++ {
+		zm.Update(i, empty, ebpf.UpdateAny)
+	}
+}
+
+// InvalidateFIBCache zeros the cached FIB fields (fwd_ifindex, dmac, smac)
+// in all session entries, forcing BPF to re-run bpf_fib_lookup on next packet.
+func (m *Manager) InvalidateFIBCache() {
+	count := 0
+	if sm, ok := m.maps["sessions"]; ok {
+		var key SessionKey
+		var val SessionValue
+		iter := sm.Iterate()
+		for iter.Next(&key, &val) {
+			if val.FibIfindex == 0 {
+				continue
+			}
+			val.FibIfindex = 0
+			val.FibVlanID = 0
+			val.FibDmac = [6]byte{}
+			val.FibSmac = [6]byte{}
+			if err := sm.Update(key, val, ebpf.UpdateExist); err == nil {
+				count++
+			}
+		}
+	}
+	if sm, ok := m.maps["sessions_v6"]; ok {
+		var key SessionKeyV6
+		var val SessionValueV6
+		iter := sm.Iterate()
+		for iter.Next(&key, &val) {
+			if val.FibIfindex == 0 {
+				continue
+			}
+			val.FibIfindex = 0
+			val.FibVlanID = 0
+			val.FibDmac = [6]byte{}
+			val.FibSmac = [6]byte{}
+			if err := sm.Update(key, val, ebpf.UpdateExist); err == nil {
+				count++
+			}
+		}
+	}
+	if count > 0 {
+		slog.Info("invalidated FIB cache in sessions", "count", count)
+	}
+}

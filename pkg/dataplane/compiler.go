@@ -62,16 +62,29 @@ func (m *Manager) Compile(cfg *config.Config) (*CompileResult, error) {
 		NATCounterIDs:    make(map[string]uint16),
 	}
 
-	// Phase 1: Assign zone IDs (1-based; 0 = unassigned)
+	// Phase 1: Assign zone IDs (1-based; 0 = unassigned).
+	// Sort names for deterministic IDs across restarts — existing sessions
+	// store zone IDs, so changing them breaks session→policy lookups.
 	zoneID := uint16(1)
+	zoneNames := make([]string, 0, len(cfg.Security.Zones))
 	for name := range cfg.Security.Zones {
+		zoneNames = append(zoneNames, name)
+	}
+	sort.Strings(zoneNames)
+	for _, name := range zoneNames {
 		result.ZoneIDs[name] = zoneID
 		zoneID++
 	}
 
-	// Phase 1.5: Assign screen profile IDs (1-based; 0 = no profile)
+	// Phase 1.5: Assign screen profile IDs (1-based; 0 = no profile).
+	// Sorted for deterministic IDs.
 	screenID := uint16(1)
+	screenNames := make([]string, 0, len(cfg.Security.Screen))
 	for name := range cfg.Security.Screen {
+		screenNames = append(screenNames, name)
+	}
+	sort.Strings(screenNames)
+	for _, name := range screenNames {
 		result.ScreenIDs[name] = screenID
 		screenID++
 	}
@@ -187,6 +200,12 @@ func (m *Manager) Compile(cfg *config.Config) (*CompileResult, error) {
 				rcMap.Update(uint32(ifidx), uint8(1), ebpf.UpdateAny)
 			}
 		}
+	}
+
+	// Invalidate FIB cache on recompile so sessions re-run bpf_fib_lookup
+	// with potentially changed interface indices or MAC addresses.
+	if m.lastCompile != nil {
+		m.InvalidateFIBCache()
 	}
 
 	slog.Info("config compiled to dataplane",
@@ -337,13 +356,10 @@ func reconcileInterfaceAddresses(ifaceName string, desired []string) {
 }
 
 func (m *Manager) compileZones(cfg *config.Config, result *CompileResult) error {
-	// Clear previous zone and VLAN mappings for recompile
-	if err := m.ClearIfaceZoneMap(); err != nil {
-		slog.Warn("failed to clear iface_zone_map", "err", err)
-	}
-	if err := m.ClearVlanIfaceMap(); err != nil {
-		slog.Warn("failed to clear vlan_iface_map", "err", err)
-	}
+	// Track written keys for populate-before-clear: write new entries first,
+	// then delete stale ones that are no longer in the config.
+	writtenIfaceZone := make(map[IfaceZoneKey]bool)
+	writtenVlanIface := make(map[uint32]bool)
 
 	// Build interface -> routing table ID map from routing instances
 	ifaceTableID := make(map[string]uint32)
@@ -431,6 +447,7 @@ func (m *Manager) compileZones(cfg *config.Config, result *CompileResult) error 
 					return fmt.Errorf("set vlan_iface_info %s.%d: %w",
 						physName, vlanID, err)
 				}
+				writtenVlanIface[uint32(subIfindex)] = true
 
 				// Reconcile addresses on sub-interface (removes stale, adds missing).
 				// DHCP-managed sub-interfaces are skipped.
@@ -458,6 +475,7 @@ func (m *Manager) compileZones(cfg *config.Config, result *CompileResult) error 
 				return fmt.Errorf("set zone for %s vlan %d (ifindex %d): %w",
 					physName, vlanID, physIface.Index, err)
 			}
+			writtenIfaceZone[IfaceZoneKey{Ifindex: uint32(physIface.Index), VlanID: uint16(vlanID)}] = true
 
 			// Add physical interface to tx_ports and attach TC (once per phys iface).
 			// XDP attachment is deferred to after the loop so we can ensure
@@ -645,6 +663,10 @@ func (m *Manager) compileZones(cfg *config.Config, result *CompileResult) error 
 		}
 	}
 
+	// Delete stale zone/VLAN map entries no longer in the config.
+	m.DeleteStaleIfaceZone(writtenIfaceZone)
+	m.DeleteStaleVlanIface(writtenVlanIface)
+
 	return nil
 }
 
@@ -658,8 +680,14 @@ func (m *Manager) compileAddressBook(cfg *config.Config, result *CompileResult) 
 	// Assign address IDs (1-based; 0 = "any")
 	addrID := uint32(1)
 
-	// Process individual addresses
-	for name, addr := range ab.Addresses {
+	// Process individual addresses (sorted for deterministic IDs across restarts)
+	addrNames := make([]string, 0, len(ab.Addresses))
+	for name := range ab.Addresses {
+		addrNames = append(addrNames, name)
+	}
+	sort.Strings(addrNames)
+	for _, name := range addrNames {
+		addr := ab.Addresses[name]
 		result.AddrIDs[name] = addrID
 
 		cidr := addr.Value
@@ -685,8 +713,13 @@ func (m *Manager) compileAddressBook(cfg *config.Config, result *CompileResult) 
 		addrID++
 	}
 
-	// Process address sets (with nested set expansion)
-	for setName := range ab.AddressSets {
+	// Process address sets (sorted for deterministic IDs)
+	setNames := make([]string, 0, len(ab.AddressSets))
+	for name := range ab.AddressSets {
+		setNames = append(setNames, name)
+	}
+	sort.Strings(setNames)
+	for _, setName := range setNames {
 		setID := addrID
 		result.AddrIDs[setName] = setID
 		addrID++
@@ -719,9 +752,8 @@ func (m *Manager) compileAddressBook(cfg *config.Config, result *CompileResult) 
 }
 
 func (m *Manager) compileApplications(cfg *config.Config, result *CompileResult) error {
-	if err := m.ClearApplications(); err != nil {
-		slog.Warn("failed to clear applications map", "err", err)
-	}
+	// Track written keys for populate-before-clear.
+	writtenApps := make(map[AppKey]bool)
 
 	appID := uint32(1)
 	userApps := cfg.Applications.Applications
@@ -751,7 +783,13 @@ func (m *Manager) compileApplications(cfg *config.Config, result *CompileResult)
 		}
 	}
 
-	for appName := range referenced {
+	// Sort for deterministic app IDs across restarts.
+	refNames := make([]string, 0, len(referenced))
+	for name := range referenced {
+		refNames = append(refNames, name)
+	}
+	sort.Strings(refNames)
+	for _, appName := range refNames {
 		app, found := config.ResolveApplication(appName, userApps)
 		if !found {
 			return fmt.Errorf("application %q not found", appName)
@@ -779,12 +817,16 @@ func (m *Manager) compileApplications(cfg *config.Config, result *CompileResult)
 				return fmt.Errorf("set application %s port %d: %w",
 					appName, port, err)
 			}
+			writtenApps[AppKey{Protocol: proto, DstPort: htons(port)}] = true
 		}
 
 		slog.Debug("application compiled", "name", appName, "id", appID,
 			"proto", proto, "ports", ports)
 		appID++
 	}
+
+	// Delete stale application entries no longer referenced.
+	m.DeleteStaleApplications(writtenApps)
 
 	return nil
 }
@@ -886,9 +928,8 @@ func (m *Manager) resolveSNATMatchAddr(cidr string, result *CompileResult) (uint
 }
 
 func (m *Manager) compilePolicies(cfg *config.Config, result *CompileResult) error {
-	if err := m.ClearZonePairPolicies(); err != nil {
-		slog.Warn("failed to clear zone pair policies", "err", err)
-	}
+	// Track written keys for populate-before-clear.
+	writtenPolicySets := make(map[ZonePairKey]bool)
 
 	policySetID := uint32(0)
 
@@ -957,10 +998,12 @@ func (m *Manager) compilePolicies(cfg *config.Config, result *CompileResult) err
 			NumRules:      uint16(len(expanded)),
 			DefaultAction: ActionDeny,
 		}
+		zpKey := ZonePairKey{FromZone: fromZone, ToZone: toZone}
 		if err := m.SetZonePairPolicy(fromZone, toZone, ps); err != nil {
 			return fmt.Errorf("set zone pair policy %s->%s: %w",
 				zpp.FromZone, zpp.ToZone, err)
 		}
+		writtenPolicySets[zpKey] = true
 
 		for i, er := range expanded {
 			pol := er.pol
@@ -1021,29 +1064,18 @@ func (m *Manager) compilePolicies(cfg *config.Config, result *CompileResult) err
 		policySetID++
 	}
 
+	// Delete stale zone-pair policy entries no longer in the config.
+	m.DeleteStaleZonePairPolicies(writtenPolicySets)
+
 	return nil
 }
 
 func (m *Manager) compileNAT(cfg *config.Config, result *CompileResult) error {
-	// Clear previous NAT entries (v4 + v6)
-	if err := m.ClearSNATRules(); err != nil {
-		slog.Warn("failed to clear snat_rules", "err", err)
-	}
-	if err := m.ClearSNATRulesV6(); err != nil {
-		slog.Warn("failed to clear snat_rules_v6", "err", err)
-	}
-	if err := m.ClearDNATStatic(); err != nil {
-		slog.Warn("failed to clear static dnat entries", "err", err)
-	}
-	if err := m.ClearDNATStaticV6(); err != nil {
-		slog.Warn("failed to clear static dnat_v6 entries", "err", err)
-	}
-	if err := m.ClearNATPoolConfigs(); err != nil {
-		slog.Warn("failed to clear nat_pool_configs", "err", err)
-	}
-	if err := m.ClearNATPoolIPs(); err != nil {
-		slog.Warn("failed to clear nat_pool_ips", "err", err)
-	}
+	// Track written keys for populate-before-clear.
+	writtenSNAT := make(map[SNATKey]bool)
+	writtenSNATv6 := make(map[SNATKey]bool)
+	writtenDNAT := make(map[DNATKey]bool)
+	writtenDNATv6 := make(map[DNATKeyV6]bool)
 
 	natCfg := &cfg.Security.NAT
 
@@ -1220,6 +1252,7 @@ func (m *Manager) compileNAT(cfg *config.Config, result *CompileResult) error {
 					return fmt.Errorf("set snat rule %s/%s: %w",
 						rs.Name, rule.Name, err)
 				}
+				writtenSNAT[SNATKey{FromZone: fromZone, ToZone: toZone, RuleIdx: ri}] = true
 				v4RuleIdx[zp] = ri + 1
 				slog.Info("source NAT rule compiled",
 					"rule-set", rs.Name, "rule", rule.Name,
@@ -1244,6 +1277,7 @@ func (m *Manager) compileNAT(cfg *config.Config, result *CompileResult) error {
 					return fmt.Errorf("set snat_v6 rule %s/%s: %w",
 						rs.Name, rule.Name, err)
 				}
+				writtenSNATv6[SNATKey{FromZone: fromZone, ToZone: toZone, RuleIdx: ri}] = true
 				v6RuleIdx[zp] = ri + 1
 				slog.Info("source NAT v6 rule compiled",
 					"rule-set", rs.Name, "rule", rule.Name,
@@ -1337,6 +1371,7 @@ func (m *Manager) compileNAT(cfg *config.Config, result *CompileResult) error {
 							return fmt.Errorf("set dnat entry %s/%s proto %d: %w",
 								rs.Name, rule.Name, proto, err)
 						}
+						writtenDNAT[dk] = true
 					} else {
 						dk := DNATKeyV6{
 							Protocol: proto,
@@ -1352,6 +1387,7 @@ func (m *Manager) compileNAT(cfg *config.Config, result *CompileResult) error {
 							return fmt.Errorf("set dnat_v6 entry %s/%s proto %d: %w",
 								rs.Name, rule.Name, proto, err)
 						}
+						writtenDNATv6[dk] = true
 					}
 
 					slog.Info("destination NAT rule compiled",
@@ -1365,13 +1401,20 @@ func (m *Manager) compileNAT(cfg *config.Config, result *CompileResult) error {
 		}
 	}
 
+	// Delete stale NAT entries and zero unused pool slots.
+	m.DeleteStaleSNATRules(writtenSNAT)
+	m.DeleteStaleSNATRulesV6(writtenSNATv6)
+	m.DeleteStaleDNATStatic(writtenDNAT)
+	m.DeleteStaleDNATStaticV6(writtenDNATv6)
+	m.ZeroStaleNATPoolConfigs(uint32(poolID))
+
 	return nil
 }
 
 func (m *Manager) compileStaticNAT(cfg *config.Config, result *CompileResult) error {
-	if err := m.ClearStaticNATEntries(); err != nil {
-		slog.Warn("failed to clear static_nat entries", "err", err)
-	}
+	// Track written keys for populate-before-clear.
+	writtenV4 := make(map[StaticNATKeyV4]bool)
+	writtenV6 := make(map[StaticNATKeyV6]bool)
 
 	count := 0
 	for _, rs := range cfg.Security.NAT.Static {
@@ -1422,9 +1465,11 @@ func (m *Manager) compileStaticNAT(cfg *config.Config, result *CompileResult) er
 				if err := m.SetStaticNATEntryV4(extU32, StaticNATDNAT, intU32); err != nil {
 					return fmt.Errorf("set static nat dnat v4 %s: %w", rule.Name, err)
 				}
+				writtenV4[StaticNATKeyV4{IP: extU32, Direction: StaticNATDNAT}] = true
 				if err := m.SetStaticNATEntryV4(intU32, StaticNATSNAT, extU32); err != nil {
 					return fmt.Errorf("set static nat snat v4 %s: %w", rule.Name, err)
 				}
+				writtenV4[StaticNATKeyV4{IP: intU32, Direction: StaticNATSNAT}] = true
 			} else {
 				extBytes := ipTo16Bytes(extIP)
 				intBytes := ipTo16Bytes(intIP)
@@ -1432,9 +1477,11 @@ func (m *Manager) compileStaticNAT(cfg *config.Config, result *CompileResult) er
 				if err := m.SetStaticNATEntryV6(extBytes, StaticNATDNAT, intBytes); err != nil {
 					return fmt.Errorf("set static nat dnat v6 %s: %w", rule.Name, err)
 				}
+				writtenV6[StaticNATKeyV6{IP: extBytes, Direction: StaticNATDNAT}] = true
 				if err := m.SetStaticNATEntryV6(intBytes, StaticNATSNAT, extBytes); err != nil {
 					return fmt.Errorf("set static nat snat v6 %s: %w", rule.Name, err)
 				}
+				writtenV6[StaticNATKeyV6{IP: intBytes, Direction: StaticNATSNAT}] = true
 			}
 
 			count++
@@ -1447,13 +1494,16 @@ func (m *Manager) compileStaticNAT(cfg *config.Config, result *CompileResult) er
 	if count > 0 {
 		slog.Info("static NAT compilation complete", "entries", count)
 	}
+
+	// Delete stale static NAT entries.
+	m.DeleteStaleStaticNAT(writtenV4, writtenV6)
+
 	return nil
 }
 
 func (m *Manager) compileNAT64(cfg *config.Config, result *CompileResult) error {
-	if err := m.ClearNAT64Configs(); err != nil {
-		slog.Warn("failed to clear nat64_configs", "err", err)
-	}
+	// Track written prefixes for populate-before-clear.
+	writtenPrefixes := make(map[NAT64PrefixKey]bool)
 
 	ruleSets := cfg.Security.NAT.NAT64
 	if len(ruleSets) == 0 {
@@ -1503,6 +1553,7 @@ func (m *Manager) compileNAT64(cfg *config.Config, result *CompileResult) error 
 		if err := m.SetNAT64Config(count, nat64Cfg); err != nil {
 			return fmt.Errorf("NAT64 rule-set %q: set config: %w", rs.Name, err)
 		}
+		writtenPrefixes[NAT64PrefixKey{Prefix: nat64Cfg.Prefix}] = true
 
 		slog.Info("compiled NAT64 prefix",
 			"rule-set", rs.Name, "prefix", rs.Prefix,
@@ -1514,15 +1565,15 @@ func (m *Manager) compileNAT64(cfg *config.Config, result *CompileResult) error 
 		return fmt.Errorf("set NAT64 count: %w", err)
 	}
 
+	// Delete stale NAT64 entries.
+	m.DeleteStaleNAT64(count, writtenPrefixes)
+
 	slog.Info("NAT64 compilation complete", "prefixes", count)
 	return nil
 }
 
 func (m *Manager) compileScreenProfiles(cfg *config.Config, result *CompileResult) error {
-	if err := m.ClearScreenConfigs(); err != nil {
-		slog.Warn("failed to clear screen_configs", "err", err)
-	}
-
+	var maxScreenID uint32
 	for name, profile := range cfg.Security.Screen {
 		sid, ok := result.ScreenIDs[name]
 		if !ok {
@@ -1581,6 +1632,9 @@ func (m *Manager) compileScreenProfiles(cfg *config.Config, result *CompileResul
 		if err := m.SetScreenConfig(uint32(sid), sc); err != nil {
 			return fmt.Errorf("set screen config %s (id=%d): %w", name, sid, err)
 		}
+		if uint32(sid) > maxScreenID {
+			maxScreenID = uint32(sid)
+		}
 
 		slog.Info("screen profile compiled",
 			"name", name, "id", sid,
@@ -1589,6 +1643,9 @@ func (m *Manager) compileScreenProfiles(cfg *config.Config, result *CompileResul
 			"icmp_thresh", sc.ICMPFloodThresh,
 			"udp_thresh", sc.UDPFloodThresh)
 	}
+
+	// Zero screen config entries above the highest used ID.
+	m.ZeroStaleScreenConfigs(maxScreenID)
 
 	return nil
 }
@@ -1773,13 +1830,8 @@ func parsePorts(spec string) ([]uint16, error) {
 // compileFirewallFilters compiles firewall filter config into BPF maps.
 // It creates filter_rules, filter_configs, and iface_filter_map entries.
 func (m *Manager) compileFirewallFilters(cfg *config.Config, result *CompileResult) error {
-	// Clear previous filter maps
-	if err := m.ClearIfaceFilterMap(); err != nil {
-		slog.Warn("failed to clear iface_filter_map", "err", err)
-	}
-	if err := m.ClearFilterConfigs(); err != nil {
-		slog.Warn("failed to clear filter_configs", "err", err)
-	}
+	// Track written keys for populate-before-clear.
+	writtenIfaceFilter := make(map[IfaceFilterKey]bool)
 
 	// Build routing instance name -> table ID map
 	riTableIDs := make(map[string]uint32)
@@ -1907,6 +1959,7 @@ func (m *Manager) compileFirewallFilters(cfg *config.Config, result *CompileResu
 					if err := m.SetIfaceFilter(key, fid); err != nil {
 						return fmt.Errorf("set iface filter %s inet: %w", physName, err)
 					}
+					writtenIfaceFilter[key] = true
 					slog.Info("assigned filter to interface",
 						"interface", physName, "vlan", vlanID,
 						"family", "inet", "filter", unit.FilterInputV4)
@@ -1927,6 +1980,7 @@ func (m *Manager) compileFirewallFilters(cfg *config.Config, result *CompileResu
 					if err := m.SetIfaceFilter(key, fid); err != nil {
 						return fmt.Errorf("set iface filter %s inet6: %w", physName, err)
 					}
+					writtenIfaceFilter[key] = true
 					slog.Info("assigned filter to interface",
 						"interface", physName, "vlan", vlanID,
 						"family", "inet6", "filter", unit.FilterInputV6)
@@ -1934,6 +1988,10 @@ func (m *Manager) compileFirewallFilters(cfg *config.Config, result *CompileResu
 			}
 		}
 	}
+
+	// Delete stale filter entries and zero unused filter config/rule slots.
+	m.DeleteStaleIfaceFilter(writtenIfaceFilter)
+	m.ZeroStaleFilterConfigs(filterID)
 
 	return nil
 }
