@@ -668,6 +668,70 @@ func formatNodes(b *strings.Builder, nodes []*Node, indent int) {
 	}
 }
 
+// FormatPath navigates to the given path and formats the subtree found there.
+// Path components are matched against node keys. For example, FormatPath(["interfaces", "wan0"])
+// navigates into the "interfaces" node, then into the child whose second key is "wan0",
+// and formats that subtree. Returns "" if the path is not found.
+func (t *ConfigTree) FormatPath(path []string) string {
+	if len(path) == 0 {
+		return t.Format()
+	}
+
+	// Navigate through the tree following path components.
+	current := t.Children
+	var lastNode *Node
+	i := 0
+	for i < len(path) {
+		keyword := path[i]
+		found := false
+		for _, n := range current {
+			if len(n.Keys) == 0 {
+				continue
+			}
+			// Match first key (keyword)
+			if n.Keys[0] != keyword {
+				continue
+			}
+			// If path has more components and this node takes arguments,
+			// try to match the argument too (e.g., "interfaces" "wan0" matches
+			// a node with Keys=["interfaces","wan0"]).
+			if i+1 < len(path) && len(n.Keys) >= 2 {
+				if n.Keys[1] == path[i+1] {
+					lastNode = n
+					current = n.Children
+					i += 2
+					found = true
+					break
+				}
+				continue
+			}
+			lastNode = n
+			current = n.Children
+			i++
+			found = true
+			break
+		}
+		if !found {
+			return ""
+		}
+	}
+
+	if lastNode == nil {
+		return ""
+	}
+
+	// Format the found subtree.
+	var b strings.Builder
+	if lastNode.IsLeaf {
+		fmt.Fprintf(&b, "%s;\n", lastNode.KeyPath())
+	} else {
+		fmt.Fprintf(&b, "%s {\n", lastNode.KeyPath())
+		formatNodes(&b, lastNode.Children, 1)
+		fmt.Fprintf(&b, "}\n")
+	}
+	return b.String()
+}
+
 // FormatSet renders the tree as flat "set" commands.
 func (t *ConfigTree) FormatSet() string {
 	var b strings.Builder

@@ -854,6 +854,21 @@ func (c *CLI) handleShow(args []string) error {
 		rest := strings.Join(args[1:], " ")
 		if strings.Contains(rest, "| display set") {
 			fmt.Print(c.store.ShowActiveSet())
+		} else if len(args) > 1 {
+			// Filter out pipe commands from the path
+			var path []string
+			for _, a := range args[1:] {
+				if a == "|" {
+					break
+				}
+				path = append(path, a)
+			}
+			output := c.store.ShowActivePath(path)
+			if output == "" {
+				fmt.Printf("configuration path not found: %s\n", strings.Join(path, " "))
+			} else {
+				fmt.Print(output)
+			}
 		} else {
 			fmt.Print(c.store.ShowActive())
 		}

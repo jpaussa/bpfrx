@@ -393,14 +393,27 @@ func (c *ctl) handleShow(args []string) error {
 		if strings.Contains(rest, "| display set") {
 			format = pb.ConfigFormat_SET
 		}
+		// Extract path components (everything after "configuration" before "|")
+		var path []string
+		for _, a := range args[1:] {
+			if a == "|" {
+				break
+			}
+			path = append(path, a)
+		}
 		resp, err := c.client.ShowConfig(context.Background(), &pb.ShowConfigRequest{
 			Format: format,
 			Target: pb.ConfigTarget_ACTIVE,
+			Path:   path,
 		})
 		if err != nil {
 			return fmt.Errorf("%v", err)
 		}
-		fmt.Print(resp.Output)
+		if resp.Output == "" && len(path) > 0 {
+			fmt.Printf("configuration path not found: %s\n", strings.Join(path, " "))
+		} else {
+			fmt.Print(resp.Output)
+		}
 		return nil
 
 	case "dhcp":

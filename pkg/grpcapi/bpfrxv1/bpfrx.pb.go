@@ -981,6 +981,7 @@ type ShowConfigRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Format        ConfigFormat           `protobuf:"varint,1,opt,name=format,proto3,enum=bpfrx.v1.ConfigFormat" json:"format,omitempty"`
 	Target        ConfigTarget           `protobuf:"varint,2,opt,name=target,proto3,enum=bpfrx.v1.ConfigTarget" json:"target,omitempty"`
+	Path          []string               `protobuf:"bytes,3,rep,name=path,proto3" json:"path,omitempty"` // optional path to filter config subtree
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1027,6 +1028,13 @@ func (x *ShowConfigRequest) GetTarget() ConfigTarget {
 		return x.Target
 	}
 	return ConfigTarget_CANDIDATE
+}
+
+func (x *ShowConfigRequest) GetPath() []string {
+	if x != nil {
+		return x.Path
+	}
+	return nil
 }
 
 type ShowConfigResponse struct {
@@ -5853,10 +5861,11 @@ const file_bpfrx_proto_rawDesc = "" +
 	"\x15ConfirmCommitResponse\"\x1f\n" +
 	"\x0fRollbackRequest\x12\f\n" +
 	"\x01n\x18\x01 \x01(\x05R\x01n\"\x12\n" +
-	"\x10RollbackResponse\"s\n" +
+	"\x10RollbackResponse\"\x87\x01\n" +
 	"\x11ShowConfigRequest\x12.\n" +
 	"\x06format\x18\x01 \x01(\x0e2\x16.bpfrx.v1.ConfigFormatR\x06format\x12.\n" +
-	"\x06target\x18\x02 \x01(\x0e2\x16.bpfrx.v1.ConfigTargetR\x06target\",\n" +
+	"\x06target\x18\x02 \x01(\x0e2\x16.bpfrx.v1.ConfigTargetR\x06target\x12\x12\n" +
+	"\x04path\x18\x03 \x03(\tR\x04path\",\n" +
 	"\x12ShowConfigResponse\x12\x16\n" +
 	"\x06output\x18\x01 \x01(\tR\x06output\"3\n" +
 	"\x12ShowCompareRequest\x12\x1d\n" +

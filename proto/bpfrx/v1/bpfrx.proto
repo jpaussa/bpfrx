@@ -124,6 +124,7 @@ enum ConfigTarget {
 message ShowConfigRequest {
   ConfigFormat format = 1;
   ConfigTarget target = 2;
+  repeated string path = 3; // optional path to filter config subtree
 }
 message ShowConfigResponse { string output = 1; }
 

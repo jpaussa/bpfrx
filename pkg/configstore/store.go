@@ -492,6 +492,13 @@ func (s *Store) ShowActive() string {
 	return s.active.Format()
 }
 
+// ShowActivePath returns the active configuration subtree at the given path.
+func (s *Store) ShowActivePath(path []string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.active.FormatPath(path)
+}
+
 // ShowCandidateSet returns the candidate configuration as flat set commands.
 func (s *Store) ShowCandidateSet() string {
 	s.mu.RLock()

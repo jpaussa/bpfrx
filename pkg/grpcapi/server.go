@@ -227,7 +227,11 @@ func (s *Server) ShowConfig(_ context.Context, req *pb.ShowConfigRequest) (*pb.S
 	case req.Target == pb.ConfigTarget_ACTIVE && req.Format == pb.ConfigFormat_SET:
 		output = s.store.ShowActiveSet()
 	case req.Target == pb.ConfigTarget_ACTIVE:
-		output = s.store.ShowActive()
+		if len(req.Path) > 0 {
+			output = s.store.ShowActivePath(req.Path)
+		} else {
+			output = s.store.ShowActive()
+		}
 	case req.Format == pb.ConfigFormat_SET:
 		output = s.store.ShowCandidateSet()
 	default:
