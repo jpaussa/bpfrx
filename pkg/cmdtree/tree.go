@@ -97,6 +97,8 @@ var OperationalTree = map[string]*Node{
 					names = append(names, name)
 				}
 				return names
+			}, Children: map[string]*Node{
+				"detail": {Desc: "Show detailed zone information"},
 			}},
 			"policies": {Desc: "Show security policies", Children: map[string]*Node{
 				"brief":     {Desc: "Show brief policy summary"},
@@ -123,6 +125,8 @@ var OperationalTree = map[string]*Node{
 						names = append(names, name)
 					}
 					return names
+				}, Children: map[string]*Node{
+					"detail": {Desc: "Show detailed screen profile with thresholds"},
 				}},
 				"statistics": {Desc: "Show screen statistics", Children: map[string]*Node{
 					"zone": {Desc: "Show per-zone screen counters", DynamicFn: func(cfg *config.Config) []string {
@@ -184,6 +188,7 @@ var OperationalTree = map[string]*Node{
 			}},
 			"ipsec": {Desc: "Show IPsec status", Children: map[string]*Node{
 				"security-associations": {Desc: "Show IPsec SAs"},
+				"statistics":            {Desc: "Show IPsec statistics"},
 			}},
 			"vrrp":           {Desc: "Show VRRP high availability status"},
 			"match-policies": {Desc: "Match 5-tuple against policies"},

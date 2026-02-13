@@ -585,6 +585,9 @@ func (c *ctl) handleShowSecurity(args []string) error {
 
 	switch args[0] {
 	case "zones":
+		if len(args) >= 2 && args[1] == "detail" {
+			return c.showText("zones-detail")
+		}
 		return c.showZones()
 	case "policies":
 		if len(args) >= 2 && args[1] == "brief" {
@@ -616,6 +619,9 @@ func (c *ctl) handleShowSecurity(args []string) error {
 		return c.showPoliciesFiltered(fromZone, toZone)
 	case "screen":
 		if len(args) >= 2 && args[1] == "ids-option" && len(args) >= 3 {
+			if len(args) >= 4 && args[3] == "detail" {
+				return c.showText("screen-ids-option-detail:" + args[2])
+			}
 			return c.showText("screen-ids-option:" + args[2])
 		}
 		if len(args) >= 2 && args[1] == "statistics" {
@@ -1407,6 +1413,9 @@ func (c *ctl) showIPsec(args []string) error {
 		}
 		fmt.Print(resp.Output)
 		return nil
+	}
+	if len(args) > 0 && args[0] == "statistics" {
+		return c.showText("ipsec-statistics")
 	}
 	printRemoteTreeHelp("show security ipsec:", "show", "security", "ipsec")
 	return nil

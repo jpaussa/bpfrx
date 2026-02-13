@@ -492,6 +492,18 @@ func parseSAOutput(output string) []SAStatus {
 				current.RemoteTS = strings.TrimSpace(trimmed[idx+1:])
 			}
 		}
+		if strings.HasPrefix(trimmed, "bytes_in") || strings.Contains(trimmed, " bytes_in") {
+			for _, field := range strings.Fields(trimmed) {
+				if strings.HasPrefix(field, "bytes_in=") {
+					current.InBytes = strings.TrimPrefix(field, "bytes_in=")
+					current.InBytes = strings.TrimRight(current.InBytes, ",")
+				}
+				if strings.HasPrefix(field, "bytes_out=") {
+					current.OutBytes = strings.TrimPrefix(field, "bytes_out=")
+					current.OutBytes = strings.TrimRight(current.OutBytes, ",")
+				}
+			}
+		}
 	}
 
 	if current != nil {

@@ -820,84 +820,19 @@ func (c *CLI) handleShowSecurity(args []string) error {
 
 	switch args[0] {
 	case "zones":
-		for name, zone := range cfg.Security.Zones {
-			// Resolve zone ID for counter lookup
-			var zoneID uint16
-			if c.dp != nil {
-				if cr := c.dp.LastCompileResult(); cr != nil {
-					zoneID = cr.ZoneIDs[name]
-				}
-			}
-
-			if zoneID > 0 {
-				fmt.Printf("Zone: %s (id: %d)\n", name, zoneID)
+		detail := false
+		filterZone := ""
+		if len(args) >= 2 {
+			if args[1] == "detail" {
+				detail = true
 			} else {
-				fmt.Printf("Zone: %s\n", name)
-			}
-			if zone.Description != "" {
-				fmt.Printf("  Description: %s\n", zone.Description)
-			}
-			fmt.Printf("  Interfaces: %s\n", strings.Join(zone.Interfaces, ", "))
-			if zone.TCPRst {
-				fmt.Println("  TCP RST: enabled")
-			}
-			if zone.ScreenProfile != "" {
-				fmt.Printf("  Screen: %s\n", zone.ScreenProfile)
-			}
-			if zone.HostInboundTraffic != nil {
-				if len(zone.HostInboundTraffic.SystemServices) > 0 {
-					fmt.Printf("  Host-inbound system-services: %s\n",
-						strings.Join(zone.HostInboundTraffic.SystemServices, ", "))
-				}
-				if len(zone.HostInboundTraffic.Protocols) > 0 {
-					fmt.Printf("  Host-inbound protocols: %s\n",
-						strings.Join(zone.HostInboundTraffic.Protocols, ", "))
+				filterZone = args[1]
+				if len(args) >= 3 && args[2] == "detail" {
+					detail = true
 				}
 			}
-
-			// Per-zone traffic counters
-			if c.dp != nil && c.dp.IsLoaded() && zoneID > 0 {
-				ingress, errIn := c.dp.ReadZoneCounters(zoneID, 0)
-				egress, errOut := c.dp.ReadZoneCounters(zoneID, 1)
-				if errIn == nil && errOut == nil {
-					fmt.Println("  Traffic statistics:")
-					fmt.Printf("    Input:  %d packets, %d bytes\n",
-						ingress.Packets, ingress.Bytes)
-					fmt.Printf("    Output: %d packets, %d bytes\n",
-						egress.Packets, egress.Bytes)
-				}
-			}
-
-			// Show policies that reference this zone
-			var policyRefs []string
-			for _, zpp := range cfg.Security.Policies {
-				if zpp.FromZone == name || zpp.ToZone == name {
-					dir := "from"
-					peer := zpp.ToZone
-					if zpp.ToZone == name {
-						dir = "to"
-						peer = zpp.FromZone
-					}
-					policyRefs = append(policyRefs, fmt.Sprintf("%s %s (%d rules)", dir, peer, len(zpp.Policies)))
-				}
-			}
-			if len(policyRefs) > 0 {
-				fmt.Printf("  Policies: %s\n", strings.Join(policyRefs, ", "))
-			}
-
-			// Show address book entries (global)
-			if ab := cfg.Security.AddressBook; ab != nil && len(ab.Addresses) > 0 {
-				addrNames := make([]string, 0, len(ab.Addresses))
-				for an := range ab.Addresses {
-					addrNames = append(addrNames, an)
-				}
-				sort.Strings(addrNames)
-				fmt.Printf("  Address book: %s\n", strings.Join(addrNames, ", "))
-			}
-
-			fmt.Println()
 		}
-		return nil
+		return c.showZonesDisplay(cfg, detail, filterZone)
 
 	case "policies":
 		// Parse optional zone-pair filter: from-zone X to-zone Y
@@ -1101,6 +1036,13 @@ func (c *CLI) handleShowSecurity(args []string) error {
 }
 
 // parsePolicyZoneFilter extracts from-zone/to-zone filters from args.
+func enabledStr(v bool) string {
+	if v {
+		return "enabled"
+	}
+	return "disabled"
+}
+
 func parsePolicyZoneFilter(args []string) (fromZone, toZone string) {
 	for i := 0; i < len(args)-1; i++ {
 		switch args[i] {
@@ -1180,6 +1122,200 @@ func (c *CLI) showPoliciesHitCount(cfg *config.Config, fromZone, toZone string) 
 	}
 	fmt.Println(strings.Repeat("-", 88))
 	fmt.Printf("%-48s %8s %12d %16d\n", "Total", "", totalPkts, totalBytes)
+	return nil
+}
+
+func (c *CLI) showZonesDisplay(cfg *config.Config, detail bool, filterZone string) error {
+	// Sort zone names for stable output
+	zoneNames := make([]string, 0, len(cfg.Security.Zones))
+	for name := range cfg.Security.Zones {
+		zoneNames = append(zoneNames, name)
+	}
+	sort.Strings(zoneNames)
+
+	for _, name := range zoneNames {
+		if filterZone != "" && name != filterZone {
+			continue
+		}
+		zone := cfg.Security.Zones[name]
+
+		// Resolve zone ID for counter lookup
+		var zoneID uint16
+		if c.dp != nil {
+			if cr := c.dp.LastCompileResult(); cr != nil {
+				zoneID = cr.ZoneIDs[name]
+			}
+		}
+
+		if zoneID > 0 {
+			fmt.Printf("Zone: %s (id: %d)\n", name, zoneID)
+		} else {
+			fmt.Printf("Zone: %s\n", name)
+		}
+		if zone.Description != "" {
+			fmt.Printf("  Description: %s\n", zone.Description)
+		}
+		fmt.Printf("  Interfaces: %s\n", strings.Join(zone.Interfaces, ", "))
+		if zone.TCPRst {
+			fmt.Println("  TCP RST: enabled")
+		}
+		if zone.ScreenProfile != "" {
+			fmt.Printf("  Screen: %s\n", zone.ScreenProfile)
+		}
+		if zone.HostInboundTraffic != nil {
+			if len(zone.HostInboundTraffic.SystemServices) > 0 {
+				fmt.Printf("  Host-inbound system-services: %s\n",
+					strings.Join(zone.HostInboundTraffic.SystemServices, ", "))
+			}
+			if len(zone.HostInboundTraffic.Protocols) > 0 {
+				fmt.Printf("  Host-inbound protocols: %s\n",
+					strings.Join(zone.HostInboundTraffic.Protocols, ", "))
+			}
+		}
+
+		// Per-zone traffic counters
+		if c.dp != nil && c.dp.IsLoaded() && zoneID > 0 {
+			ingress, errIn := c.dp.ReadZoneCounters(zoneID, 0)
+			egress, errOut := c.dp.ReadZoneCounters(zoneID, 1)
+			if errIn == nil && errOut == nil {
+				fmt.Println("  Traffic statistics:")
+				fmt.Printf("    Input:  %d packets, %d bytes\n",
+					ingress.Packets, ingress.Bytes)
+				fmt.Printf("    Output: %d packets, %d bytes\n",
+					egress.Packets, egress.Bytes)
+			}
+		}
+
+		// Show policies that reference this zone
+		var policyRefs []string
+		for _, zpp := range cfg.Security.Policies {
+			if zpp.FromZone == name || zpp.ToZone == name {
+				dir := "from"
+				peer := zpp.ToZone
+				if zpp.ToZone == name {
+					dir = "to"
+					peer = zpp.FromZone
+				}
+				policyRefs = append(policyRefs, fmt.Sprintf("%s %s (%d rules)", dir, peer, len(zpp.Policies)))
+			}
+		}
+		if len(policyRefs) > 0 {
+			fmt.Printf("  Policies: %s\n", strings.Join(policyRefs, ", "))
+		}
+
+		// Show address book entries (global)
+		if ab := cfg.Security.AddressBook; ab != nil && len(ab.Addresses) > 0 {
+			addrNames := make([]string, 0, len(ab.Addresses))
+			for an := range ab.Addresses {
+				addrNames = append(addrNames, an)
+			}
+			sort.Strings(addrNames)
+			fmt.Printf("  Address book: %s\n", strings.Join(addrNames, ", "))
+		}
+
+		// Detail mode: per-interface breakdown, per-policy details, screen profile summary
+		if detail {
+			// Per-interface detail
+			if len(zone.Interfaces) > 0 {
+				fmt.Println("  Interface details:")
+				for _, ifName := range zone.Interfaces {
+					fmt.Printf("    %s:\n", ifName)
+					if ifc, ok := cfg.Interfaces.Interfaces[ifName]; ok {
+						for _, unit := range ifc.Units {
+							for _, addr := range unit.Addresses {
+								fmt.Printf("      Address: %s\n", addr)
+							}
+							if unit.DHCP {
+								fmt.Printf("      DHCPv4: enabled\n")
+							}
+							if unit.DHCPv6 {
+								fmt.Printf("      DHCPv6: enabled\n")
+							}
+						}
+					}
+				}
+			}
+
+			// Screen profile details
+			if zone.ScreenProfile != "" {
+				if profile, ok := cfg.Security.Screen[zone.ScreenProfile]; ok {
+					fmt.Printf("  Screen profile details (%s):\n", zone.ScreenProfile)
+					var checks []string
+					if profile.TCP.Land {
+						checks = append(checks, "land")
+					}
+					if profile.TCP.SynFin {
+						checks = append(checks, "syn-fin")
+					}
+					if profile.TCP.NoFlag {
+						checks = append(checks, "no-flag")
+					}
+					if profile.TCP.FinNoAck {
+						checks = append(checks, "fin-no-ack")
+					}
+					if profile.TCP.WinNuke {
+						checks = append(checks, "winnuke")
+					}
+					if profile.TCP.SynFrag {
+						checks = append(checks, "syn-frag")
+					}
+					if profile.TCP.SynFlood != nil {
+						checks = append(checks, fmt.Sprintf("syn-flood(threshold:%d)", profile.TCP.SynFlood.AttackThreshold))
+					}
+					if profile.ICMP.PingDeath {
+						checks = append(checks, "ping-death")
+					}
+					if profile.ICMP.FloodThreshold > 0 {
+						checks = append(checks, fmt.Sprintf("icmp-flood(threshold:%d)", profile.ICMP.FloodThreshold))
+					}
+					if profile.IP.SourceRouteOption {
+						checks = append(checks, "source-route-option")
+					}
+					if profile.IP.TearDrop {
+						checks = append(checks, "teardrop")
+					}
+					if profile.UDP.FloodThreshold > 0 {
+						checks = append(checks, fmt.Sprintf("udp-flood(threshold:%d)", profile.UDP.FloodThreshold))
+					}
+					if len(checks) > 0 {
+						fmt.Printf("    Enabled checks: %s\n", strings.Join(checks, ", "))
+					} else {
+						fmt.Printf("    Enabled checks: (none)\n")
+					}
+				}
+			}
+
+			// Policy detail breakdown
+			fmt.Println("  Policy summary:")
+			totalPolicies := 0
+			for _, zpp := range cfg.Security.Policies {
+				if zpp.FromZone == name || zpp.ToZone == name {
+					for _, pol := range zpp.Policies {
+						action := "permit"
+						switch pol.Action {
+						case 1:
+							action = "deny"
+						case 2:
+							action = "reject"
+						}
+						fmt.Printf("    %s -> %s: %s (%s)\n",
+							zpp.FromZone, zpp.ToZone, pol.Name, action)
+						totalPolicies++
+					}
+				}
+			}
+			if totalPolicies == 0 {
+				fmt.Println("    (no policies)")
+			}
+		}
+
+		fmt.Println()
+	}
+	if filterZone != "" {
+		if _, ok := cfg.Security.Zones[filterZone]; !ok {
+			fmt.Printf("Zone '%s' not found\n", filterZone)
+		}
+	}
 	return nil
 }
 
@@ -1320,6 +1456,9 @@ func (c *CLI) handleShowScreen(args []string) error {
 		if len(args) < 2 {
 			return c.showScreen()
 		}
+		if len(args) >= 3 && args[2] == "detail" {
+			return c.showScreenIdsOptionDetail(args[1])
+		}
 		return c.showScreenIdsOption(args[1])
 	case "statistics":
 		if len(args) >= 2 && args[1] == "zone" && len(args) >= 3 {
@@ -1398,6 +1537,107 @@ func (c *CLI) showScreenIdsOption(name string) error {
 	if len(zones) > 0 {
 		sort.Strings(zones)
 		fmt.Printf("\n  Bound to zones: %s\n", strings.Join(zones, ", "))
+	}
+	return nil
+}
+
+func (c *CLI) showScreenIdsOptionDetail(name string) error {
+	cfg := c.store.ActiveConfig()
+	if cfg == nil {
+		fmt.Println("no active configuration")
+		return nil
+	}
+	profile, ok := cfg.Security.Screen[name]
+	if !ok {
+		fmt.Printf("Screen profile '%s' not found\n", name)
+		return nil
+	}
+
+	fmt.Printf("Screen object status (detail):\n\n")
+	fmt.Printf("  %-45s %-12s %s\n", "Name", "Value", "Default")
+
+	// TCP checks
+	fmt.Printf("  %-45s %-12s %s\n", "TCP land attack",
+		enabledStr(profile.TCP.Land), "disabled")
+	fmt.Printf("  %-45s %-12s %s\n", "TCP SYN+FIN",
+		enabledStr(profile.TCP.SynFin), "disabled")
+	fmt.Printf("  %-45s %-12s %s\n", "TCP no-flag",
+		enabledStr(profile.TCP.NoFlag), "disabled")
+	fmt.Printf("  %-45s %-12s %s\n", "TCP FIN-no-ACK",
+		enabledStr(profile.TCP.FinNoAck), "disabled")
+	fmt.Printf("  %-45s %-12s %s\n", "TCP WinNuke",
+		enabledStr(profile.TCP.WinNuke), "disabled")
+	fmt.Printf("  %-45s %-12s %s\n", "TCP SYN fragment",
+		enabledStr(profile.TCP.SynFrag), "disabled")
+
+	if profile.TCP.SynFlood != nil {
+		fmt.Printf("  %-45s %-12s %s\n", "TCP SYN flood protection", "enabled", "disabled")
+		fmt.Printf("  %-45s %-12d %s\n", "  Attack threshold",
+			profile.TCP.SynFlood.AttackThreshold, "200")
+		if profile.TCP.SynFlood.AlarmThreshold > 0 {
+			fmt.Printf("  %-45s %-12d %s\n", "  Alarm threshold",
+				profile.TCP.SynFlood.AlarmThreshold, "512")
+		} else {
+			fmt.Printf("  %-45s %-12s %s\n", "  Alarm threshold", "(default)", "512")
+		}
+		if profile.TCP.SynFlood.SourceThreshold > 0 {
+			fmt.Printf("  %-45s %-12d %s\n", "  Source threshold",
+				profile.TCP.SynFlood.SourceThreshold, "4000")
+		} else {
+			fmt.Printf("  %-45s %-12s %s\n", "  Source threshold", "(default)", "4000")
+		}
+		if profile.TCP.SynFlood.DestinationThreshold > 0 {
+			fmt.Printf("  %-45s %-12d %s\n", "  Destination threshold",
+				profile.TCP.SynFlood.DestinationThreshold, "4000")
+		} else {
+			fmt.Printf("  %-45s %-12s %s\n", "  Destination threshold", "(default)", "4000")
+		}
+		if profile.TCP.SynFlood.Timeout > 0 {
+			fmt.Printf("  %-45s %-12d %s\n", "  Timeout (seconds)",
+				profile.TCP.SynFlood.Timeout, "20")
+		} else {
+			fmt.Printf("  %-45s %-12s %s\n", "  Timeout (seconds)", "(default)", "20")
+		}
+	} else {
+		fmt.Printf("  %-45s %-12s %s\n", "TCP SYN flood protection", "disabled", "disabled")
+	}
+
+	// ICMP checks
+	fmt.Printf("  %-45s %-12s %s\n", "ICMP ping of death",
+		enabledStr(profile.ICMP.PingDeath), "disabled")
+	if profile.ICMP.FloodThreshold > 0 {
+		fmt.Printf("  %-45s %-12d %s\n", "ICMP flood threshold",
+			profile.ICMP.FloodThreshold, "1000")
+	} else {
+		fmt.Printf("  %-45s %-12s %s\n", "ICMP flood threshold", "disabled", "disabled")
+	}
+
+	// IP checks
+	fmt.Printf("  %-45s %-12s %s\n", "IP source route option",
+		enabledStr(profile.IP.SourceRouteOption), "disabled")
+	fmt.Printf("  %-45s %-12s %s\n", "IP teardrop",
+		enabledStr(profile.IP.TearDrop), "disabled")
+
+	// UDP checks
+	if profile.UDP.FloodThreshold > 0 {
+		fmt.Printf("  %-45s %-12d %s\n", "UDP flood threshold",
+			profile.UDP.FloodThreshold, "1000")
+	} else {
+		fmt.Printf("  %-45s %-12s %s\n", "UDP flood threshold", "disabled", "disabled")
+	}
+
+	// Zones using this profile
+	var zones []string
+	for zname, zone := range cfg.Security.Zones {
+		if zone.ScreenProfile == name {
+			zones = append(zones, zname)
+		}
+	}
+	if len(zones) > 0 {
+		sort.Strings(zones)
+		fmt.Printf("\n  Bound to zones: %s\n", strings.Join(zones, ", "))
+	} else {
+		fmt.Printf("\n  Bound to zones: (none)\n")
 	}
 	return nil
 }
@@ -4389,6 +4629,10 @@ func (c *CLI) showIPsec(args []string) error {
 		return nil
 	}
 
+	if len(args) > 0 && args[0] == "statistics" {
+		return c.showIPsecStatistics()
+	}
+
 	// Default: show configured VPNs
 	cfg := c.store.ActiveConfig()
 	if cfg == nil {
@@ -4418,6 +4662,52 @@ func (c *CLI) showIPsec(args []string) error {
 		}
 		fmt.Println()
 	}
+	return nil
+}
+
+func (c *CLI) showIPsecStatistics() error {
+	if c.ipsec == nil {
+		fmt.Println("IPsec manager not available")
+		return nil
+	}
+	sas, err := c.ipsec.GetSAStatus()
+	if err != nil {
+		return fmt.Errorf("IPsec statistics: %w", err)
+	}
+
+	activeTunnels := 0
+	for _, sa := range sas {
+		if sa.State == "ESTABLISHED" || sa.State == "INSTALLED" {
+			activeTunnels++
+		}
+	}
+
+	fmt.Println("IPsec statistics:")
+	fmt.Printf("  Active tunnels: %d\n", activeTunnels)
+	fmt.Printf("  Total SAs:      %d\n", len(sas))
+	fmt.Println()
+
+	if len(sas) > 0 {
+		fmt.Printf("  %-20s %-14s %-12s %-12s\n", "Name", "State", "Bytes In", "Bytes Out")
+		for _, sa := range sas {
+			inBytes := sa.InBytes
+			if inBytes == "" {
+				inBytes = "-"
+			}
+			outBytes := sa.OutBytes
+			if outBytes == "" {
+				outBytes = "-"
+			}
+			fmt.Printf("  %-20s %-14s %-12s %-12s\n", sa.Name, sa.State, inBytes, outBytes)
+		}
+	}
+
+	// Show configured VPN count
+	cfg := c.store.ActiveConfig()
+	if cfg != nil && len(cfg.Security.IPsec.VPNs) > 0 {
+		fmt.Printf("\n  Configured VPNs: %d\n", len(cfg.Security.IPsec.VPNs))
+	}
+
 	return nil
 }
 
