@@ -1074,9 +1074,28 @@ func applySyslogConfig(er *logging.EventReader, cfg *config.Config) {
 	if er == nil || len(cfg.Security.Log.Streams) == 0 {
 		return
 	}
+	// Resolve global source-interface to IP (fallback for streams without source-address)
+	var globalSourceAddr string
+	if cfg.Security.Log.SourceInterface != "" {
+		if iface, err := net.InterfaceByName(cfg.Security.Log.SourceInterface); err == nil {
+			if addrs, err := iface.Addrs(); err == nil {
+				for _, a := range addrs {
+					if ipn, ok := a.(*net.IPNet); ok && ipn.IP.To4() != nil {
+						globalSourceAddr = ipn.IP.String()
+						break
+					}
+				}
+			}
+		}
+	}
+
 	var clients []*logging.SyslogClient
 	for name, stream := range cfg.Security.Log.Streams {
-		client, err := logging.NewSyslogClient(stream.Host, stream.Port)
+		srcAddr := stream.SourceAddress
+		if srcAddr == "" {
+			srcAddr = globalSourceAddr
+		}
+		client, err := logging.NewSyslogClientWithSource(stream.Host, stream.Port, srcAddr)
 		if err != nil {
 			slog.Warn("failed to create syslog client",
 				"stream", name, "host", stream.Host, "err", err)
@@ -1088,9 +1107,18 @@ func applySyslogConfig(er *logging.EventReader, cfg *config.Config) {
 		if stream.Facility != "" {
 			client.Facility = logging.ParseFacility(stream.Facility)
 		}
+		// Per-stream format overrides global log format
+		format := stream.Format
+		if format == "" {
+			format = cfg.Security.Log.Format
+		}
+		if format != "" {
+			client.Format = format
+		}
 		slog.Info("syslog stream configured",
 			"stream", name, "host", stream.Host, "port", stream.Port,
-			"severity", stream.Severity, "facility", stream.Facility)
+			"severity", stream.Severity, "facility", stream.Facility,
+			"format", format)
 		clients = append(clients, client)
 	}
 	if len(clients) > 0 {

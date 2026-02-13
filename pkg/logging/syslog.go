@@ -31,20 +31,42 @@ const (
 	FacilityLocal7   = 23
 )
 
-// SyslogClient sends UDP syslog messages (RFC 3164).
+// SyslogClient sends UDP syslog messages.
+// Supports RFC 3164 (BSD) and RFC 5424 (structured-data syslog) formats.
 type SyslogClient struct {
 	conn        net.Conn
 	hostname    string
-	Facility    int // syslog facility code (default: FacilityLocal0)
-	MinSeverity int // 0 = no filter, else SyslogError(3)/SyslogWarning(4)/SyslogInfo(6)
+	Facility    int    // syslog facility code (default: FacilityLocal0)
+	MinSeverity int    // 0 = no filter, else SyslogError(3)/SyslogWarning(4)/SyslogInfo(6)
+	Format      string // "sd-syslog" for RFC 5424, "" for RFC 3164
 }
 
 // NewSyslogClient creates a new UDP syslog client connected to host:port.
 func NewSyslogClient(host string, port int) (*SyslogClient, error) {
-	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
-	conn, err := net.Dial("udp", addr)
+	return NewSyslogClientWithSource(host, port, "")
+}
+
+// NewSyslogClientWithSource creates a new UDP syslog client with an optional
+// source address for the local UDP socket binding.
+func NewSyslogClientWithSource(host string, port int, sourceAddr string) (*SyslogClient, error) {
+	remoteAddr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
+	var conn net.Conn
+	var err error
+	if sourceAddr != "" {
+		laddr, lerr := net.ResolveUDPAddr("udp", net.JoinHostPort(sourceAddr, "0"))
+		if lerr != nil {
+			return nil, fmt.Errorf("resolve source %s: %w", sourceAddr, lerr)
+		}
+		raddr, rerr := net.ResolveUDPAddr("udp", remoteAddr)
+		if rerr != nil {
+			return nil, fmt.Errorf("resolve remote %s: %w", remoteAddr, rerr)
+		}
+		conn, err = net.DialUDP("udp", laddr, raddr)
+	} else {
+		conn, err = net.Dial("udp", remoteAddr)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("dial syslog %s: %w", addr, err)
+		return nil, fmt.Errorf("dial syslog %s: %w", remoteAddr, err)
 	}
 	hostname, _ := os.Hostname()
 	if hostname == "" {
@@ -56,8 +78,16 @@ func NewSyslogClient(host string, port int) (*SyslogClient, error) {
 // Send sends a syslog message with the given severity.
 func (s *SyslogClient) Send(severity int, msg string) error {
 	priority := s.Facility*8 + severity
-	ts := time.Now().Format(time.Stamp) // "Jan _2 15:04:05"
-	line := fmt.Sprintf("<%d>%s %s bpfrx: %s", priority, ts, s.hostname, msg)
+	var line string
+	if s.Format == "sd-syslog" {
+		// RFC 5424: <PRI>VERSION TIMESTAMP HOSTNAME APP-NAME PROCID MSGID SD MSG
+		ts := time.Now().Format("2006-01-02T15:04:05.000Z07:00")
+		line = fmt.Sprintf("<%d>1 %s %s bpfrx - - - %s", priority, ts, s.hostname, msg)
+	} else {
+		// RFC 3164: <PRI>TIMESTAMP HOSTNAME TAG: MSG
+		ts := time.Now().Format(time.Stamp) // "Jan _2 15:04:05"
+		line = fmt.Sprintf("<%d>%s %s bpfrx: %s", priority, ts, s.hostname, msg)
+	}
 	_, err := s.conn.Write([]byte(line))
 	return err
 }
