@@ -279,3 +279,29 @@ type HistoryEntry struct {
 	Index     int    `json:"index"`
 	Timestamp string `json:"timestamp"`
 }
+
+// ConfigLoadRequest holds a config load request.
+type ConfigLoadRequest struct {
+	Mode    string `json:"mode"`    // "override", "merge"
+	Content string `json:"content"` // config text (hierarchical or set format)
+}
+
+// CommitConfirmedRequest holds a commit confirmed request.
+type CommitConfirmedRequest struct {
+	Minutes int `json:"minutes"`
+}
+
+// ClearDHCPIdentifierRequest holds a clear DHCP identifier request.
+type ClearDHCPIdentifierRequest struct {
+	Interface string `json:"interface"` // empty = clear all
+}
+
+// SystemActionRequest holds a system action request.
+type SystemActionRequest struct {
+	Action string `json:"action"` // "reboot", "halt"
+}
+
+// ShowTextRequest holds a show text request.
+type ShowTextRequest struct {
+	Topic string `json:"topic"`
+}

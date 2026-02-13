@@ -493,6 +493,219 @@ func TestHistory(t *testing.T) {
 	}
 }
 
+func TestLoadOverride(t *testing.T) {
+	s := newTestStore(t)
+
+	// Initial commit with trust zone
+	if err := s.EnterConfigure(); err != nil {
+		t.Fatal(err)
+	}
+	s.SetFromInput("security zones security-zone trust interfaces eth0.0")
+	if _, err := s.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Load override replaces entire candidate
+	hierConfig := `security {
+    zones {
+        security-zone dmz {
+            interfaces {
+                eth2.0;
+            }
+        }
+    }
+}`
+	if err := s.LoadOverride(hierConfig); err != nil {
+		t.Fatalf("LoadOverride: %v", err)
+	}
+
+	if !s.IsDirty() {
+		t.Error("should be dirty after load override")
+	}
+
+	// Candidate should only have dmz, not trust
+	candidate := s.ShowCandidateSet()
+	if strings.Contains(candidate, "trust") {
+		t.Error("candidate should not contain trust after override")
+	}
+	if !strings.Contains(candidate, "dmz") {
+		t.Error("candidate should contain dmz after override")
+	}
+
+	// Commit and verify
+	cfg, err := s.Commit()
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if cfg.Security.Zones["trust"] != nil {
+		t.Error("trust zone should not exist after override commit")
+	}
+	if cfg.Security.Zones["dmz"] == nil {
+		t.Error("dmz zone should exist after override commit")
+	}
+}
+
+func TestLoadMergeHierarchical(t *testing.T) {
+	s := newTestStore(t)
+
+	if err := s.EnterConfigure(); err != nil {
+		t.Fatal(err)
+	}
+	s.SetFromInput("security zones security-zone trust interfaces eth0.0")
+
+	// Merge hierarchical config — should add untrust without removing trust
+	hierConfig := `security {
+    zones {
+        security-zone untrust {
+            interfaces {
+                eth1.0;
+            }
+        }
+    }
+}`
+	if err := s.LoadMerge(hierConfig); err != nil {
+		t.Fatalf("LoadMerge: %v", err)
+	}
+
+	candidate := s.ShowCandidateSet()
+	if !strings.Contains(candidate, "trust") {
+		t.Error("candidate should still contain trust after merge")
+	}
+	if !strings.Contains(candidate, "untrust") {
+		t.Error("candidate should contain untrust after merge")
+	}
+
+	cfg, err := s.Commit()
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if len(cfg.Security.Zones) != 2 {
+		t.Errorf("expected 2 zones, got %d", len(cfg.Security.Zones))
+	}
+}
+
+func TestLoadMergeSetFormat(t *testing.T) {
+	s := newTestStore(t)
+
+	if err := s.EnterConfigure(); err != nil {
+		t.Fatal(err)
+	}
+	s.SetFromInput("security zones security-zone trust interfaces eth0.0")
+
+	// Merge set-format commands
+	setConfig := `set security zones security-zone untrust interfaces eth1.0
+set security zones security-zone dmz interfaces eth2.0`
+
+	if err := s.LoadMerge(setConfig); err != nil {
+		t.Fatalf("LoadMerge (set format): %v", err)
+	}
+
+	cfg, err := s.Commit()
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if len(cfg.Security.Zones) != 3 {
+		t.Errorf("expected 3 zones, got %d", len(cfg.Security.Zones))
+	}
+}
+
+func TestLoadMergeWithDelete(t *testing.T) {
+	s := newTestStore(t)
+
+	if err := s.EnterConfigure(); err != nil {
+		t.Fatal(err)
+	}
+	s.SetFromInput("security zones security-zone trust interfaces eth0.0")
+	s.SetFromInput("security zones security-zone untrust interfaces eth1.0")
+
+	// Merge with delete command
+	setConfig := `delete security zones security-zone untrust
+set security zones security-zone dmz interfaces eth2.0`
+
+	if err := s.LoadMerge(setConfig); err != nil {
+		t.Fatalf("LoadMerge (with delete): %v", err)
+	}
+
+	candidate := s.ShowCandidateSet()
+	if strings.Contains(candidate, "untrust") {
+		t.Error("untrust should be deleted after merge")
+	}
+	if !strings.Contains(candidate, "dmz") {
+		t.Error("dmz should exist after merge")
+	}
+}
+
+func TestLoadOutsideConfigMode(t *testing.T) {
+	s := newTestStore(t)
+
+	err := s.LoadOverride("security { }")
+	if err == nil {
+		t.Error("expected error when loading outside config mode")
+	}
+
+	err = s.LoadMerge("set security zones security-zone trust interfaces eth0.0")
+	if err == nil {
+		t.Error("expected error when loading outside config mode")
+	}
+}
+
+func TestShowCompareRollback(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.EnterConfigure(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Commit 1: trust zone
+	s.SetFromInput("security zones security-zone trust interfaces eth0.0")
+	if _, err := s.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Commit 2: add untrust
+	s.SetFromInput("security zones security-zone untrust interfaces eth1.0")
+	if _, err := s.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Compare rollback 1 (commit 1) with current candidate (same as active after commit 2)
+	diff, err := s.ShowCompareRollback(1)
+	if err != nil {
+		t.Fatalf("ShowCompareRollback: %v", err)
+	}
+	// Rollback 1 = trust only; candidate = trust + untrust
+	// So diff should show untrust as added
+	if !strings.Contains(diff, "+") || !strings.Contains(diff, "untrust") {
+		t.Errorf("expected diff to show untrust as added:\n%s", diff)
+	}
+}
+
+func TestShowActiveSetAndCandidateSet(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.EnterConfigure(); err != nil {
+		t.Fatal(err)
+	}
+
+	s.SetFromInput("security zones security-zone trust interfaces eth0.0")
+	if _, err := s.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	activeSet := s.ShowActiveSet()
+	if !strings.Contains(activeSet, "set security") {
+		t.Errorf("ShowActiveSet should contain 'set' commands: %s", activeSet)
+	}
+
+	candidateSet := s.ShowCandidateSet()
+	if !strings.Contains(candidateSet, "set security") {
+		t.Errorf("ShowCandidateSet should contain 'set' commands: %s", candidateSet)
+	}
+
+	// They should be the same after a clean commit
+	if activeSet != candidateSet {
+		t.Error("active and candidate set output should match after commit")
+	}
+}
+
 func TestExportJSON(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.EnterConfigure(); err != nil {

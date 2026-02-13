@@ -130,12 +130,25 @@ func NewServer(cfg Config) *Server {
 	mux.HandleFunc("GET /api/v1/config/status", s.configStatusHandler)
 	mux.HandleFunc("POST /api/v1/config/set", s.configSetHandler)
 	mux.HandleFunc("POST /api/v1/config/delete", s.configDeleteHandler)
+	mux.HandleFunc("POST /api/v1/config/load", s.configLoadHandler)
 	mux.HandleFunc("POST /api/v1/config/commit", s.configCommitHandler)
 	mux.HandleFunc("POST /api/v1/config/commit-check", s.configCommitCheckHandler)
+	mux.HandleFunc("POST /api/v1/config/commit-confirmed", s.configCommitConfirmedHandler)
+	mux.HandleFunc("POST /api/v1/config/confirm", s.configConfirmHandler)
 	mux.HandleFunc("POST /api/v1/config/rollback", s.configRollbackHandler)
 	mux.HandleFunc("GET /api/v1/config/show", s.configShowHandler)
+	mux.HandleFunc("GET /api/v1/config/show-rollback", s.configShowRollbackHandler)
 	mux.HandleFunc("GET /api/v1/config/compare", s.configCompareHandler)
 	mux.HandleFunc("GET /api/v1/config/history", s.configHistoryHandler)
+
+	// DHCP mutations
+	mux.HandleFunc("POST /api/v1/dhcp/identifiers/clear", s.clearDHCPIdentifiersHandler)
+
+	// Generic text show
+	mux.HandleFunc("GET /api/v1/show-text", s.showTextHandler)
+
+	// System actions
+	mux.HandleFunc("POST /api/v1/system/action", s.systemActionHandler)
 
 	s.httpServer = &http.Server{
 		Addr:    cfg.Addr,
