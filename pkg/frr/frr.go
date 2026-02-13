@@ -265,15 +265,29 @@ func (m *Manager) ApplyFull(fc *FullConfig) error {
 		b.WriteString(m.generatePolicyOptions(fc.PolicyOptions))
 	}
 
+	// Resolve forwarding-table export policy for ECMP.
+	// If the referenced policy has "load-balance per-packet" or "consistent-hash",
+	// enable ECMP multipath (maximum-paths 64) in BGP/OSPF.
+	ecmpMaxPaths := 0
+	if fc.ForwardingTableExport != "" && fc.PolicyOptions != nil {
+		if ps, ok := fc.PolicyOptions.PolicyStatements[fc.ForwardingTableExport]; ok {
+			for _, term := range ps.Terms {
+				if term.LoadBalance != "" {
+					ecmpMaxPaths = 64
+				}
+			}
+		}
+	}
+
 	// Global dynamic protocols
 	if fc.OSPF != nil || fc.BGP != nil || fc.RIP != nil || fc.ISIS != nil {
-		b.WriteString(m.generateProtocols(fc.OSPF, fc.BGP, fc.RIP, fc.ISIS, ""))
+		b.WriteString(m.generateProtocols(fc.OSPF, fc.BGP, fc.RIP, fc.ISIS, "", ecmpMaxPaths))
 	}
 
 	// Per-VRF dynamic protocols
 	for _, inst := range fc.Instances {
 		if inst.OSPF != nil || inst.BGP != nil || inst.RIP != nil || inst.ISIS != nil {
-			b.WriteString(m.generateProtocols(inst.OSPF, inst.BGP, inst.RIP, inst.ISIS, inst.VRFName))
+			b.WriteString(m.generateProtocols(inst.OSPF, inst.BGP, inst.RIP, inst.ISIS, inst.VRFName, ecmpMaxPaths))
 		}
 	}
 
@@ -391,7 +405,8 @@ func (m *Manager) writeManagedSection(section string) error {
 
 // generateOSPFBGP generates FRR CLI config for OSPF and/or BGP.
 // If vrfName is non-empty, generates VRF-scoped commands.
-func (m *Manager) generateProtocols(ospf *config.OSPFConfig, bgp *config.BGPConfig, rip *config.RIPConfig, isis *config.ISISConfig, vrfName string) string {
+// ecmpMaxPaths > 1 enables ECMP with the given maximum equal-cost paths.
+func (m *Manager) generateProtocols(ospf *config.OSPFConfig, bgp *config.BGPConfig, rip *config.RIPConfig, isis *config.ISISConfig, vrfName string, ecmpMaxPaths int) string {
 	var b strings.Builder
 
 	vrfSuffix := ""
@@ -412,6 +427,9 @@ func (m *Manager) generateProtocols(ospf *config.OSPFConfig, bgp *config.BGPConf
 					fmt.Fprintf(&b, " passive-interface %s\n", iface.Name)
 				}
 			}
+		}
+		if ecmpMaxPaths > 1 {
+			fmt.Fprintf(&b, " maximum-paths %d\n", ecmpMaxPaths)
 		}
 		for _, export := range ospf.Export {
 			fmt.Fprintf(&b, " redistribute %s\n", export)
@@ -456,8 +474,11 @@ func (m *Manager) generateProtocols(ospf *config.OSPFConfig, bgp *config.BGPConf
 				inet6Neighbors = append(inet6Neighbors, n)
 			}
 		}
-		if len(inet4Neighbors) > 0 {
+		if len(inet4Neighbors) > 0 || ecmpMaxPaths > 1 {
 			b.WriteString(" !\n address-family ipv4 unicast\n")
+			if ecmpMaxPaths > 1 {
+				fmt.Fprintf(&b, "  maximum-paths %d\n", ecmpMaxPaths)
+			}
 			for _, n := range inet4Neighbors {
 				fmt.Fprintf(&b, "  neighbor %s activate\n", n.Address)
 				for _, exp := range n.Export {
@@ -466,8 +487,11 @@ func (m *Manager) generateProtocols(ospf *config.OSPFConfig, bgp *config.BGPConf
 			}
 			b.WriteString(" exit-address-family\n")
 		}
-		if len(inet6Neighbors) > 0 {
+		if len(inet6Neighbors) > 0 || ecmpMaxPaths > 1 {
 			b.WriteString(" !\n address-family ipv6 unicast\n")
+			if ecmpMaxPaths > 1 {
+				fmt.Fprintf(&b, "  maximum-paths %d\n", ecmpMaxPaths)
+			}
 			for _, n := range inet6Neighbors {
 				fmt.Fprintf(&b, "  neighbor %s activate\n", n.Address)
 				for _, exp := range n.Export {

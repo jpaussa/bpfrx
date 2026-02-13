@@ -120,7 +120,7 @@ func TestGenerateProtocols_OSPF(t *testing.T) {
 			},
 		},
 	}
-	got := m.generateProtocols(ospf, nil, nil, nil, "")
+	got := m.generateProtocols(ospf, nil, nil, nil, "", 0)
 	if !strings.Contains(got, "router ospf\n") {
 		t.Error("missing 'router ospf'")
 	}
@@ -153,7 +153,7 @@ func TestGenerateProtocols_OSPFExportAndCost(t *testing.T) {
 			},
 		},
 	}
-	got := m.generateProtocols(ospf, nil, nil, nil, "")
+	got := m.generateProtocols(ospf, nil, nil, nil, "", 0)
 	if !strings.Contains(got, "redistribute connected\n") {
 		t.Error("missing redistribute connected")
 	}
@@ -178,7 +178,7 @@ func TestGenerateProtocols_BGP(t *testing.T) {
 			{Address: "10.0.3.1", PeerAS: 65003, MultihopTTL: 5},
 		},
 	}
-	got := m.generateProtocols(nil, bgp, nil, nil, "")
+	got := m.generateProtocols(nil, bgp, nil, nil, "", 0)
 	if !strings.Contains(got, "router bgp 65001\n") {
 		t.Error("missing 'router bgp 65001'")
 	}
@@ -203,7 +203,7 @@ func TestGenerateProtocols_RIP(t *testing.T) {
 		Passive:      []string{"dmz0"},
 		Redistribute: []string{"connected", "static"},
 	}
-	got := m.generateProtocols(nil, nil, rip, nil, "")
+	got := m.generateProtocols(nil, nil, rip, nil, "", 0)
 	if !strings.Contains(got, "router rip\n") {
 		t.Error("missing 'router rip'")
 	}
@@ -228,7 +228,7 @@ func TestGenerateProtocols_ISIS(t *testing.T) {
 			{Name: "dmz0", Passive: true},
 		},
 	}
-	got := m.generateProtocols(nil, nil, nil, isis, "")
+	got := m.generateProtocols(nil, nil, nil, isis, "", 0)
 	if !strings.Contains(got, "router isis bpfrx\n") {
 		t.Error("missing 'router isis bpfrx'")
 	}
@@ -256,7 +256,7 @@ func TestGenerateProtocols_BGPExport(t *testing.T) {
 			{Address: "10.0.2.1", PeerAS: 65002},
 		},
 	}
-	got := m.generateProtocols(nil, bgp, nil, nil, "")
+	got := m.generateProtocols(nil, bgp, nil, nil, "", 0)
 	if !strings.Contains(got, "redistribute connected\n") {
 		t.Errorf("missing redistribute connected, got:\n%s", got)
 	}
@@ -275,7 +275,7 @@ func TestGenerateProtocols_ISISExport(t *testing.T) {
 			{Name: "trust0"},
 		},
 	}
-	got := m.generateProtocols(nil, nil, nil, isis, "")
+	got := m.generateProtocols(nil, nil, nil, isis, "", 0)
 	if !strings.Contains(got, "redistribute connected\n") {
 		t.Errorf("missing redistribute connected, got:\n%s", got)
 	}
@@ -287,7 +287,7 @@ func TestGenerateProtocols_VRF(t *testing.T) {
 		RouterID: "2.2.2.2",
 		Areas:    []*config.OSPFArea{{ID: "0.0.0.0", Interfaces: []*config.OSPFInterface{{Name: "trust0"}}}},
 	}
-	got := m.generateProtocols(ospf, nil, nil, nil, "cust-a")
+	got := m.generateProtocols(ospf, nil, nil, nil, "cust-a", 0)
 	if !strings.Contains(got, "router ospf vrf cust-a\n") {
 		t.Error("missing VRF suffix in OSPF")
 	}
@@ -462,7 +462,7 @@ func TestBGPAddressFamily(t *testing.T) {
 		},
 	}
 
-	got := m.generateProtocols(nil, bgp, nil, nil, "")
+	got := m.generateProtocols(nil, bgp, nil, nil, "", 0)
 
 	checks := []string{
 		"router bgp 64701",
@@ -494,6 +494,39 @@ func TestBGPAddressFamily(t *testing.T) {
 		if inIPv6 && strings.Contains(line, "10.0.0.2") {
 			t.Error("10.0.0.2 should not be in ipv6 address-family")
 		}
+	}
+}
+
+func TestGenerateProtocols_ECMPMaxPaths(t *testing.T) {
+	m := New()
+	bgp := &config.BGPConfig{
+		LocalAS:  65001,
+		RouterID: "1.1.1.1",
+		Neighbors: []*config.BGPNeighbor{
+			{Address: "10.0.2.1", PeerAS: 65002, FamilyInet: true},
+		},
+	}
+	got := m.generateProtocols(nil, bgp, nil, nil, "", 64)
+	if !strings.Contains(got, "maximum-paths 64") {
+		t.Errorf("missing maximum-paths in BGP, got:\n%s", got)
+	}
+
+	// Also test OSPF ECMP
+	ospf := &config.OSPFConfig{
+		RouterID: "1.1.1.1",
+		Areas: []*config.OSPFArea{
+			{ID: "0.0.0.0", Interfaces: []*config.OSPFInterface{{Name: "trust0"}}},
+		},
+	}
+	got = m.generateProtocols(ospf, nil, nil, nil, "", 64)
+	if !strings.Contains(got, "maximum-paths 64") {
+		t.Errorf("missing maximum-paths in OSPF, got:\n%s", got)
+	}
+
+	// Without ECMP
+	got = m.generateProtocols(ospf, nil, nil, nil, "", 0)
+	if strings.Contains(got, "maximum-paths") {
+		t.Errorf("should not have maximum-paths when ecmp=0, got:\n%s", got)
 	}
 }
 
