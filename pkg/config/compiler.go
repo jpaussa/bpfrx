@@ -463,6 +463,8 @@ func compileScreen(node *Node, sec *SecurityConfig) error {
 								sf.AttackThreshold = n
 							case "source-threshold":
 								sf.SourceThreshold = n
+							case "destination-threshold":
+								sf.DestinationThreshold = n
 							case "timeout":
 								sf.Timeout = n
 							}
@@ -1075,6 +1077,18 @@ func compileLog(node *Node, sec *SecurityConfig) error {
 	if sec.Log.Streams == nil {
 		sec.Log.Streams = make(map[string]*SyslogStream)
 	}
+
+	// Top-level log settings
+	if modeNode := node.FindChild("mode"); modeNode != nil {
+		sec.Log.Mode = nodeVal(modeNode)
+	}
+	if fmtNode := node.FindChild("format"); fmtNode != nil {
+		sec.Log.Format = nodeVal(fmtNode)
+	}
+	if srcNode := node.FindChild("source-interface"); srcNode != nil {
+		sec.Log.SourceInterface = nodeVal(srcNode)
+	}
+
 	for _, inst := range namedInstances(node.FindChildren("stream")) {
 		stream := &SyslogStream{
 			Name: inst.name,
@@ -1083,7 +1097,26 @@ func compileLog(node *Node, sec *SecurityConfig) error {
 		for _, prop := range inst.node.Children {
 			switch prop.Name() {
 			case "host":
-				stream.Host = nodeVal(prop)
+				// Flat: host 192.168.99.3;
+				if v := nodeVal(prop); v != "" {
+					stream.Host = v
+				}
+				// Nested: host { 192.168.99.3; port 9006; }
+				for _, hc := range prop.Children {
+					switch hc.Name() {
+					case "port":
+						if v := nodeVal(hc); v != "" {
+							if n, err := strconv.Atoi(v); err == nil {
+								stream.Port = n
+							}
+						}
+					default:
+						// IP address as a bare child node
+						if stream.Host == "" && len(hc.Keys) >= 1 {
+							stream.Host = hc.Keys[0]
+						}
+					}
+				}
 			case "port":
 				if v := nodeVal(prop); v != "" {
 					if n, err := strconv.Atoi(v); err == nil {
@@ -1094,6 +1127,12 @@ func compileLog(node *Node, sec *SecurityConfig) error {
 				stream.Severity = nodeVal(prop)
 			case "facility":
 				stream.Facility = nodeVal(prop)
+			case "format":
+				stream.Format = nodeVal(prop)
+			case "category":
+				stream.Category = nodeVal(prop)
+			case "source-address":
+				stream.SourceAddress = nodeVal(prop)
 			}
 		}
 		if stream.Host != "" {

@@ -383,16 +383,22 @@ type TCPSessionConfig struct {
 
 // LogConfig holds logging/syslog configuration.
 type LogConfig struct {
-	Streams map[string]*SyslogStream
+	Mode            string // "stream" or "event"
+	Format          string // "sd-syslog", "syslog", "binary"
+	SourceInterface string // interface for source address
+	Streams         map[string]*SyslogStream
 }
 
 // SyslogStream defines a syslog forwarding destination.
 type SyslogStream struct {
-	Name     string
-	Host     string
-	Port     int    // default 514
-	Severity string // "error", "warning", "info", or "" (no filter)
-	Facility string // "local0".."local7", "user", "daemon", or "" (default: local0)
+	Name          string
+	Host          string
+	Port          int    // default 514
+	Severity      string // "error", "warning", "info", or "" (no filter)
+	Facility      string // "local0".."local7", "user", "daemon", or "" (default: local0)
+	Format        string // per-stream format override
+	Category      string // "all", or specific category
+	SourceAddress string // source IP for this stream
 }
 
 // ZoneConfig represents a security zone.
@@ -579,10 +585,11 @@ type UDPScreen struct {
 
 // SynFloodConfig configures SYN flood protection thresholds.
 type SynFloodConfig struct {
-	AlarmThreshold  int
-	AttackThreshold int
-	SourceThreshold int
-	Timeout         int
+	AlarmThreshold       int
+	AttackThreshold      int
+	SourceThreshold      int
+	DestinationThreshold int
+	Timeout              int
 }
 
 // AddressBook holds named addresses and address sets.

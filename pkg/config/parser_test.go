@@ -4750,3 +4750,84 @@ func TestApplicationSetSyntax(t *testing.T) {
 	}
 }
 
+func TestSecurityLogEnhancements(t *testing.T) {
+	input := `
+security {
+    log {
+        mode stream;
+        format sd-syslog;
+        source-interface reth1.100;
+        stream syslog-container {
+            format sd-syslog;
+            category all;
+            host {
+                192.168.99.3;
+            }
+            source-address 172.16.100.1;
+        }
+        stream filebeat-syslog {
+            host {
+                192.168.99.106;
+                port 9006;
+            }
+            source-address 192.168.99.1;
+        }
+    }
+}
+`
+	parser := NewParser(input)
+	tree, errs := parser.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("Parse: %v", errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+
+	log := cfg.Security.Log
+	if log.Mode != "stream" {
+		t.Errorf("Mode = %q, want stream", log.Mode)
+	}
+	if log.Format != "sd-syslog" {
+		t.Errorf("Format = %q, want sd-syslog", log.Format)
+	}
+	if log.SourceInterface != "reth1.100" {
+		t.Errorf("SourceInterface = %q, want reth1.100", log.SourceInterface)
+	}
+	if len(log.Streams) != 2 {
+		t.Fatalf("got %d streams, want 2", len(log.Streams))
+	}
+
+	s1 := log.Streams["syslog-container"]
+	if s1 == nil {
+		t.Fatal("missing stream syslog-container")
+	}
+	if s1.Host != "192.168.99.3" {
+		t.Errorf("syslog-container host = %q, want 192.168.99.3", s1.Host)
+	}
+	if s1.Format != "sd-syslog" {
+		t.Errorf("syslog-container format = %q, want sd-syslog", s1.Format)
+	}
+	if s1.Category != "all" {
+		t.Errorf("syslog-container category = %q, want all", s1.Category)
+	}
+	if s1.SourceAddress != "172.16.100.1" {
+		t.Errorf("syslog-container source-address = %q, want 172.16.100.1", s1.SourceAddress)
+	}
+
+	s2 := log.Streams["filebeat-syslog"]
+	if s2 == nil {
+		t.Fatal("missing stream filebeat-syslog")
+	}
+	if s2.Host != "192.168.99.106" {
+		t.Errorf("filebeat-syslog host = %q, want 192.168.99.106", s2.Host)
+	}
+	if s2.Port != 9006 {
+		t.Errorf("filebeat-syslog port = %d, want 9006", s2.Port)
+	}
+	if s2.SourceAddress != "192.168.99.1" {
+		t.Errorf("filebeat-syslog source-address = %q, want 192.168.99.1", s2.SourceAddress)
+	}
+}
+
