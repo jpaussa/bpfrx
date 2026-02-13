@@ -281,7 +281,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 			FRR:      d.frr,
 			IPsec:    d.ipsec,
 			DHCP:     d.dhcp,
-			ApplyFn:  d.applyConfig,
+			RPMResultsFn: func() []*rpm.ProbeResult {
+				if d.rpm != nil {
+					return d.rpm.Results()
+				}
+				return nil
+			},
+			ApplyFn: d.applyConfig,
 		})
 		wg.Add(1)
 		go func() {
@@ -949,9 +955,12 @@ func applySyslogConfig(er *logging.EventReader, cfg *config.Config) {
 		if stream.Severity != "" {
 			client.MinSeverity = logging.ParseSeverity(stream.Severity)
 		}
+		if stream.Facility != "" {
+			client.Facility = logging.ParseFacility(stream.Facility)
+		}
 		slog.Info("syslog stream configured",
 			"stream", name, "host", stream.Host, "port", stream.Port,
-			"severity", stream.Severity)
+			"severity", stream.Severity, "facility", stream.Facility)
 		clients = append(clients, client)
 	}
 	if len(clients) > 0 {

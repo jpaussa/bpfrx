@@ -956,6 +956,49 @@ func TestSyslogSeverityParsing(t *testing.T) {
 	}
 }
 
+func TestSyslogFacilityParsing(t *testing.T) {
+	tree := &ConfigTree{}
+	setCommands := []string{
+		"set security log stream auth-events host 10.0.0.1",
+		"set security log stream auth-events severity error",
+		"set security log stream auth-events facility local3",
+		"set security log stream default-events host 10.0.0.2",
+	}
+	for _, cmd := range setCommands {
+		fields := strings.Fields(cmd)
+		if err := tree.SetPath(fields[1:]); err != nil {
+			t.Fatalf("SetPath(%q): %v", cmd, err)
+		}
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+
+	if len(cfg.Security.Log.Streams) != 2 {
+		t.Fatalf("expected 2 streams, got %d", len(cfg.Security.Log.Streams))
+	}
+
+	authEvts := cfg.Security.Log.Streams["auth-events"]
+	if authEvts == nil {
+		t.Fatal("missing auth-events stream")
+	}
+	if authEvts.Facility != "local3" {
+		t.Errorf("auth-events facility: got %q, want %q", authEvts.Facility, "local3")
+	}
+	if authEvts.Severity != "error" {
+		t.Errorf("auth-events severity: got %q, want %q", authEvts.Severity, "error")
+	}
+
+	defEvts := cfg.Security.Log.Streams["default-events"]
+	if defEvts == nil {
+		t.Fatal("missing default-events stream")
+	}
+	if defEvts.Facility != "" {
+		t.Errorf("default-events facility should be empty, got %q", defEvts.Facility)
+	}
+}
+
 func TestNestedAddressSets(t *testing.T) {
 	// Test hierarchical syntax with nested address-sets
 	input := `security {

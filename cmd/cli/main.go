@@ -369,6 +369,7 @@ func (c *ctl) handleShow(args []string) error {
 		fmt.Println("  route            Show routing table")
 		fmt.Println("  schedulers       Show policy schedulers")
 		fmt.Println("  security         Show security information")
+		fmt.Println("  services         Show services information")
 		fmt.Println("  snmp             Show SNMP statistics")
 		fmt.Println("  interfaces       Show interface status")
 		fmt.Println("  protocols        Show protocol information")
@@ -437,8 +438,25 @@ func (c *ctl) handleShow(args []string) error {
 	case "flow-monitoring":
 		return c.showText("flow-monitoring")
 
+	case "services":
+		return c.handleShowServices(args[1:])
+
 	default:
 		return fmt.Errorf("unknown show target: %s", args[0])
+	}
+}
+
+func (c *ctl) handleShowServices(args []string) error {
+	if len(args) == 0 {
+		fmt.Println("show services:")
+		fmt.Println("  rpm              Show RPM probe results")
+		return nil
+	}
+	switch args[0] {
+	case "rpm":
+		return c.showText("rpm")
+	default:
+		return fmt.Errorf("unknown services target: %s", args[0])
 	}
 }
 

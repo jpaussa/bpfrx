@@ -277,6 +277,7 @@ type SyslogStream struct {
 	Host     string
 	Port     int    // default 514
 	Severity string // "error", "warning", "info", or "" (no filter)
+	Facility string // "local0".."local7", "user", "daemon", or "" (default: local0)
 }
 
 // ZoneConfig represents a security zone.

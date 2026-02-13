@@ -218,6 +218,7 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 				"host":     {args: 1, children: nil},
 				"port":     {args: 1, children: nil},
 				"severity": {args: 1, children: nil},
+				"facility": {args: 1, children: nil},
 			}},
 		}},
 		"flow": {children: map[string]*schemaNode{

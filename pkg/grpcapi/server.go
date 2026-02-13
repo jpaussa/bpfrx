@@ -29,6 +29,7 @@ import (
 	"github.com/psaab/bpfrx/pkg/ipsec"
 	"github.com/psaab/bpfrx/pkg/logging"
 	"github.com/psaab/bpfrx/pkg/routing"
+	"github.com/psaab/bpfrx/pkg/rpm"
 	"github.com/psaab/bpfrx/pkg/vrrp"
 )
 
@@ -41,40 +42,43 @@ type Config struct {
 	Routing  *routing.Manager
 	FRR      *frr.Manager
 	IPsec    *ipsec.Manager
-	DHCP     *dhcp.Manager
-	ApplyFn  func(*config.Config) // daemon's applyConfig callback
+	DHCP         *dhcp.Manager
+	RPMResultsFn func() []*rpm.ProbeResult // returns live RPM results
+	ApplyFn      func(*config.Config)      // daemon's applyConfig callback
 }
 
 // Server implements the BpfrxService gRPC service.
 type Server struct {
 	pb.UnimplementedBpfrxServiceServer
-	store     *configstore.Store
-	dp        *dataplane.Manager
-	eventBuf  *logging.EventBuffer
-	gc        *conntrack.GC
-	routing   *routing.Manager
-	frr       *frr.Manager
-	ipsec     *ipsec.Manager
-	dhcp      *dhcp.Manager
-	applyFn   func(*config.Config)
-	startTime time.Time
-	addr      string
+	store        *configstore.Store
+	dp           *dataplane.Manager
+	eventBuf     *logging.EventBuffer
+	gc           *conntrack.GC
+	routing      *routing.Manager
+	frr          *frr.Manager
+	ipsec        *ipsec.Manager
+	dhcp         *dhcp.Manager
+	rpmResultsFn func() []*rpm.ProbeResult
+	applyFn      func(*config.Config)
+	startTime    time.Time
+	addr         string
 }
 
 // NewServer creates a new gRPC server.
 func NewServer(addr string, cfg Config) *Server {
 	return &Server{
-		store:     cfg.Store,
-		dp:        cfg.DP,
-		eventBuf:  cfg.EventBuf,
-		gc:        cfg.GC,
-		routing:   cfg.Routing,
-		frr:       cfg.FRR,
-		ipsec:     cfg.IPsec,
-		dhcp:      cfg.DHCP,
-		applyFn:   cfg.ApplyFn,
-		startTime: time.Now(),
-		addr:      addr,
+		store:        cfg.Store,
+		dp:           cfg.DP,
+		eventBuf:     cfg.EventBuf,
+		gc:           cfg.GC,
+		routing:      cfg.Routing,
+		frr:          cfg.FRR,
+		ipsec:        cfg.IPsec,
+		dhcp:         cfg.DHCP,
+		rpmResultsFn: cfg.RPMResultsFn,
+		applyFn:      cfg.ApplyFn,
+		startTime:    time.Now(),
+		addr:         addr,
 	}
 }
 
@@ -2417,6 +2421,36 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 
 	case "persistent-nat":
 		buf.WriteString("Persistent NAT table (view via local CLI only)\n")
+
+	case "rpm":
+		if s.rpmResultsFn == nil {
+			buf.WriteString("RPM probes not available\n")
+		} else {
+			results := s.rpmResultsFn()
+			if len(results) == 0 {
+				buf.WriteString("No RPM probes configured\n")
+			} else {
+				buf.WriteString("RPM Probe Results:\n")
+				for _, r := range results {
+					fmt.Fprintf(&buf, "  Probe: %s, Test: %s\n", r.ProbeName, r.TestName)
+					fmt.Fprintf(&buf, "    Type: %s, Target: %s\n", r.ProbeType, r.Target)
+					fmt.Fprintf(&buf, "    Status: %s", r.LastStatus)
+					if r.LastRTT > 0 {
+						fmt.Fprintf(&buf, ", RTT: %s", r.LastRTT)
+					}
+					buf.WriteString("\n")
+					fmt.Fprintf(&buf, "    Sent: %d, Received: %d", r.TotalSent, r.TotalRecv)
+					if r.TotalSent > 0 {
+						loss := float64(r.TotalSent-r.TotalRecv) / float64(r.TotalSent) * 100
+						fmt.Fprintf(&buf, ", Loss: %.1f%%", loss)
+					}
+					buf.WriteString("\n")
+					if !r.LastProbeAt.IsZero() {
+						fmt.Fprintf(&buf, "    Last probe: %s\n", r.LastProbeAt.Format("2006-01-02 15:04:05"))
+					}
+				}
+			}
+		}
 
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "unknown topic: %s", req.Topic)

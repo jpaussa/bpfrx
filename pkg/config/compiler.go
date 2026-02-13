@@ -975,6 +975,10 @@ func compileLog(node *Node, sec *SecurityConfig) error {
 				if len(prop.Keys) >= 2 {
 					stream.Severity = prop.Keys[1]
 				}
+			case "facility":
+				if len(prop.Keys) >= 2 {
+					stream.Facility = prop.Keys[1]
+				}
 			}
 		}
 		if stream.Host != "" {
