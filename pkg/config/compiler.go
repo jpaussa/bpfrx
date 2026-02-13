@@ -70,7 +70,111 @@ func CompileConfig(tree *ConfigTree) (*Config, error) {
 		}
 	}
 
+	if warnings := ValidateConfig(cfg); len(warnings) > 0 {
+		for _, w := range warnings {
+			cfg.Warnings = append(cfg.Warnings, w)
+		}
+	}
+
 	return cfg, nil
+}
+
+// ValidateConfig performs cross-reference validation on a compiled config.
+// Returns a list of warnings (non-fatal) for references that don't resolve.
+func ValidateConfig(cfg *Config) []string {
+	var warnings []string
+
+	// Collect valid zone names
+	zones := make(map[string]bool)
+	for name := range cfg.Security.Zones {
+		zones[name] = true
+	}
+
+	// Collect valid address-book entries
+	addrs := make(map[string]bool)
+	if ab := cfg.Security.AddressBook; ab != nil {
+		for name := range ab.Addresses {
+			addrs[name] = true
+		}
+		for name := range ab.AddressSets {
+			addrs[name] = true
+		}
+	}
+
+	// Collect valid applications
+	apps := make(map[string]bool)
+	for name := range cfg.Applications.Applications {
+		apps[name] = true
+	}
+	for name := range cfg.Applications.ApplicationSets {
+		apps[name] = true
+	}
+	// Built-in Junos application names
+	builtins := []string{"any", "junos-http", "junos-https", "junos-ssh", "junos-telnet",
+		"junos-dns-udp", "junos-dns-tcp", "junos-ping", "junos-icmp-all",
+		"junos-bgp", "junos-ospf", "junos-ntp", "junos-dhcp-relay",
+		"junos-ftp", "junos-smtp", "junos-icmp6-all", "junos-ike",
+		"junos-ipsec-nat-t", "junos-dhcp-client", "junos-dhcp-server",
+		"junos-snmp", "junos-syslog", "junos-traceroute", "junos-radius"}
+	for _, b := range builtins {
+		apps[b] = true
+	}
+
+	// Validate policies
+	for _, zpp := range cfg.Security.Policies {
+		if zpp.FromZone != "any" && !zones[zpp.FromZone] {
+			warnings = append(warnings, fmt.Sprintf(
+				"policy from-zone %q: zone not defined", zpp.FromZone))
+		}
+		if zpp.ToZone != "any" && !zones[zpp.ToZone] {
+			warnings = append(warnings, fmt.Sprintf(
+				"policy to-zone %q: zone not defined", zpp.ToZone))
+		}
+		for _, p := range zpp.Policies {
+			for _, addr := range p.Match.SourceAddresses {
+				if addr != "any" && !addrs[addr] {
+					warnings = append(warnings, fmt.Sprintf(
+						"policy %q: source-address %q not in address-book", p.Name, addr))
+				}
+			}
+			for _, addr := range p.Match.DestinationAddresses {
+				if addr != "any" && !addrs[addr] {
+					warnings = append(warnings, fmt.Sprintf(
+						"policy %q: destination-address %q not in address-book", p.Name, addr))
+				}
+			}
+			for _, app := range p.Match.Applications {
+				if !apps[app] {
+					warnings = append(warnings, fmt.Sprintf(
+						"policy %q: application %q not defined", p.Name, app))
+				}
+			}
+		}
+	}
+
+	// Validate NAT zone references
+	for _, rs := range cfg.Security.NAT.Source {
+		if rs.FromZone != "" && !zones[rs.FromZone] {
+			warnings = append(warnings, fmt.Sprintf(
+				"source-nat ruleset %q: from-zone %q not defined", rs.Name, rs.FromZone))
+		}
+		if rs.ToZone != "" && !zones[rs.ToZone] {
+			warnings = append(warnings, fmt.Sprintf(
+				"source-nat ruleset %q: to-zone %q not defined", rs.Name, rs.ToZone))
+		}
+	}
+
+	// Validate screen references in zones
+	for name, zone := range cfg.Security.Zones {
+		if zone.ScreenProfile != "" {
+			if _, ok := cfg.Security.Screen[zone.ScreenProfile]; !ok {
+				warnings = append(warnings, fmt.Sprintf(
+					"zone %q: screen profile %q not defined", name, zone.ScreenProfile))
+			}
+		}
+	}
+
+	return warnings
 }
 
 func compileSecurity(node *Node, sec *SecurityConfig) error {
@@ -1382,6 +1486,10 @@ func compileProtocols(node *Node, proto *ProtocolsConfig) error {
 				if len(child.Keys) >= 2 {
 					proto.BGP.RouterID = child.Keys[1]
 				}
+			case "export":
+				if len(child.Keys) >= 2 {
+					proto.BGP.Export = append(proto.BGP.Export, child.Keys[1])
+				}
 			}
 		}
 
@@ -1390,6 +1498,8 @@ func compileProtocols(node *Node, proto *ProtocolsConfig) error {
 				continue
 			}
 			var peerAS uint32
+			var groupDesc string
+			var groupMultihop int
 			for _, child := range groupNode.Children {
 				switch child.Name() {
 				case "peer-as":
@@ -1398,11 +1508,44 @@ func compileProtocols(node *Node, proto *ProtocolsConfig) error {
 							peerAS = uint32(v)
 						}
 					}
+				case "description":
+					if len(child.Keys) >= 2 {
+						groupDesc = child.Keys[1]
+					}
+				case "multihop":
+					if len(child.Keys) >= 2 {
+						if v, err := strconv.Atoi(child.Keys[1]); err == nil {
+							groupMultihop = v
+						}
+					}
 				case "neighbor":
 					if len(child.Keys) >= 2 {
 						neighbor := &BGPNeighbor{
-							Address: child.Keys[1],
-							PeerAS:  peerAS,
+							Address:     child.Keys[1],
+							PeerAS:      peerAS,
+							Description: groupDesc,
+							MultihopTTL: groupMultihop,
+						}
+						// Per-neighbor overrides
+						for _, prop := range child.Children {
+							switch prop.Name() {
+							case "description":
+								if len(prop.Keys) >= 2 {
+									neighbor.Description = prop.Keys[1]
+								}
+							case "multihop":
+								if len(prop.Keys) >= 2 {
+									if v, err := strconv.Atoi(prop.Keys[1]); err == nil {
+										neighbor.MultihopTTL = v
+									}
+								}
+							case "peer-as":
+								if len(prop.Keys) >= 2 {
+									if v, err := strconv.Atoi(prop.Keys[1]); err == nil {
+										neighbor.PeerAS = uint32(v)
+									}
+								}
+							}
 						}
 						proto.BGP.Neighbors = append(proto.BGP.Neighbors, neighbor)
 					}
@@ -1461,6 +1604,10 @@ func compileProtocols(node *Node, proto *ProtocolsConfig) error {
 			case "is-type":
 				if len(child.Keys) >= 2 {
 					proto.ISIS.Level = child.Keys[1]
+				}
+			case "export":
+				if len(child.Keys) >= 2 {
+					proto.ISIS.Export = append(proto.ISIS.Export, child.Keys[1])
 				}
 			case "interface":
 				if len(child.Keys) >= 2 {

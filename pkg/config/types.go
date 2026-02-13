@@ -13,6 +13,7 @@ type Config struct {
 	ForwardingOptions ForwardingOptionsConfig
 	System            SystemConfig
 	Schedulers        map[string]*SchedulerConfig
+	Warnings          []string // non-fatal validation warnings
 }
 
 // SchedulerConfig defines a time-based policy scheduler.
@@ -593,6 +594,7 @@ type ISISConfig struct {
 	NET        string // ISO NET address (e.g. "49.0001.0100.0000.0001.00")
 	Level      string // "level-1", "level-2", "level-1-2" (default "level-2")
 	Interfaces []*ISISInterface
+	Export     []string // "connected", "static", etc.
 }
 
 // ISISInterface defines an interface participating in IS-IS.
@@ -648,9 +650,10 @@ type OSPFInterface struct {
 
 // BGPConfig holds BGP routing configuration.
 type BGPConfig struct {
-	LocalAS   uint32
-	RouterID  string
-	Neighbors []*BGPNeighbor
+	LocalAS      uint32
+	RouterID     string
+	Neighbors    []*BGPNeighbor
+	Export       []string // "connected", "static", "ospf", etc.
 }
 
 // BGPNeighbor defines a BGP peer.

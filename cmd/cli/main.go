@@ -378,6 +378,7 @@ func (c *ctl) handleShow(args []string) error {
 		fmt.Println("  interfaces       Show interface status")
 		fmt.Println("  protocols        Show protocol information")
 		fmt.Println("  system           Show system information")
+		fmt.Println("  version          Show software version")
 		return nil
 	}
 
@@ -447,6 +448,9 @@ func (c *ctl) handleShow(args []string) error {
 
 	case "services":
 		return c.handleShowServices(args[1:])
+
+	case "version":
+		return c.showText("version")
 
 	default:
 		return fmt.Errorf("unknown show target: %s", args[0])

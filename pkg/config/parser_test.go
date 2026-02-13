@@ -3230,3 +3230,253 @@ func TestOSPFExportSetSyntax(t *testing.T) {
 		t.Errorf("exports: got %v, want [connected]", ospf.Export)
 	}
 }
+
+func TestBGPExportAndNeighborDetails(t *testing.T) {
+	input := `protocols {
+    bgp {
+        local-as 65001;
+        router-id 1.1.1.1;
+        export connected;
+        export static;
+        group external {
+            peer-as 65002;
+            description upstream-peers;
+            multihop 3;
+            neighbor 10.0.2.1 {
+                description specific-peer;
+            }
+            neighbor 10.0.3.1;
+        }
+    }
+}`
+	parser := NewParser(input)
+	tree, errs := parser.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+	bgp := cfg.Protocols.BGP
+	if bgp == nil {
+		t.Fatal("BGP config is nil")
+	}
+	if bgp.LocalAS != 65001 {
+		t.Errorf("local-as: got %d, want 65001", bgp.LocalAS)
+	}
+	if len(bgp.Export) != 2 {
+		t.Fatalf("exports: got %v, want [connected static]", bgp.Export)
+	}
+	if bgp.Export[0] != "connected" || bgp.Export[1] != "static" {
+		t.Errorf("exports: got %v, want [connected static]", bgp.Export)
+	}
+	if len(bgp.Neighbors) != 2 {
+		t.Fatalf("neighbors: got %d, want 2", len(bgp.Neighbors))
+	}
+	// First neighbor should have per-neighbor description override
+	n0 := bgp.Neighbors[0]
+	if n0.Address != "10.0.2.1" {
+		t.Errorf("neighbor[0] address: got %q", n0.Address)
+	}
+	if n0.Description != "specific-peer" {
+		t.Errorf("neighbor[0] description: got %q, want %q", n0.Description, "specific-peer")
+	}
+	if n0.MultihopTTL != 3 {
+		t.Errorf("neighbor[0] multihop: got %d, want 3", n0.MultihopTTL)
+	}
+	// Second neighbor inherits group defaults
+	n1 := bgp.Neighbors[1]
+	if n1.Address != "10.0.3.1" {
+		t.Errorf("neighbor[1] address: got %q", n1.Address)
+	}
+	if n1.Description != "upstream-peers" {
+		t.Errorf("neighbor[1] description: got %q, want %q", n1.Description, "upstream-peers")
+	}
+	if n1.MultihopTTL != 3 {
+		t.Errorf("neighbor[1] multihop: got %d, want 3", n1.MultihopTTL)
+	}
+}
+
+func TestBGPExportSetSyntax(t *testing.T) {
+	cmds := []string{
+		"set protocols bgp local-as 65001",
+		"set protocols bgp export connected",
+		"set protocols bgp export static",
+		"set protocols bgp group external peer-as 65002",
+		"set protocols bgp group external neighbor 10.0.2.1",
+	}
+	tree := &ConfigTree{}
+	for _, cmd := range cmds {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%v): %v", path, err)
+		}
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+	bgp := cfg.Protocols.BGP
+	if bgp == nil {
+		t.Fatal("BGP config is nil")
+	}
+	if len(bgp.Export) != 2 {
+		t.Fatalf("exports: got %v, want [connected static]", bgp.Export)
+	}
+	if len(bgp.Neighbors) != 1 || bgp.Neighbors[0].Address != "10.0.2.1" {
+		t.Errorf("neighbors: got %v", bgp.Neighbors)
+	}
+}
+
+func TestISISExport(t *testing.T) {
+	input := `protocols {
+    isis {
+        net 49.0001.1921.6800.1001.00;
+        level level-1-2;
+        export connected;
+        export static;
+        interface trust0;
+    }
+}`
+	parser := NewParser(input)
+	tree, errs := parser.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+	isis := cfg.Protocols.ISIS
+	if isis == nil {
+		t.Fatal("ISIS config is nil")
+	}
+	if len(isis.Export) != 2 {
+		t.Fatalf("exports: got %v, want [connected static]", isis.Export)
+	}
+	if isis.Export[0] != "connected" || isis.Export[1] != "static" {
+		t.Errorf("exports: got %v", isis.Export)
+	}
+}
+
+func TestConfigValidation(t *testing.T) {
+	input := `
+security {
+    zones {
+        security-zone trust {
+            interfaces { eth0; }
+        }
+    }
+    policies {
+        from-zone trust to-zone nonexistent {
+            policy test {
+                match {
+                    source-address any;
+                    destination-address bad-addr;
+                    application bad-app;
+                }
+                then { permit; }
+            }
+        }
+    }
+    screen {
+        ids-option myscreen {
+            tcp { land; }
+        }
+    }
+}
+`
+	parser := NewParser(input)
+	tree, errs := parser.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+
+	// Should have warnings for: nonexistent zone, bad-addr, bad-app
+	if len(cfg.Warnings) == 0 {
+		t.Fatal("expected validation warnings, got none")
+	}
+
+	var foundZone, foundAddr, foundApp bool
+	for _, w := range cfg.Warnings {
+		if strings.Contains(w, "nonexistent") && strings.Contains(w, "zone") {
+			foundZone = true
+		}
+		if strings.Contains(w, "bad-addr") {
+			foundAddr = true
+		}
+		if strings.Contains(w, "bad-app") {
+			foundApp = true
+		}
+	}
+	if !foundZone {
+		t.Error("missing warning for nonexistent zone")
+	}
+	if !foundAddr {
+		t.Error("missing warning for bad-addr")
+	}
+	if !foundApp {
+		t.Error("missing warning for bad-app")
+	}
+}
+
+func TestConfigValidationClean(t *testing.T) {
+	// A valid config should have no warnings
+	input := `
+security {
+    zones {
+        security-zone trust {
+            interfaces { eth0; }
+            screen myscreen;
+        }
+        security-zone untrust {
+            interfaces { eth1; }
+        }
+    }
+    screen {
+        ids-option myscreen {
+            tcp { land; }
+        }
+    }
+    address-book {
+        global {
+            address srv1 10.0.1.10/32;
+        }
+    }
+    policies {
+        from-zone trust to-zone untrust {
+            policy allow {
+                match {
+                    source-address any;
+                    destination-address srv1;
+                    application junos-http;
+                }
+                then { permit; }
+            }
+        }
+    }
+}
+`
+	parser := NewParser(input)
+	tree, errs := parser.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+
+	if len(cfg.Warnings) > 0 {
+		t.Errorf("expected no warnings, got: %v", cfg.Warnings)
+	}
+}
+

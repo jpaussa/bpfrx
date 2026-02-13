@@ -454,6 +454,11 @@ func isInteractive() bool {
 // 4. Apply FRR config (OSPF/BGP, global + per-VRF)
 // 5. Apply IPsec config (strongSwan)
 func (d *Daemon) applyConfig(cfg *config.Config) {
+	// Log config validation warnings
+	for _, w := range cfg.Warnings {
+		slog.Warn("config validation", "warning", w)
+	}
+
 	// 0. Create VRF devices for routing instances
 	if d.routing != nil && len(cfg.RoutingInstances) > 0 {
 		if err := d.routing.ClearVRFs(); err != nil {
