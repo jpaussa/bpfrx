@@ -37,7 +37,18 @@ type bpfrxCollector struct {
 	// Session gauges (from GC)
 	sessionsActive      *prometheus.Desc
 	sessionsEstablished *prometheus.Desc
+	sessionsIPv4        *prometheus.Desc
+	sessionsIPv6        *prometheus.Desc
+	sessionsSNAT        *prometheus.Desc
+	sessionsDNAT        *prometheus.Desc
 	gcSweepDuration     *prometheus.Desc
+
+	// NAT pool utilization
+	natPoolUsedPorts  *prometheus.Desc
+	natPoolTotalPorts *prometheus.Desc
+
+	// DHCP lease gauge
+	dhcpLeasesActive *prometheus.Desc
 }
 
 func newCollector(srv *Server) *bpfrxCollector {
@@ -124,10 +135,45 @@ func newCollector(srv *Server) *bpfrxCollector {
 			"Current number of established sessions.",
 			nil, nil,
 		),
+		sessionsIPv4: prometheus.NewDesc(
+			"bpfrx_sessions_ipv4",
+			"Current number of IPv4 sessions.",
+			nil, nil,
+		),
+		sessionsIPv6: prometheus.NewDesc(
+			"bpfrx_sessions_ipv6",
+			"Current number of IPv6 sessions.",
+			nil, nil,
+		),
+		sessionsSNAT: prometheus.NewDesc(
+			"bpfrx_sessions_snat",
+			"Current number of SNAT sessions.",
+			nil, nil,
+		),
+		sessionsDNAT: prometheus.NewDesc(
+			"bpfrx_sessions_dnat",
+			"Current number of DNAT sessions.",
+			nil, nil,
+		),
 		gcSweepDuration: prometheus.NewDesc(
 			"bpfrx_gc_sweep_duration_seconds",
 			"Duration of the last GC sweep in seconds.",
 			nil, nil,
+		),
+		natPoolUsedPorts: prometheus.NewDesc(
+			"bpfrx_nat_pool_used_ports",
+			"Number of used ports in a NAT pool.",
+			[]string{"pool"}, nil,
+		),
+		natPoolTotalPorts: prometheus.NewDesc(
+			"bpfrx_nat_pool_total_ports",
+			"Total available ports in a NAT pool.",
+			[]string{"pool"}, nil,
+		),
+		dhcpLeasesActive: prometheus.NewDesc(
+			"bpfrx_dhcp_leases_active",
+			"Number of active DHCP leases.",
+			[]string{"family"}, nil,
 		),
 	}
 }
@@ -149,7 +195,14 @@ func (c *bpfrxCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.policyHitsTotal
 	ch <- c.sessionsActive
 	ch <- c.sessionsEstablished
+	ch <- c.sessionsIPv4
+	ch <- c.sessionsIPv6
+	ch <- c.sessionsSNAT
+	ch <- c.sessionsDNAT
 	ch <- c.gcSweepDuration
+	ch <- c.natPoolUsedPorts
+	ch <- c.natPoolTotalPorts
+	ch <- c.dhcpLeasesActive
 }
 
 func (c *bpfrxCollector) Collect(ch chan<- prometheus.Metric) {
@@ -162,7 +215,9 @@ func (c *bpfrxCollector) Collect(ch chan<- prometheus.Metric) {
 	c.collectInterfaceCounters(ch, dp)
 	c.collectZoneCounters(ch, dp)
 	c.collectPolicyCounters(ch, dp)
-	c.collectSessionGauges(ch)
+	c.collectSessionGauges(ch, dp)
+	c.collectNATPoolMetrics(ch, dp)
+	c.collectDHCPMetrics(ch)
 }
 
 func (c *bpfrxCollector) collectGlobalCounters(ch chan<- prometheus.Metric, dp *dataplane.Manager) {
@@ -294,7 +349,7 @@ func (c *bpfrxCollector) collectPolicyCounters(ch chan<- prometheus.Metric, dp *
 	}
 }
 
-func (c *bpfrxCollector) collectSessionGauges(ch chan<- prometheus.Metric) {
+func (c *bpfrxCollector) collectSessionGauges(ch chan<- prometheus.Metric, dp *dataplane.Manager) {
 	if c.srv.gc == nil {
 		return
 	}
@@ -305,5 +360,87 @@ func (c *bpfrxCollector) collectSessionGauges(ch chan<- prometheus.Metric) {
 		float64(stats.EstablishedSessions))
 	ch <- prometheus.MustNewConstMetric(c.gcSweepDuration, prometheus.GaugeValue,
 		stats.LastSweepDuration.Seconds())
+
+	// Session breakdowns by type
+	var ipv4, ipv6, snat, dnat int
+	_ = dp.IterateSessions(func(_ dataplane.SessionKey, val dataplane.SessionValue) bool {
+		if val.IsReverse == 0 {
+			ipv4++
+			if val.Flags&dataplane.SessFlagSNAT != 0 {
+				snat++
+			}
+			if val.Flags&dataplane.SessFlagDNAT != 0 {
+				dnat++
+			}
+		}
+		return true
+	})
+	_ = dp.IterateSessionsV6(func(_ dataplane.SessionKeyV6, val dataplane.SessionValueV6) bool {
+		if val.IsReverse == 0 {
+			ipv6++
+			if val.Flags&dataplane.SessFlagSNAT != 0 {
+				snat++
+			}
+			if val.Flags&dataplane.SessFlagDNAT != 0 {
+				dnat++
+			}
+		}
+		return true
+	})
+	ch <- prometheus.MustNewConstMetric(c.sessionsIPv4, prometheus.GaugeValue, float64(ipv4))
+	ch <- prometheus.MustNewConstMetric(c.sessionsIPv6, prometheus.GaugeValue, float64(ipv6))
+	ch <- prometheus.MustNewConstMetric(c.sessionsSNAT, prometheus.GaugeValue, float64(snat))
+	ch <- prometheus.MustNewConstMetric(c.sessionsDNAT, prometheus.GaugeValue, float64(dnat))
+}
+
+func (c *bpfrxCollector) collectNATPoolMetrics(ch chan<- prometheus.Metric, dp *dataplane.Manager) {
+	cfg := c.srv.store.ActiveConfig()
+	if cfg == nil {
+		return
+	}
+	cr := dp.LastCompileResult()
+	if cr == nil {
+		return
+	}
+
+	for name, pool := range cfg.Security.NAT.SourcePools {
+		portLow, portHigh := pool.PortLow, pool.PortHigh
+		if portLow == 0 {
+			portLow = 1024
+		}
+		if portHigh == 0 {
+			portHigh = 65535
+		}
+		totalPorts := (portHigh - portLow + 1) * len(pool.Addresses)
+		ch <- prometheus.MustNewConstMetric(c.natPoolTotalPorts, prometheus.GaugeValue,
+			float64(totalPorts), name)
+
+		if id, ok := cr.PoolIDs[name]; ok {
+			cnt, err := dp.ReadNATPortCounter(uint32(id))
+			if err == nil {
+				ch <- prometheus.MustNewConstMetric(c.natPoolUsedPorts, prometheus.GaugeValue,
+					float64(cnt), name)
+			}
+		}
+	}
+}
+
+func (c *bpfrxCollector) collectDHCPMetrics(ch chan<- prometheus.Metric) {
+	if c.srv.dhcp == nil {
+		return
+	}
+	leases := c.srv.dhcp.Leases()
+	var inet, inet6 int
+	for _, l := range leases {
+		if l.Family == 6 {
+			inet6++
+		} else {
+			inet++
+		}
+	}
+	ch <- prometheus.MustNewConstMetric(c.dhcpLeasesActive, prometheus.GaugeValue,
+		float64(inet), "inet")
+	ch <- prometheus.MustNewConstMetric(c.dhcpLeasesActive, prometheus.GaugeValue,
+		float64(inet6), "inet6")
 }
 
