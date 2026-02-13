@@ -1678,6 +1678,7 @@ func (c *ctl) handleClear(args []string) error {
 		fmt.Println("clear:")
 		fmt.Println("  security flow session          Clear all sessions")
 		fmt.Println("  security counters              Clear all counters")
+		fmt.Println("  firewall all                   Clear firewall filter counters")
 		fmt.Println("  dhcp client-identifier         Clear DHCPv6 DUID(s)")
 		return nil
 	}
@@ -1685,12 +1686,15 @@ func (c *ctl) handleClear(args []string) error {
 	switch args[0] {
 	case "security":
 		return c.handleClearSecurity(args[1:])
+	case "firewall":
+		return c.handleClearFirewall(args[1:])
 	case "dhcp":
 		return c.handleClearDHCP(args[1:])
 	default:
 		fmt.Println("clear:")
 		fmt.Println("  security flow session          Clear all sessions")
 		fmt.Println("  security counters              Clear all counters")
+		fmt.Println("  firewall all                   Clear firewall filter counters")
 		fmt.Println("  dhcp client-identifier         Clear DHCPv6 DUID(s)")
 		return nil
 	}
@@ -1790,6 +1794,22 @@ func (c *ctl) handleClearSecurity(args []string) error {
 		fmt.Println("  nat source persistent-nat-table      Clear persistent NAT bindings")
 		return nil
 	}
+}
+
+func (c *ctl) handleClearFirewall(args []string) error {
+	if len(args) < 1 || args[0] != "all" {
+		fmt.Println("clear firewall:")
+		fmt.Println("  all    Clear all firewall filter counters")
+		return nil
+	}
+	resp, err := c.client.SystemAction(context.Background(), &pb.SystemActionRequest{
+		Action: "clear-firewall-counters",
+	})
+	if err != nil {
+		return fmt.Errorf("clear firewall counters: %w", err)
+	}
+	fmt.Println(resp.Message)
+	return nil
 }
 
 func (c *ctl) handleClearDHCP(args []string) error {

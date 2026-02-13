@@ -243,6 +243,9 @@ var operationalTree = map[string]*completionNode{
 				}},
 			}},
 		}},
+		"firewall": {desc: "Clear firewall counters", children: map[string]*completionNode{
+			"all": {desc: "Clear all firewall filter counters"},
+		}},
 		"dhcp": {desc: "Clear DHCP information", children: map[string]*completionNode{
 			"client-identifier": {desc: "Clear DHCPv6 DUID(s)"},
 		}},
@@ -2393,6 +2396,7 @@ func (c *CLI) handleClear(args []string) error {
 		fmt.Println("clear:")
 		fmt.Println("  security flow session          Clear all sessions")
 		fmt.Println("  security counters              Clear all counters")
+		fmt.Println("  firewall all                   Clear firewall filter counters")
 		fmt.Println("  dhcp client-identifier         Clear DHCPv6 DUID(s)")
 		return nil
 	}
@@ -2400,12 +2404,15 @@ func (c *CLI) handleClear(args []string) error {
 	switch args[0] {
 	case "security":
 		return c.handleClearSecurity(args[1:])
+	case "firewall":
+		return c.handleClearFirewall(args[1:])
 	case "dhcp":
 		return c.handleClearDHCP(args[1:])
 	default:
 		fmt.Println("clear:")
 		fmt.Println("  security flow session          Clear all sessions")
 		fmt.Println("  security counters              Clear all counters")
+		fmt.Println("  firewall all                   Clear firewall filter counters")
 		fmt.Println("  dhcp client-identifier         Clear DHCPv6 DUID(s)")
 		return nil
 	}
@@ -2573,6 +2580,23 @@ func (c *CLI) clearFilteredSessions(f sessionFilter) error {
 	}
 
 	fmt.Printf("%d IPv4 and %d IPv6 matching sessions cleared\n", v4Deleted, v6Deleted)
+	return nil
+}
+
+func (c *CLI) handleClearFirewall(args []string) error {
+	if len(args) < 1 || args[0] != "all" {
+		fmt.Println("clear firewall:")
+		fmt.Println("  all    Clear all firewall filter counters")
+		return nil
+	}
+	if c.dp == nil || !c.dp.IsLoaded() {
+		fmt.Println("Dataplane not loaded")
+		return nil
+	}
+	if err := c.dp.ClearFilterCounters(); err != nil {
+		return fmt.Errorf("clear filter counters: %w", err)
+	}
+	fmt.Println("Firewall filter counters cleared")
 	return nil
 }
 

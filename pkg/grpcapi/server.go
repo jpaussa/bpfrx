@@ -4493,6 +4493,15 @@ func (s *Server) SystemAction(_ context.Context, req *pb.SystemActionRequest) (*
 		}
 		return &pb.SystemActionResponse{Message: "policy hit counters cleared"}, nil
 
+	case "clear-firewall-counters":
+		if s.dp == nil || !s.dp.IsLoaded() {
+			return nil, status.Error(codes.Unavailable, "dataplane not loaded")
+		}
+		if err := s.dp.ClearFilterCounters(); err != nil {
+			return nil, status.Errorf(codes.Internal, "%v", err)
+		}
+		return &pb.SystemActionResponse{Message: "Firewall filter counters cleared"}, nil
+
 	case "clear-persistent-nat":
 		if s.dp == nil || s.dp.PersistentNAT == nil {
 			return &pb.SystemActionResponse{Message: "Persistent NAT table not available"}, nil
