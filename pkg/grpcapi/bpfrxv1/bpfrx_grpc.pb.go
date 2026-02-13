@@ -51,6 +51,8 @@ const (
 	BpfrxService_GetRoutes_FullMethodName                 = "/bpfrx.v1.BpfrxService/GetRoutes"
 	BpfrxService_GetOSPFStatus_FullMethodName             = "/bpfrx.v1.BpfrxService/GetOSPFStatus"
 	BpfrxService_GetBGPStatus_FullMethodName              = "/bpfrx.v1.BpfrxService/GetBGPStatus"
+	BpfrxService_GetRIPStatus_FullMethodName              = "/bpfrx.v1.BpfrxService/GetRIPStatus"
+	BpfrxService_GetISISStatus_FullMethodName             = "/bpfrx.v1.BpfrxService/GetISISStatus"
 	BpfrxService_GetIPsecSA_FullMethodName                = "/bpfrx.v1.BpfrxService/GetIPsecSA"
 	BpfrxService_GetNATPoolStats_FullMethodName           = "/bpfrx.v1.BpfrxService/GetNATPoolStats"
 	BpfrxService_GetNATRuleStats_FullMethodName           = "/bpfrx.v1.BpfrxService/GetNATRuleStats"
@@ -107,6 +109,8 @@ type BpfrxServiceClient interface {
 	GetRoutes(ctx context.Context, in *GetRoutesRequest, opts ...grpc.CallOption) (*GetRoutesResponse, error)
 	GetOSPFStatus(ctx context.Context, in *GetOSPFStatusRequest, opts ...grpc.CallOption) (*GetOSPFStatusResponse, error)
 	GetBGPStatus(ctx context.Context, in *GetBGPStatusRequest, opts ...grpc.CallOption) (*GetBGPStatusResponse, error)
+	GetRIPStatus(ctx context.Context, in *GetRIPStatusRequest, opts ...grpc.CallOption) (*GetRIPStatusResponse, error)
+	GetISISStatus(ctx context.Context, in *GetISISStatusRequest, opts ...grpc.CallOption) (*GetISISStatusResponse, error)
 	GetIPsecSA(ctx context.Context, in *GetIPsecSARequest, opts ...grpc.CallOption) (*GetIPsecSAResponse, error)
 	GetNATPoolStats(ctx context.Context, in *GetNATPoolStatsRequest, opts ...grpc.CallOption) (*GetNATPoolStatsResponse, error)
 	GetNATRuleStats(ctx context.Context, in *GetNATRuleStatsRequest, opts ...grpc.CallOption) (*GetNATRuleStatsResponse, error)
@@ -457,6 +461,26 @@ func (c *bpfrxServiceClient) GetBGPStatus(ctx context.Context, in *GetBGPStatusR
 	return out, nil
 }
 
+func (c *bpfrxServiceClient) GetRIPStatus(ctx context.Context, in *GetRIPStatusRequest, opts ...grpc.CallOption) (*GetRIPStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetRIPStatusResponse)
+	err := c.cc.Invoke(ctx, BpfrxService_GetRIPStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *bpfrxServiceClient) GetISISStatus(ctx context.Context, in *GetISISStatusRequest, opts ...grpc.CallOption) (*GetISISStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetISISStatusResponse)
+	err := c.cc.Invoke(ctx, BpfrxService_GetISISStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *bpfrxServiceClient) GetIPsecSA(ctx context.Context, in *GetIPsecSARequest, opts ...grpc.CallOption) (*GetIPsecSAResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetIPsecSAResponse)
@@ -637,6 +661,8 @@ type BpfrxServiceServer interface {
 	GetRoutes(context.Context, *GetRoutesRequest) (*GetRoutesResponse, error)
 	GetOSPFStatus(context.Context, *GetOSPFStatusRequest) (*GetOSPFStatusResponse, error)
 	GetBGPStatus(context.Context, *GetBGPStatusRequest) (*GetBGPStatusResponse, error)
+	GetRIPStatus(context.Context, *GetRIPStatusRequest) (*GetRIPStatusResponse, error)
+	GetISISStatus(context.Context, *GetISISStatusRequest) (*GetISISStatusResponse, error)
 	GetIPsecSA(context.Context, *GetIPsecSARequest) (*GetIPsecSAResponse, error)
 	GetNATPoolStats(context.Context, *GetNATPoolStatsRequest) (*GetNATPoolStatsResponse, error)
 	GetNATRuleStats(context.Context, *GetNATRuleStatsRequest) (*GetNATRuleStatsResponse, error)
@@ -762,6 +788,12 @@ func (UnimplementedBpfrxServiceServer) GetOSPFStatus(context.Context, *GetOSPFSt
 }
 func (UnimplementedBpfrxServiceServer) GetBGPStatus(context.Context, *GetBGPStatusRequest) (*GetBGPStatusResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetBGPStatus not implemented")
+}
+func (UnimplementedBpfrxServiceServer) GetRIPStatus(context.Context, *GetRIPStatusRequest) (*GetRIPStatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetRIPStatus not implemented")
+}
+func (UnimplementedBpfrxServiceServer) GetISISStatus(context.Context, *GetISISStatusRequest) (*GetISISStatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetISISStatus not implemented")
 }
 func (UnimplementedBpfrxServiceServer) GetIPsecSA(context.Context, *GetIPsecSARequest) (*GetIPsecSAResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetIPsecSA not implemented")
@@ -1402,6 +1434,42 @@ func _BpfrxService_GetBGPStatus_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BpfrxService_GetRIPStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetRIPStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BpfrxServiceServer).GetRIPStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BpfrxService_GetRIPStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BpfrxServiceServer).GetRIPStatus(ctx, req.(*GetRIPStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BpfrxService_GetISISStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetISISStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BpfrxServiceServer).GetISISStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BpfrxService_GetISISStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BpfrxServiceServer).GetISISStatus(ctx, req.(*GetISISStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _BpfrxService_GetIPsecSA_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetIPsecSARequest)
 	if err := dec(in); err != nil {
@@ -1788,6 +1856,14 @@ var BpfrxService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetBGPStatus",
 			Handler:    _BpfrxService_GetBGPStatus_Handler,
+		},
+		{
+			MethodName: "GetRIPStatus",
+			Handler:    _BpfrxService_GetRIPStatus_Handler,
+		},
+		{
+			MethodName: "GetISISStatus",
+			Handler:    _BpfrxService_GetISISStatus_Handler,
 		},
 		{
 			MethodName: "GetIPsecSA",

@@ -41,6 +41,8 @@ service BpfrxService {
   rpc GetRoutes(GetRoutesRequest) returns (GetRoutesResponse);
   rpc GetOSPFStatus(GetOSPFStatusRequest) returns (GetOSPFStatusResponse);
   rpc GetBGPStatus(GetBGPStatusRequest) returns (GetBGPStatusResponse);
+  rpc GetRIPStatus(GetRIPStatusRequest) returns (GetRIPStatusResponse);
+  rpc GetISISStatus(GetISISStatusRequest) returns (GetISISStatusResponse);
   rpc GetIPsecSA(GetIPsecSARequest) returns (GetIPsecSAResponse);
   rpc GetNATPoolStats(GetNATPoolStatsRequest) returns (GetNATPoolStatsResponse);
   rpc GetNATRuleStats(GetNATRuleStatsRequest) returns (GetNATRuleStatsResponse);
@@ -386,6 +388,12 @@ message GetOSPFStatusResponse { string output = 1; }
 
 message GetBGPStatusRequest { string type = 1; }
 message GetBGPStatusResponse { string output = 1; }
+
+message GetRIPStatusRequest {}
+message GetRIPStatusResponse { string output = 1; }
+
+message GetISISStatusRequest { string type = 1; }
+message GetISISStatusResponse { string output = 1; }
 
 message GetIPsecSARequest {}
 message GetIPsecSAResponse { string output = 1; }

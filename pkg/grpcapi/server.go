@@ -1361,6 +1361,57 @@ func (s *Server) GetBGPStatus(_ context.Context, req *pb.GetBGPStatusRequest) (*
 	return &pb.GetBGPStatusResponse{Output: b.String()}, nil
 }
 
+func (s *Server) GetRIPStatus(_ context.Context, _ *pb.GetRIPStatusRequest) (*pb.GetRIPStatusResponse, error) {
+	if s.frr == nil {
+		return &pb.GetRIPStatusResponse{Output: "FRR not available"}, nil
+	}
+	routes, err := s.frr.GetRIPRoutes()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "%v", err)
+	}
+	var b strings.Builder
+	if len(routes) == 0 {
+		b.WriteString("No RIP routes\n")
+	} else {
+		fmt.Fprintf(&b, "  %-20s %-18s %-8s %s\n", "Network", "Next Hop", "Metric", "Interface")
+		for _, r := range routes {
+			fmt.Fprintf(&b, "  %-20s %-18s %-8s %s\n", r.Network, r.NextHop, r.Metric, r.Interface)
+		}
+	}
+	return &pb.GetRIPStatusResponse{Output: b.String()}, nil
+}
+
+func (s *Server) GetISISStatus(_ context.Context, req *pb.GetISISStatusRequest) (*pb.GetISISStatusResponse, error) {
+	if s.frr == nil {
+		return &pb.GetISISStatusResponse{Output: "FRR not available"}, nil
+	}
+	var b strings.Builder
+	switch req.Type {
+	case "routes":
+		output, err := s.frr.GetISISRoutes()
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "%v", err)
+		}
+		b.WriteString(output)
+	default:
+		adjs, err := s.frr.GetISISAdjacency()
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "%v", err)
+		}
+		if len(adjs) == 0 {
+			b.WriteString("No IS-IS adjacencies\n")
+		} else {
+			fmt.Fprintf(&b, "  %-20s %-14s %-10s %-10s %s\n",
+				"System ID", "Interface", "Level", "State", "Hold Time")
+			for _, a := range adjs {
+				fmt.Fprintf(&b, "  %-20s %-14s %-10s %-10s %s\n",
+					a.SystemID, a.Interface, a.Level, a.State, a.HoldTime)
+			}
+		}
+	}
+	return &pb.GetISISStatusResponse{Output: b.String()}, nil
+}
+
 func (s *Server) GetIPsecSA(_ context.Context, _ *pb.GetIPsecSARequest) (*pb.GetIPsecSAResponse, error) {
 	if s.ipsec == nil {
 		return &pb.GetIPsecSAResponse{Output: "IPsec not available"}, nil
@@ -2481,7 +2532,27 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 		}
 
 	case "persistent-nat":
-		buf.WriteString("Persistent NAT table (view via local CLI only)\n")
+		if s.dp == nil || s.dp.PersistentNAT == nil {
+			buf.WriteString("Persistent NAT table not available\n")
+		} else {
+			bindings := s.dp.PersistentNAT.All()
+			if len(bindings) == 0 {
+				buf.WriteString("No persistent NAT bindings\n")
+			} else {
+				fmt.Fprintf(&buf, "Total persistent NAT bindings: %d\n\n", len(bindings))
+				fmt.Fprintf(&buf, "%-20s %-8s %-20s %-8s %-15s %-10s\n",
+					"Source IP", "SrcPort", "NAT IP", "NATPort", "Pool", "Timeout")
+				for _, b := range bindings {
+					remaining := time.Until(b.LastSeen.Add(b.Timeout))
+					if remaining < 0 {
+						remaining = 0
+					}
+					fmt.Fprintf(&buf, "%-20s %-8d %-20s %-8d %-15s %-10s\n",
+						b.SrcIP, b.SrcPort, b.NatIP, b.NatPort, b.PoolName,
+						remaining.Truncate(time.Second))
+				}
+			}
+		}
 
 	case "rpm":
 		if s.rpmResultsFn == nil {
@@ -2559,6 +2630,44 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 				}
 				break
 			}
+		}
+		// Memory — include free/available
+		memFree := uint64(0)
+		memAvail := uint64(0)
+		for _, line := range strings.Split(string(memData), "\n") {
+			parts := strings.Fields(line)
+			if len(parts) < 2 {
+				continue
+			}
+			if strings.HasPrefix(line, "MemFree:") {
+				if kb, err := strconv.ParseUint(parts[1], 10, 64); err == nil {
+					memFree = kb
+				}
+			}
+			if strings.HasPrefix(line, "MemAvailable:") {
+				if kb, err := strconv.ParseUint(parts[1], 10, 64); err == nil {
+					memAvail = kb
+				}
+			}
+		}
+		if memAvail > 0 {
+			fmt.Fprintf(&buf, "Memory available: %.1f GB\n", float64(memAvail)/(1024*1024))
+		} else if memFree > 0 {
+			fmt.Fprintf(&buf, "Memory free: %.1f GB\n", float64(memFree)/(1024*1024))
+		}
+		// Load average
+		var sysinfo unix.Sysinfo_t
+		if err := unix.Sysinfo(&sysinfo); err == nil {
+			loads := [3]float64{
+				float64(sysinfo.Loads[0]) / 65536.0,
+				float64(sysinfo.Loads[1]) / 65536.0,
+				float64(sysinfo.Loads[2]) / 65536.0,
+			}
+			fmt.Fprintf(&buf, "Load average: %.2f, %.2f, %.2f\n", loads[0], loads[1], loads[2])
+			days := sysinfo.Uptime / 86400
+			hours := (sysinfo.Uptime % 86400) / 3600
+			mins := (sysinfo.Uptime % 3600) / 60
+			fmt.Fprintf(&buf, "System uptime: %d days, %d:%02d\n", days, hours, mins)
 		}
 		// Kernel
 		var uts unix.Utsname

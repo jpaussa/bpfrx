@@ -739,6 +739,9 @@ func (c *ctl) handleShowNAT(args []string) error {
 		if len(args) >= 2 && args[1] == "pool" {
 			return c.showNATPoolStats()
 		}
+		if len(args) >= 2 && args[1] == "persistent-nat-table" {
+			return c.showText("persistent-nat")
+		}
 		if len(args) >= 3 && args[1] == "rule-set" {
 			return c.showNATRuleStats(args[2])
 		}
@@ -1148,8 +1151,23 @@ func (c *ctl) handleShowProtocols(args []string) error {
 		}
 		fmt.Print(resp.Output)
 		return nil
-	case "rip", "isis":
-		fmt.Printf("show protocols %s: not available via remote CLI (local only)\n", args[0])
+	case "rip":
+		resp, err := c.client.GetRIPStatus(context.Background(), &pb.GetRIPStatusRequest{})
+		if err != nil {
+			return fmt.Errorf("%v", err)
+		}
+		fmt.Print(resp.Output)
+		return nil
+	case "isis":
+		typ := "adjacency"
+		if len(args) >= 2 {
+			typ = args[1]
+		}
+		resp, err := c.client.GetISISStatus(context.Background(), &pb.GetISISStatusRequest{Type: typ})
+		if err != nil {
+			return fmt.Errorf("%v", err)
+		}
+		fmt.Print(resp.Output)
 		return nil
 	default:
 		return fmt.Errorf("unknown show protocols target: %s", args[0])
