@@ -299,6 +299,9 @@ func (c *ctl) dispatchOperational(line string) error {
 	case "request":
 		return c.handleRequest(parts[1:])
 
+	case "monitor":
+		return fmt.Errorf("monitor traffic is only available on the local CLI")
+
 	case "quit", "exit":
 		return errExit
 
@@ -401,6 +404,8 @@ func (c *ctl) handleShow(args []string) error {
 				return c.showText("chassis-cluster")
 			case "environment":
 				return c.showText("chassis-environment")
+			case "hardware":
+				return c.showText("chassis-hardware")
 			}
 		}
 		return c.showText("chassis")

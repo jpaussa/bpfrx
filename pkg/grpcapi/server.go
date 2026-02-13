@@ -3371,6 +3371,10 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 		fmt.Fprintln(&buf, strings.Repeat("-", 88))
 		fmt.Fprintf(&buf, "%-48s %8s %12d %16d\n", "Total", "", totalPkts, totalBytes)
 
+	case "chassis-hardware":
+		// Alias: same output as "chassis" (CPU, memory, NICs)
+		return s.ShowText(nil, &pb.ShowTextRequest{Topic: "chassis"})
+
 	case "chassis-cluster":
 		cfg := s.store.ActiveConfig()
 		if cfg == nil || cfg.Chassis.Cluster == nil {
