@@ -728,3 +728,70 @@ func TestExportJSON(t *testing.T) {
 		t.Error("exported JSON should contain zone name")
 	}
 }
+
+func TestCommitDiffSummary(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.EnterConfigure(); err != nil {
+		t.Fatal(err)
+	}
+
+	// First commit: add trust zone
+	s.SetFromInput("security zones security-zone trust interfaces eth0.0")
+	if _, err := s.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second commit: add untrust zone
+	s.SetFromInput("security zones security-zone untrust interfaces eth1.0")
+
+	// Check diff summary before commit
+	summary := s.CommitDiffSummary()
+	if summary == "" {
+		t.Error("expected non-empty diff summary")
+	}
+	if !strings.Contains(summary, "added") {
+		t.Errorf("diff summary should mention 'added': %s", summary)
+	}
+
+	// Commit and verify summary clears
+	if _, err := s.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	summary = s.CommitDiffSummary()
+	if summary != "" {
+		t.Errorf("expected empty diff summary after commit, got: %s", summary)
+	}
+}
+
+func TestListCommitHistory(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.EnterConfigure(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Initially no history
+	entries, err := s.ListCommitHistory(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected 0 entries, got %d", len(entries))
+	}
+
+	// Commit and check history
+	s.SetFromInput("security zones security-zone trust interfaces eth0.0")
+	if _, err := s.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err = s.ListCommitHistory(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("expected 1 entry, got %d", len(entries))
+	}
+	if entries[0].Action != "commit" {
+		t.Errorf("expected action 'commit', got %q", entries[0].Action)
+	}
+}

@@ -263,6 +263,32 @@ func (m *Manager) DeleteSessionV6(key SessionKeyV6) error {
 	return sm.Delete(key)
 }
 
+// SessionCount returns the number of active IPv4 and IPv6 sessions.
+// Only forward entries are counted (IsReverse == 0).
+func (m *Manager) SessionCount() (v4, v6 int) {
+	if sm, ok := m.maps["sessions"]; ok {
+		var key SessionKey
+		var val SessionValue
+		iter := sm.Iterate()
+		for iter.Next(&key, &val) {
+			if val.IsReverse == 0 {
+				v4++
+			}
+		}
+	}
+	if sm, ok := m.maps["sessions_v6"]; ok {
+		var key SessionKeyV6
+		var val SessionValueV6
+		iter := sm.Iterate()
+		for iter.Next(&key, &val) {
+			if val.IsReverse == 0 {
+				v6++
+			}
+		}
+	}
+	return
+}
+
 // SetDNATEntryV6 writes a dnat_table_v6 entry.
 func (m *Manager) SetDNATEntryV6(key DNATKeyV6, val DNATValueV6) error {
 	zm, ok := m.maps["dnat_table_v6"]

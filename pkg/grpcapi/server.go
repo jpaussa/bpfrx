@@ -183,6 +183,9 @@ func (s *Server) Commit(_ context.Context, _ *pb.CommitRequest) (*pb.CommitRespo
 		return &pb.CommitResponse{}, nil
 	}
 
+	// Capture diff summary before commit (active will change)
+	summary := s.store.CommitDiffSummary()
+
 	compiled, err := s.store.Commit()
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
@@ -190,7 +193,7 @@ func (s *Server) Commit(_ context.Context, _ *pb.CommitRequest) (*pb.CommitRespo
 	if s.applyFn != nil {
 		s.applyFn(compiled)
 	}
-	return &pb.CommitResponse{}, nil
+	return &pb.CommitResponse{Summary: summary}, nil
 }
 
 func (s *Server) CommitCheck(_ context.Context, _ *pb.CommitCheckRequest) (*pb.CommitCheckResponse, error) {
@@ -533,6 +536,19 @@ func (s *Server) GetSessions(_ context.Context, req *pb.GetSessionsRequest) (*pb
 	srcPort := uint16(req.SourcePort)
 	dstPort := uint16(req.DestinationPort)
 	natOnly := req.NatOnly
+	appFilter := req.Application
+	cfg := s.store.ActiveConfig()
+
+	// Resolve application filter to proto+port for efficient matching
+	var appProto uint8
+	var appPort uint16
+	if appFilter != "" {
+		var ok bool
+		appProto, appPort, ok = lookupAppFilter(appFilter, cfg)
+		if !ok {
+			return &pb.GetSessionsResponse{}, nil // unknown app, no matches
+		}
+	}
 
 	// Parse CIDR prefix filters
 	var srcNet, dstNet *net.IPNet
@@ -597,8 +613,13 @@ func (s *Server) GetSessions(_ context.Context, req *pb.GetSessionsRequest) (*pb
 		if natOnly && val.Flags&(dataplane.SessFlagSNAT|dataplane.SessFlagDNAT) == 0 {
 			return true
 		}
+		if appFilter != "" && (key.Protocol != appProto || ntohs(key.DstPort) != appPort) {
+			return true
+		}
 		if idx >= offset && len(all) < limit {
-			all = append(all, sessionEntryV4(key, val, now, zoneNames))
+			se := sessionEntryV4(key, val, now, zoneNames)
+			se.Application = resolveAppName(key.Protocol, ntohs(key.DstPort), cfg)
+			all = append(all, se)
 		}
 		idx++
 		return true
@@ -630,8 +651,13 @@ func (s *Server) GetSessions(_ context.Context, req *pb.GetSessionsRequest) (*pb
 		if natOnly && val.Flags&(dataplane.SessFlagSNAT|dataplane.SessFlagDNAT) == 0 {
 			return true
 		}
+		if appFilter != "" && (key.Protocol != appProto || ntohs(key.DstPort) != appPort) {
+			return true
+		}
 		if idx >= offset && len(all) < limit {
-			all = append(all, sessionEntryV6(key, val, now, zoneNames))
+			se := sessionEntryV6(key, val, now, zoneNames)
+			se.Application = resolveAppName(key.Protocol, ntohs(key.DstPort), cfg)
+			all = append(all, se)
 		}
 		idx++
 		return true
@@ -1444,6 +1470,8 @@ func (s *Server) GetOSPFStatus(_ context.Context, req *pb.GetOSPFStatusRequest) 
 	switch req.Type {
 	case "database":
 		output, err = s.frr.GetOSPFDatabase()
+	case "interface":
+		output, err = s.frr.GetOSPFInterface()
 	default:
 		neighbors, nerr := s.frr.GetOSPFNeighbors()
 		if nerr != nil {
@@ -1693,7 +1721,8 @@ func (s *Server) ClearSessions(_ context.Context, req *pb.ClearSessionsRequest) 
 	// If no filters, clear all
 	if req.SourcePrefix == "" && req.DestinationPrefix == "" &&
 		req.Protocol == "" && req.Zone == "" &&
-		req.SourcePort == 0 && req.DestinationPort == 0 {
+		req.SourcePort == 0 && req.DestinationPort == 0 &&
+		req.Application == "" {
 		v4, v6, err := s.dp.ClearAllSessions()
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "%v", err)
@@ -1739,6 +1768,17 @@ func (s *Server) ClearSessions(_ context.Context, req *pb.ClearSessionsRequest) 
 		proto = 1
 	}
 
+	var clearAppProto uint8
+	var clearAppPort uint16
+	if req.Application != "" {
+		clearCfg := s.store.ActiveConfig()
+		var ok bool
+		clearAppProto, clearAppPort, ok = lookupAppFilter(req.Application, clearCfg)
+		if !ok {
+			return &pb.ClearSessionsResponse{}, nil
+		}
+	}
+
 	var zoneID uint16
 	if req.Zone != "" {
 		if cr := s.dp.LastCompileResult(); cr != nil {
@@ -1771,6 +1811,9 @@ func (s *Server) ClearSessions(_ context.Context, req *pb.ClearSessionsRequest) 
 			return true
 		}
 		if req.DestinationPort != 0 && key.DstPort != uint16(req.DestinationPort) {
+			return true
+		}
+		if req.Application != "" && (key.Protocol != clearAppProto || ntohs(key.DstPort) != clearAppPort) {
 			return true
 		}
 		v4Keys = append(v4Keys, key)
@@ -1829,6 +1872,9 @@ func (s *Server) ClearSessions(_ context.Context, req *pb.ClearSessionsRequest) 
 			return true
 		}
 		if req.DestinationPort != 0 && key.DstPort != uint16(req.DestinationPort) {
+			return true
+		}
+		if req.Application != "" && (key.Protocol != clearAppProto || ntohs(key.DstPort) != clearAppPort) {
 			return true
 		}
 		v6Keys = append(v6Keys, key)
@@ -2170,6 +2216,98 @@ func monotonicSeconds() uint64 {
 	var ts unix.Timespec
 	_ = unix.ClockGettime(unix.CLOCK_MONOTONIC, &ts)
 	return uint64(ts.Sec)
+}
+
+type builtinApp struct {
+	proto uint8
+	port  uint16
+}
+
+var builtinApps = map[string]builtinApp{
+	"junos-http":        {proto: 6, port: 80},
+	"junos-https":       {proto: 6, port: 443},
+	"junos-ssh":         {proto: 6, port: 22},
+	"junos-telnet":      {proto: 6, port: 23},
+	"junos-ftp":         {proto: 6, port: 21},
+	"junos-smtp":        {proto: 6, port: 25},
+	"junos-dns-tcp":     {proto: 6, port: 53},
+	"junos-dns-udp":     {proto: 17, port: 53},
+	"junos-bgp":         {proto: 6, port: 179},
+	"junos-ntp":         {proto: 17, port: 123},
+	"junos-snmp":        {proto: 17, port: 161},
+	"junos-syslog":      {proto: 17, port: 514},
+	"junos-dhcp-client": {proto: 17, port: 68},
+	"junos-ike":         {proto: 17, port: 500},
+	"junos-ipsec-nat-t": {proto: 17, port: 4500},
+}
+
+func resolveAppName(proto uint8, dstPort uint16, cfg *config.Config) string {
+	if cfg != nil {
+		for name, app := range cfg.Applications.Applications {
+			var appProto uint8
+			switch strings.ToLower(app.Protocol) {
+			case "tcp":
+				appProto = 6
+			case "udp":
+				appProto = 17
+			case "icmp":
+				appProto = 1
+			default:
+				continue
+			}
+			if appProto != proto {
+				continue
+			}
+			portStr := app.DestinationPort
+			if portStr == "" {
+				continue
+			}
+			if strings.Contains(portStr, "-") {
+				parts := strings.SplitN(portStr, "-", 2)
+				lo, err1 := strconv.Atoi(parts[0])
+				hi, err2 := strconv.Atoi(parts[1])
+				if err1 == nil && err2 == nil && int(dstPort) >= lo && int(dstPort) <= hi {
+					return name
+				}
+			} else {
+				if v, err := strconv.Atoi(portStr); err == nil && uint16(v) == dstPort {
+					return name
+				}
+			}
+		}
+	}
+	for name, ba := range builtinApps {
+		if ba.proto == proto && ba.port == dstPort {
+			return name
+		}
+	}
+	return ""
+}
+
+func lookupAppFilter(appName string, cfg *config.Config) (proto uint8, port uint16, ok bool) {
+	if ba, found := builtinApps[appName]; found {
+		return ba.proto, ba.port, true
+	}
+	if cfg != nil {
+		if app, found := cfg.Applications.Applications[appName]; found {
+			switch strings.ToLower(app.Protocol) {
+			case "tcp":
+				proto = 6
+			case "udp":
+				proto = 17
+			case "icmp":
+				proto = 1
+			default:
+				return 0, 0, false
+			}
+			if app.DestinationPort != "" {
+				if v, err := strconv.Atoi(app.DestinationPort); err == nil {
+					return proto, uint16(v), true
+				}
+			}
+		}
+	}
+	return 0, 0, false
 }
 
 func screenChecks(p *config.ScreenProfile) []string {
@@ -3506,6 +3644,19 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 				pct)
 		}
 
+	case "commit-history":
+		entries, err := s.store.ListCommitHistory(50)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "commit history: %v", err)
+		}
+		if len(entries) == 0 {
+			buf.WriteString("No commit history available\n")
+		} else {
+			for i, e := range entries {
+				fmt.Fprintf(&buf, "  %d  %s  %s\n", i, e.Timestamp.Format("2006-01-02 15:04:05"), e.Action)
+			}
+		}
+
 	case "alarms":
 		// Compile current config to check for warnings
 		cfg := s.store.ActiveConfig()
@@ -4569,19 +4720,36 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 			if len(stats) == 0 {
 				buf.WriteString("No BPF maps available\n")
 			} else {
-				fmt.Fprintf(&buf, "%-24s %-12s %10s %10s %8s\n", "Map", "Type", "Max", "Used", "Usage%")
-				buf.WriteString(strings.Repeat("-", 68) + "\n")
+				fmt.Fprintf(&buf, "%-24s %-14s %10s %10s %8s %s\n", "Map", "Type", "Max", "Used", "Usage%", "Status")
+				buf.WriteString(strings.Repeat("-", 78) + "\n")
+				var warnings int
 				for _, st := range stats {
 					usage := "-"
 					used := "-"
-					if st.Type != "Array" {
+					sts := ""
+					if st.Type != "Array" && st.Type != "PerCPUArray" {
 						used = fmt.Sprintf("%d", st.UsedCount)
 						if st.MaxEntries > 0 {
-							usage = fmt.Sprintf("%.1f%%", float64(st.UsedCount)/float64(st.MaxEntries)*100)
+							pct := float64(st.UsedCount) / float64(st.MaxEntries) * 100
+							usage = fmt.Sprintf("%.1f%%", pct)
+							if pct >= 90 {
+								sts = "CRITICAL"
+								warnings++
+							} else if pct >= 80 {
+								sts = "WARNING"
+								warnings++
+							}
 						}
 					}
-					fmt.Fprintf(&buf, "%-24s %-12s %10d %10s %8s\n", st.Name, st.Type, st.MaxEntries, used, usage)
+					fmt.Fprintf(&buf, "%-24s %-14s %10d %10s %8s %s\n", st.Name, st.Type, st.MaxEntries, used, usage, sts)
 				}
+				if warnings > 0 {
+					fmt.Fprintf(&buf, "\n%d map(s) at high utilization — consider increasing max_entries\n", warnings)
+				}
+			}
+			v4, v6 := s.dp.SessionCount()
+			if v4 > 0 || v6 > 0 {
+				fmt.Fprintf(&buf, "\nActive sessions: %d IPv4, %d IPv6, %d total\n", v4, v6, v4+v6)
 			}
 		} else {
 			buf.WriteString("Dataplane not loaded\n")

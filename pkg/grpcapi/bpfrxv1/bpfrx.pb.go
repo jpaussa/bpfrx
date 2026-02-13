@@ -642,6 +642,7 @@ func (*CommitRequest) Descriptor() ([]byte, []int) {
 
 type CommitResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	Summary       string                 `protobuf:"bytes,1,opt,name=summary,proto3" json:"summary,omitempty"` // human-readable diff summary (e.g. "3 statement(s) changed (2 added, 1 removed)")
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -674,6 +675,13 @@ func (x *CommitResponse) ProtoReflect() protoreflect.Message {
 // Deprecated: Use CommitResponse.ProtoReflect.Descriptor instead.
 func (*CommitResponse) Descriptor() ([]byte, []int) {
 	return file_bpfrx_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *CommitResponse) GetSummary() string {
+	if x != nil {
+		return x.Summary
+	}
+	return ""
 }
 
 type CommitCheckRequest struct {
@@ -2159,6 +2167,7 @@ type GetSessionsRequest struct {
 	SourcePort        uint32                 `protobuf:"varint,7,opt,name=source_port,json=sourcePort,proto3" json:"source_port,omitempty"`
 	DestinationPort   uint32                 `protobuf:"varint,8,opt,name=destination_port,json=destinationPort,proto3" json:"destination_port,omitempty"`
 	NatOnly           bool                   `protobuf:"varint,9,opt,name=nat_only,json=natOnly,proto3" json:"nat_only,omitempty"` // show only NAT sessions
+	Application       string                 `protobuf:"bytes,10,opt,name=application,proto3" json:"application,omitempty"`        // application name filter (e.g. "junos-http")
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -2256,6 +2265,13 @@ func (x *GetSessionsRequest) GetNatOnly() bool {
 	return false
 }
 
+func (x *GetSessionsRequest) GetApplication() string {
+	if x != nil {
+		return x.Application
+	}
+	return ""
+}
+
 type GetSessionsResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Total         int32                  `protobuf:"varint,1,opt,name=total,proto3" json:"total,omitempty"`
@@ -2345,6 +2361,7 @@ type SessionEntry struct {
 	IngressZoneName string                 `protobuf:"bytes,17,opt,name=ingress_zone_name,json=ingressZoneName,proto3" json:"ingress_zone_name,omitempty"`
 	EgressZoneName  string                 `protobuf:"bytes,18,opt,name=egress_zone_name,json=egressZoneName,proto3" json:"egress_zone_name,omitempty"`
 	IdleSeconds     int64                  `protobuf:"varint,19,opt,name=idle_seconds,json=idleSeconds,proto3" json:"idle_seconds,omitempty"`
+	Application     string                 `protobuf:"bytes,20,opt,name=application,proto3" json:"application,omitempty"` // resolved application name
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -2510,6 +2527,13 @@ func (x *SessionEntry) GetIdleSeconds() int64 {
 		return x.IdleSeconds
 	}
 	return 0
+}
+
+func (x *SessionEntry) GetApplication() string {
+	if x != nil {
+		return x.Application
+	}
+	return ""
 }
 
 type GetSessionSummaryRequest struct {
@@ -4840,6 +4864,7 @@ type ClearSessionsRequest struct {
 	Zone              string                 `protobuf:"bytes,4,opt,name=zone,proto3" json:"zone,omitempty"`                                                    // optional: zone name
 	SourcePort        uint32                 `protobuf:"varint,5,opt,name=source_port,json=sourcePort,proto3" json:"source_port,omitempty"`                     // optional
 	DestinationPort   uint32                 `protobuf:"varint,6,opt,name=destination_port,json=destinationPort,proto3" json:"destination_port,omitempty"`      // optional
+	Application       string                 `protobuf:"bytes,7,opt,name=application,proto3" json:"application,omitempty"`                                      // optional: application name filter
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -4914,6 +4939,13 @@ func (x *ClearSessionsRequest) GetDestinationPort() uint32 {
 		return x.DestinationPort
 	}
 	return 0
+}
+
+func (x *ClearSessionsRequest) GetApplication() string {
+	if x != nil {
+		return x.Application
+	}
+	return ""
 }
 
 type ClearSessionsResponse struct {
@@ -6243,8 +6275,9 @@ const file_bpfrx_proto_rawDesc = "" +
 	"\x04mode\x18\x01 \x01(\tR\x04mode\x12\x18\n" +
 	"\acontent\x18\x02 \x01(\tR\acontent\"\x0e\n" +
 	"\fLoadResponse\"\x0f\n" +
-	"\rCommitRequest\"\x10\n" +
-	"\x0eCommitResponse\"\x14\n" +
+	"\rCommitRequest\"*\n" +
+	"\x0eCommitResponse\x12\x18\n" +
+	"\asummary\x18\x01 \x01(\tR\asummary\"\x14\n" +
 	"\x12CommitCheckRequest\"\x15\n" +
 	"\x13CommitCheckResponse\"2\n" +
 	"\x16CommitConfirmedRequest\x12\x18\n" +
@@ -6345,7 +6378,7 @@ const file_bpfrx_proto_rawDesc = "" +
 	"hitPackets\x12\x1b\n" +
 	"\thit_bytes\x18\t \x01(\x04R\bhitBytes\x12 \n" +
 	"\vdescription\x18\n" +
-	" \x01(\tR\vdescription\"\xad\x02\n" +
+	" \x01(\tR\vdescription\"\xcf\x02\n" +
 	"\x12GetSessionsRequest\x12\x14\n" +
 	"\x05limit\x18\x01 \x01(\x05R\x05limit\x12\x16\n" +
 	"\x06offset\x18\x02 \x01(\x05R\x06offset\x12\x12\n" +
@@ -6356,12 +6389,14 @@ const file_bpfrx_proto_rawDesc = "" +
 	"\vsource_port\x18\a \x01(\rR\n" +
 	"sourcePort\x12)\n" +
 	"\x10destination_port\x18\b \x01(\rR\x0fdestinationPort\x12\x19\n" +
-	"\bnat_only\x18\t \x01(\bR\anatOnly\"\x8d\x01\n" +
+	"\bnat_only\x18\t \x01(\bR\anatOnly\x12 \n" +
+	"\vapplication\x18\n" +
+	" \x01(\tR\vapplication\"\x8d\x01\n" +
 	"\x13GetSessionsResponse\x12\x14\n" +
 	"\x05total\x18\x01 \x01(\x05R\x05total\x12\x14\n" +
 	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12\x16\n" +
 	"\x06offset\x18\x03 \x01(\x05R\x06offset\x122\n" +
-	"\bsessions\x18\x04 \x03(\v2\x16.bpfrx.v1.SessionEntryR\bsessions\"\xde\x04\n" +
+	"\bsessions\x18\x04 \x03(\v2\x16.bpfrx.v1.SessionEntryR\bsessions\"\x80\x05\n" +
 	"\fSessionEntry\x12\x19\n" +
 	"\bsrc_addr\x18\x01 \x01(\tR\asrcAddr\x12\x19\n" +
 	"\bdst_addr\x18\x02 \x01(\tR\adstAddr\x12\x19\n" +
@@ -6386,7 +6421,8 @@ const file_bpfrx_proto_rawDesc = "" +
 	"\x0ftimeout_seconds\x18\x10 \x01(\rR\x0etimeoutSeconds\x12*\n" +
 	"\x11ingress_zone_name\x18\x11 \x01(\tR\x0fingressZoneName\x12(\n" +
 	"\x10egress_zone_name\x18\x12 \x01(\tR\x0eegressZoneName\x12!\n" +
-	"\fidle_seconds\x18\x13 \x01(\x03R\vidleSeconds\"\x1a\n" +
+	"\fidle_seconds\x18\x13 \x01(\x03R\vidleSeconds\x12 \n" +
+	"\vapplication\x18\x14 \x01(\tR\vapplication\"\x1a\n" +
 	"\x18GetSessionSummaryRequest\"\x99\x02\n" +
 	"\x19GetSessionSummaryResponse\x12#\n" +
 	"\rtotal_entries\x18\x01 \x01(\x05R\ftotalEntries\x12!\n" +
@@ -6533,7 +6569,7 @@ const file_bpfrx_proto_rawDesc = "" +
 	"\x06source\x18\x02 \x01(\tR\x06source\x12)\n" +
 	"\x10routing_instance\x18\x03 \x01(\tR\x0froutingInstance\",\n" +
 	"\x12TracerouteResponse\x12\x16\n" +
-	"\x06output\x18\x01 \x01(\tR\x06output\"\xe6\x01\n" +
+	"\x06output\x18\x01 \x01(\tR\x06output\"\x88\x02\n" +
 	"\x14ClearSessionsRequest\x12#\n" +
 	"\rsource_prefix\x18\x01 \x01(\tR\fsourcePrefix\x12-\n" +
 	"\x12destination_prefix\x18\x02 \x01(\tR\x11destinationPrefix\x12\x1a\n" +
@@ -6541,7 +6577,8 @@ const file_bpfrx_proto_rawDesc = "" +
 	"\x04zone\x18\x04 \x01(\tR\x04zone\x12\x1f\n" +
 	"\vsource_port\x18\x05 \x01(\rR\n" +
 	"sourcePort\x12)\n" +
-	"\x10destination_port\x18\x06 \x01(\rR\x0fdestinationPort\"]\n" +
+	"\x10destination_port\x18\x06 \x01(\rR\x0fdestinationPort\x12 \n" +
+	"\vapplication\x18\a \x01(\tR\vapplication\"]\n" +
 	"\x15ClearSessionsResponse\x12!\n" +
 	"\fipv4_cleared\x18\x01 \x01(\x05R\vipv4Cleared\x12!\n" +
 	"\fipv6_cleared\x18\x02 \x01(\x05R\vipv6Cleared\"\x16\n" +

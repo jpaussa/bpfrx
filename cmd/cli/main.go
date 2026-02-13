@@ -635,7 +635,8 @@ func (c *ctl) handleShowSecurity(args []string) error {
 	case "log":
 		return c.showEvents(args[1:])
 	case "statistics":
-		return c.showStatistics()
+		detail := len(args) >= 2 && args[1] == "detail"
+		return c.showStatistics(detail)
 	case "ipsec":
 		return c.showIPsec(args[1:])
 	case "ike":
@@ -804,6 +805,11 @@ func (c *ctl) showFlowSession(args []string) error {
 					req.Limit = int32(v)
 				}
 			}
+		case "application":
+			if i+1 < len(args) {
+				i++
+				req.Application = args[i]
+			}
 		case "summary":
 			return c.showSessionSummary()
 		}
@@ -830,6 +836,9 @@ func (c *ctl) showFlowSession(args []string) error {
 			se.Protocol, inZone, outZone)
 		if se.Nat != "" {
 			fmt.Printf("  NAT: %s\n", se.Nat)
+		}
+		if se.Application != "" {
+			fmt.Printf("  Application: %s\n", se.Application)
 		}
 		fmt.Printf("  Packets: %d/%d, Bytes: %d/%d\n",
 			se.FwdPackets, se.RevPackets, se.FwdBytes, se.RevBytes)
@@ -1282,7 +1291,7 @@ func (c *ctl) showEvents(args []string) error {
 	return nil
 }
 
-func (c *ctl) showStatistics() error {
+func (c *ctl) showStatistics(detail bool) error {
 	resp, err := c.client.GetGlobalStats(context.Background(), &pb.GetGlobalStatsRequest{})
 	if err != nil {
 		return fmt.Errorf("%v", err)
@@ -1300,6 +1309,24 @@ func (c *ctl) showStatistics() error {
 	fmt.Printf("  %-25s %d\n", "Host-inbound allowed:", resp.HostInboundAllowed)
 	fmt.Printf("  %-25s %d\n", "TC egress packets:", resp.TcEgressPackets)
 	fmt.Printf("  %-25s %d\n", "NAT64 translations:", resp.Nat64Translations)
+
+	if !detail {
+		return nil
+	}
+
+	// Screen drops breakdown
+	if resp.ScreenDrops > 0 {
+		fmt.Printf("\nScreen drop details:\n")
+		for name, count := range resp.ScreenDropDetails {
+			fmt.Printf("  %-25s %d\n", name+":", count)
+		}
+	}
+
+	// Buffers/map utilization via text topic
+	text, err := c.client.ShowText(context.Background(), &pb.ShowTextRequest{Topic: "buffers"})
+	if err == nil && text.Output != "" {
+		fmt.Printf("\n%s", text.Output)
+	}
 	return nil
 }
 
@@ -1515,6 +1542,14 @@ func (c *ctl) handleShowSystem(args []string) error {
 	}
 
 	switch args[0] {
+	case "commit":
+		// "show system commit history"
+		if len(args) >= 2 && args[1] == "history" {
+			return c.showText("commit-history")
+		}
+		printRemoteTreeHelp("show system commit:", "show", "system", "commit")
+		return nil
+
 	case "rollback":
 		if len(args) >= 2 {
 			// "show system rollback compare N"
@@ -1705,11 +1740,15 @@ func (c *ctl) handleCommit(args []string) error {
 		return nil
 	}
 
-	_, err := c.client.Commit(context.Background(), &pb.CommitRequest{})
+	resp, err := c.client.Commit(context.Background(), &pb.CommitRequest{})
 	if err != nil {
 		return fmt.Errorf("commit failed: %v", err)
 	}
-	fmt.Println("commit complete")
+	if resp.Summary != "" {
+		fmt.Printf("commit complete: %s\n", resp.Summary)
+	} else {
+		fmt.Println("commit complete")
+	}
 	return nil
 }
 
@@ -1798,6 +1837,9 @@ func (c *ctl) handleClearSecurity(args []string) error {
 				if v, err := strconv.Atoi(args[i]); err == nil {
 					req.DestinationPort = uint32(v)
 				}
+			case "application":
+				i++
+				req.Application = args[i]
 			}
 		}
 		resp, err := c.client.ClearSessions(context.Background(), req)

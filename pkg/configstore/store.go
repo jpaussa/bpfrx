@@ -551,6 +551,68 @@ func (s *Store) ListHistory() []*HistoryEntry {
 	return s.history.List()
 }
 
+// ListCommitHistory returns recent commit journal entries (most recent last).
+func (s *Store) ListCommitHistory(limit int) ([]*JournalEntry, error) {
+	entries, err := s.journal.ListEntries(limit)
+	if err != nil {
+		return nil, err
+	}
+	// Filter to commit/rollback actions only
+	var commits []*JournalEntry
+	for _, e := range entries {
+		switch e.Action {
+		case "commit", "commit_confirmed", "auto_rollback":
+			commits = append(commits, e)
+		}
+	}
+	return commits, nil
+}
+
+// CommitDiffSummary returns a human-readable summary of changes between
+// the active and candidate configs. Must be called while in config mode.
+func (s *Store) CommitDiffSummary() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.candidate == nil {
+		return ""
+	}
+
+	activeSet := s.active.FormatSet()
+	candidateSet := s.candidate.FormatSet()
+
+	activeLines := splitLines(activeSet)
+	candidateLines := splitLines(candidateSet)
+
+	activeMap := make(map[string]bool, len(activeLines))
+	for _, line := range activeLines {
+		activeMap[line] = true
+	}
+	candidateMap := make(map[string]bool, len(candidateLines))
+	for _, line := range candidateLines {
+		candidateMap[line] = true
+	}
+
+	var added, removed int
+	for _, line := range activeLines {
+		if !candidateMap[line] {
+			removed++
+		}
+	}
+	for _, line := range candidateLines {
+		if !activeMap[line] {
+			added++
+		}
+	}
+
+	total := added + removed
+	if total == 0 {
+		return ""
+	}
+
+	return fmt.Sprintf("%d statement(s) changed (%d added, %d removed)", total, added, removed)
+}
+
 // rollbackPath returns the file path for rollback slot n (1-based).
 func (s *Store) rollbackPath(n int) string {
 	return filepath.Join(filepath.Dir(s.filePath), fmt.Sprintf("%s.%d", filepath.Base(s.filePath), n))

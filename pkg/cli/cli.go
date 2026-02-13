@@ -1062,7 +1062,8 @@ func (c *CLI) handleShowSecurity(args []string) error {
 		return c.showSecurityLog(args[1:])
 
 	case "statistics":
-		return c.showStatistics()
+		detail := len(args) >= 2 && args[1] == "detail"
+		return c.showStatistics(detail)
 
 	case "ipsec":
 		return c.showIPsec(args[1:])
@@ -1444,7 +1445,7 @@ func (c *CLI) showScreenStatistics(zoneName string) error {
 	return nil
 }
 
-func (c *CLI) showStatistics() error {
+func (c *CLI) showStatistics(detail bool) error {
 	if c.dp == nil || !c.dp.IsLoaded() {
 		fmt.Println("Statistics: dataplane not loaded")
 		return nil
@@ -1456,7 +1457,18 @@ func (c *CLI) showStatistics() error {
 		return nil
 	}
 
-	// Read per-CPU values and sum across CPUs for each counter index.
+	readCounter := func(idx uint32) uint64 {
+		var perCPU []uint64
+		if err := ctrMap.Lookup(idx, &perCPU); err != nil {
+			return 0
+		}
+		var total uint64
+		for _, v := range perCPU {
+			total += v
+		}
+		return total
+	}
+
 	names := []struct {
 		idx  uint32
 		name string
@@ -1477,17 +1489,65 @@ func (c *CLI) showStatistics() error {
 
 	fmt.Println("Global statistics:")
 	for _, n := range names {
-		var perCPU []uint64
-		if err := ctrMap.Lookup(n.idx, &perCPU); err != nil {
-			fmt.Printf("  %-25s (error: %v)\n", n.name+":", err)
-			continue
-		}
-		var total uint64
-		for _, v := range perCPU {
-			total += v
-		}
-		fmt.Printf("  %-25s %d\n", n.name+":", total)
+		fmt.Printf("  %-25s %d\n", n.name+":", readCounter(n.idx))
 	}
+
+	if !detail {
+		return nil
+	}
+
+	// Active session counts
+	v4, v6 := c.dp.SessionCount()
+	fmt.Printf("\nActive sessions:\n")
+	fmt.Printf("  %-25s %d\n", "IPv4 sessions:", v4)
+	fmt.Printf("  %-25s %d\n", "IPv6 sessions:", v6)
+	fmt.Printf("  %-25s %d\n", "Total:", v4+v6)
+
+	// Screen drops breakdown
+	screenDrops := readCounter(dataplane.GlobalCtrScreenDrops)
+	if screenDrops > 0 {
+		fmt.Printf("\nScreen drop details:\n")
+		screenCounters := []struct {
+			idx  uint32
+			name string
+		}{
+			{dataplane.GlobalCtrScreenSynFlood, "SYN flood"},
+			{dataplane.GlobalCtrScreenICMPFlood, "ICMP flood"},
+			{dataplane.GlobalCtrScreenUDPFlood, "UDP flood"},
+			{dataplane.GlobalCtrScreenPortScan, "Port scan"},
+			{dataplane.GlobalCtrScreenIPSweep, "IP sweep"},
+			{dataplane.GlobalCtrScreenLandAttack, "Land attack"},
+			{dataplane.GlobalCtrScreenPingOfDeath, "Ping of death"},
+			{dataplane.GlobalCtrScreenTearDrop, "Teardrop"},
+			{dataplane.GlobalCtrScreenTCPSynFin, "TCP SYN+FIN"},
+			{dataplane.GlobalCtrScreenTCPNoFlag, "TCP no flag"},
+			{dataplane.GlobalCtrScreenTCPFinNoAck, "TCP FIN no ACK"},
+			{dataplane.GlobalCtrScreenWinNuke, "WinNuke"},
+			{dataplane.GlobalCtrScreenIPSrcRoute, "IP source route"},
+			{dataplane.GlobalCtrScreenSynFrag, "SYN fragment"},
+		}
+		for _, sc := range screenCounters {
+			v := readCounter(sc.idx)
+			if v > 0 {
+				fmt.Printf("  %-25s %d\n", sc.name+":", v)
+			}
+		}
+	}
+
+	// Map utilization summary for key maps
+	fmt.Printf("\nKey map utilization:\n")
+	stats := c.dp.GetMapStats()
+	for _, s := range stats {
+		if s.MaxEntries > 0 && s.Type != "Array" && s.Type != "PerCPUArray" {
+			pct := float64(s.UsedCount) / float64(s.MaxEntries) * 100
+			flag := ""
+			if pct >= 80 {
+				flag = " !"
+			}
+			fmt.Printf("  %-24s %d/%d (%.1f%%)%s\n", s.Name+":", s.UsedCount, s.MaxEntries, pct, flag)
+		}
+	}
+
 	return nil
 }
 
@@ -1631,6 +1691,9 @@ func (c *CLI) handleCommit(args []string) error {
 		return nil
 	}
 
+	// Capture diff summary before commit (active will change)
+	diffSummary := c.store.CommitDiffSummary()
+
 	compiled, err := c.store.Commit()
 	if err != nil {
 		return fmt.Errorf("commit failed: %w", err)
@@ -1646,7 +1709,11 @@ func (c *CLI) handleCommit(args []string) error {
 	// Hot-reload syslog clients
 	c.reloadSyslog(compiled)
 
-	fmt.Println("commit complete")
+	if diffSummary != "" {
+		fmt.Printf("commit complete: %s\n", diffSummary)
+	} else {
+		fmt.Println("commit complete")
+	}
 	return nil
 }
 
@@ -1737,6 +1804,77 @@ func (c *CLI) applyToDataplane(cfg *config.Config) error {
 	return nil
 }
 
+// builtinApp defines a well-known Junos application by protocol and port.
+type builtinApp struct {
+	proto uint8
+	port  uint16
+}
+
+// builtinApps maps Junos application names to protocol/port.
+var builtinApps = map[string]builtinApp{
+	"junos-http":        {proto: 6, port: 80},
+	"junos-https":       {proto: 6, port: 443},
+	"junos-ssh":         {proto: 6, port: 22},
+	"junos-telnet":      {proto: 6, port: 23},
+	"junos-ftp":         {proto: 6, port: 21},
+	"junos-smtp":        {proto: 6, port: 25},
+	"junos-dns-tcp":     {proto: 6, port: 53},
+	"junos-dns-udp":     {proto: 17, port: 53},
+	"junos-bgp":         {proto: 6, port: 179},
+	"junos-ntp":         {proto: 17, port: 123},
+	"junos-snmp":        {proto: 17, port: 161},
+	"junos-syslog":      {proto: 17, port: 514},
+	"junos-dhcp-client": {proto: 17, port: 68},
+	"junos-ike":         {proto: 17, port: 500},
+	"junos-ipsec-nat-t": {proto: 17, port: 4500},
+}
+
+// resolveAppName resolves a session's protocol and destination port to a
+// known application name, checking user-defined apps first then builtins.
+func resolveAppName(proto uint8, dstPort uint16, cfg *config.Config) string {
+	if cfg != nil {
+		for name, app := range cfg.Applications.Applications {
+			var appProto uint8
+			switch strings.ToLower(app.Protocol) {
+			case "tcp":
+				appProto = 6
+			case "udp":
+				appProto = 17
+			case "icmp":
+				appProto = 1
+			default:
+				continue
+			}
+			if appProto != proto {
+				continue
+			}
+			// Parse destination port (handle ranges like "8080-8090")
+			portStr := app.DestinationPort
+			if portStr == "" {
+				continue
+			}
+			if strings.Contains(portStr, "-") {
+				parts := strings.SplitN(portStr, "-", 2)
+				lo, err1 := strconv.Atoi(parts[0])
+				hi, err2 := strconv.Atoi(parts[1])
+				if err1 == nil && err2 == nil && int(dstPort) >= lo && int(dstPort) <= hi {
+					return name
+				}
+			} else {
+				if v, err := strconv.Atoi(portStr); err == nil && uint16(v) == dstPort {
+					return name
+				}
+			}
+		}
+	}
+	for name, ba := range builtinApps {
+		if ba.proto == proto && ba.port == dstPort {
+			return name
+		}
+	}
+	return ""
+}
+
 // sessionFilter holds parsed filter criteria for session display.
 type sessionFilter struct {
 	zoneID  uint16   // 0 = any
@@ -1747,11 +1885,14 @@ type sessionFilter struct {
 	dstPort uint16   // 0 = any
 	natOnly bool     // show only NAT sessions
 	iface   string   // ingress interface name filter
-	summary bool     // only show count
+	summary bool           // only show count
+	appName string         // application name filter
+	cfg     *config.Config // for application resolution
 }
 
 func (c *CLI) parseSessionFilter(args []string) sessionFilter {
 	var f sessionFilter
+	f.cfg = c.store.ActiveConfig()
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "zone":
@@ -1830,6 +1971,11 @@ func (c *CLI) parseSessionFilter(args []string) sessionFilter {
 				i++
 				f.iface = args[i]
 			}
+		case "application":
+			if i+1 < len(args) {
+				i++
+				f.appName = args[i]
+			}
 		case "summary":
 			f.summary = true
 		}
@@ -1859,6 +2005,11 @@ func (f *sessionFilter) matchesV4(key dataplane.SessionKey, val dataplane.Sessio
 	if f.natOnly && val.Flags&(dataplane.SessFlagSNAT|dataplane.SessFlagDNAT) == 0 {
 		return false
 	}
+	if f.appName != "" {
+		if resolveAppName(key.Protocol, ntohs(key.DstPort), f.cfg) != f.appName {
+			return false
+		}
+	}
 	return true
 }
 
@@ -1884,12 +2035,17 @@ func (f *sessionFilter) matchesV6(key dataplane.SessionKeyV6, val dataplane.Sess
 	if f.natOnly && val.Flags&(dataplane.SessFlagSNAT|dataplane.SessFlagDNAT) == 0 {
 		return false
 	}
+	if f.appName != "" {
+		if resolveAppName(key.Protocol, ntohs(key.DstPort), f.cfg) != f.appName {
+			return false
+		}
+	}
 	return true
 }
 
 func (f *sessionFilter) hasFilter() bool {
 	return f.zoneID != 0 || f.proto != 0 || f.srcNet != nil || f.dstNet != nil ||
-		f.srcPort != 0 || f.dstPort != 0 || f.natOnly || f.iface != ""
+		f.srcPort != 0 || f.dstPort != 0 || f.natOnly || f.iface != "" || f.appName != ""
 }
 
 func (c *CLI) showFlowSession(args []string) error {
@@ -1989,6 +2145,9 @@ func (c *CLI) showFlowSession(args []string) error {
 				natIP, natPort, dstIP, dstPort)
 		}
 
+		if appName := resolveAppName(key.Protocol, dstPort, f.cfg); appName != "" {
+			fmt.Printf("  Application: %s\n", appName)
+		}
 		fmt.Printf("  Packets: %d/%d, Bytes: %d/%d\n",
 			val.FwdPackets, val.RevPackets, val.FwdBytes, val.RevBytes)
 		return true
@@ -2066,6 +2225,9 @@ func (c *CLI) showFlowSession(args []string) error {
 				natIP, natPort, dstIP, dstPort)
 		}
 
+		if appName := resolveAppName(key.Protocol, dstPort, f.cfg); appName != "" {
+			fmt.Printf("  Application: %s\n", appName)
+		}
 		fmt.Printf("  Packets: %d/%d, Bytes: %d/%d\n",
 			val.FwdPackets, val.RevPackets, val.FwdBytes, val.RevBytes)
 		return true
@@ -3885,6 +4047,14 @@ func (c *CLI) showOSPF(args []string) error {
 		fmt.Print(output)
 		return nil
 
+	case "interface":
+		output, err := c.frr.GetOSPFInterface()
+		if err != nil {
+			return fmt.Errorf("OSPF interface: %w", err)
+		}
+		fmt.Print(output)
+		return nil
+
 	default:
 		return fmt.Errorf("unknown show protocols ospf target: %s", args[0])
 	}
@@ -4860,6 +5030,26 @@ func (c *CLI) handleShowSystem(args []string) error {
 	}
 
 	switch args[0] {
+	case "commit":
+		// "show system commit history"
+		if len(args) >= 2 && args[1] == "history" {
+			entries, err := c.store.ListCommitHistory(50)
+			if err != nil {
+				return fmt.Errorf("commit history: %v", err)
+			}
+			if len(entries) == 0 {
+				fmt.Println("No commit history available")
+				return nil
+			}
+			for i, e := range entries {
+				fmt.Printf("  %d  %s  %s\n", i, e.Timestamp.Format("2006-01-02 15:04:05"), e.Action)
+			}
+			return nil
+		}
+		fmt.Println("show system commit:")
+		fmt.Println("  history              Show recent commit log")
+		return nil
+
 	case "rollback":
 		if len(args) >= 2 {
 			// "show system rollback compare N" — diff rollback N against active
@@ -5019,21 +5209,39 @@ func (c *CLI) showSystemBuffers() error {
 		fmt.Println("No BPF maps available")
 		return nil
 	}
-	fmt.Printf("%-24s %-12s %10s %10s %8s\n", "Map", "Type", "Max", "Used", "Usage%")
-	fmt.Println(strings.Repeat("-", 68))
+	fmt.Printf("%-24s %-14s %10s %10s %8s %s\n", "Map", "Type", "Max", "Used", "Usage%", "Status")
+	fmt.Println(strings.Repeat("-", 78))
+	var warnings int
 	for _, s := range stats {
 		usage := ""
-		if s.MaxEntries > 0 && s.Type != "Array" {
+		status := ""
+		if s.MaxEntries > 0 && s.Type != "Array" && s.Type != "PerCPUArray" {
 			pct := float64(s.UsedCount) / float64(s.MaxEntries) * 100
 			usage = fmt.Sprintf("%.1f%%", pct)
+			if pct >= 90 {
+				status = "CRITICAL"
+				warnings++
+			} else if pct >= 80 {
+				status = "WARNING"
+				warnings++
+			}
 		} else {
 			usage = "-"
 		}
 		used := fmt.Sprintf("%d", s.UsedCount)
-		if s.Type == "Array" {
+		if s.Type == "Array" || s.Type == "PerCPUArray" {
 			used = "-"
 		}
-		fmt.Printf("%-24s %-12s %10d %10s %8s\n", s.Name, s.Type, s.MaxEntries, used, usage)
+		fmt.Printf("%-24s %-14s %10d %10s %8s %s\n", s.Name, s.Type, s.MaxEntries, used, usage, status)
+	}
+	if warnings > 0 {
+		fmt.Printf("\n%d map(s) at high utilization — consider increasing max_entries\n", warnings)
+	}
+
+	// Session counts
+	v4, v6 := c.dp.SessionCount()
+	if v4 > 0 || v6 > 0 {
+		fmt.Printf("\nActive sessions: %d IPv4, %d IPv6, %d total\n", v4, v6, v4+v6)
 	}
 	return nil
 }

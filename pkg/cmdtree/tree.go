@@ -126,7 +126,8 @@ var OperationalTree = map[string]*Node{
 			"dynamic-address": {Desc: "Show dynamic address feeds"},
 			"flow": {Desc: "Show flow information", Children: map[string]*Node{
 				"session": {Desc: "Show active sessions", Children: map[string]*Node{
-					"summary": {Desc: "Show session count summary"},
+					"summary":     {Desc: "Show session count summary"},
+					"application": {Desc: "Filter sessions by application name"},
 				}},
 				"statistics":   {Desc: "Show flow statistics"},
 				"traceoptions": {Desc: "Show flow trace configuration"},
@@ -151,7 +152,9 @@ var OperationalTree = map[string]*Node{
 			"address-book": {Desc: "Show address book entries"},
 			"applications": {Desc: "Show application definitions"},
 			"log":          {Desc: "Show recent security events [N] [zone <z>] [protocol <p>] [action <a>]"},
-			"statistics":   {Desc: "Show global statistics"},
+			"statistics": {Desc: "Show global statistics", Children: map[string]*Node{
+				"detail": {Desc: "Show detailed statistics with screen and session breakdown"},
+			}},
 			"ike": {Desc: "Show IKE status", Children: map[string]*Node{
 				"security-associations": {Desc: "Show IKE SAs"},
 			}},
@@ -182,8 +185,9 @@ var OperationalTree = map[string]*Node{
 		}},
 		"protocols": {Desc: "Show protocol information", Children: map[string]*Node{
 			"ospf": {Desc: "Show OSPF information", Children: map[string]*Node{
-				"neighbor": {Desc: "Show OSPF neighbors"},
-				"database": {Desc: "Show OSPF database"},
+				"neighbor":  {Desc: "Show OSPF neighbors"},
+				"database":  {Desc: "Show OSPF database"},
+				"interface": {Desc: "Show OSPF interface details"},
 			}},
 			"bgp": {Desc: "Show BGP information", Children: map[string]*Node{
 				"summary":  {Desc: "Show BGP peer summary"},
@@ -206,6 +210,9 @@ var OperationalTree = map[string]*Node{
 		"snmp":              {Desc: "Show SNMP statistics"},
 		"system": {Desc: "Show system information", Children: map[string]*Node{
 			"alarms":        {Desc: "Show system alarms"},
+			"commit": {Desc: "Show commit history", Children: map[string]*Node{
+				"history": {Desc: "Show recent commit log"},
+			}},
 			"connections":   {Desc: "Show system TCP connections"},
 			"rollback": {Desc: "Show rollback history", Children: map[string]*Node{
 				"compare": {Desc: "Compare rollback with active config"},
@@ -240,7 +247,7 @@ var OperationalTree = map[string]*Node{
 	"clear": {Desc: "Clear information", Children: map[string]*Node{
 		"security": {Desc: "Clear security information", Children: map[string]*Node{
 			"flow": {Desc: "Clear flow information", Children: map[string]*Node{
-				"session": {Desc: "Clear sessions [source-prefix|destination-prefix|protocol|zone]"},
+				"session": {Desc: "Clear sessions [source-prefix|destination-prefix|protocol|zone|application]"},
 			}},
 			"counters": {Desc: "Clear all counters"},
 			"policies": {Desc: "Clear policy information", Children: map[string]*Node{

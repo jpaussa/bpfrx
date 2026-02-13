@@ -99,7 +99,9 @@ message LoadRequest {
 message LoadResponse {}
 
 message CommitRequest {}
-message CommitResponse {}
+message CommitResponse {
+  string summary = 1; // human-readable diff summary (e.g. "3 statement(s) changed (2 added, 1 removed)")
+}
 
 message CommitCheckRequest {}
 message CommitCheckResponse {}
@@ -229,6 +231,7 @@ message GetSessionsRequest {
   uint32 source_port = 7;
   uint32 destination_port = 8;
   bool nat_only = 9;              // show only NAT sessions
+  string application = 10;        // application name filter (e.g. "junos-http")
 }
 message GetSessionsResponse {
   int32 total = 1;
@@ -256,6 +259,7 @@ message SessionEntry {
   string ingress_zone_name = 17;
   string egress_zone_name = 18;
   int64 idle_seconds = 19;
+  string application = 20;        // resolved application name
 }
 
 message GetSessionSummaryRequest {}
@@ -435,6 +439,7 @@ message ClearSessionsRequest {
   string zone = 4;               // optional: zone name
   uint32 source_port = 5;        // optional
   uint32 destination_port = 6;   // optional
+  string application = 7;        // optional: application name filter
 }
 message ClearSessionsResponse {
   int32 ipv4_cleared = 1;

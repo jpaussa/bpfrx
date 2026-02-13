@@ -652,6 +652,11 @@ func (m *Manager) GetOSPFDatabase() (string, error) {
 	return vtyshCmd("show ip ospf database")
 }
 
+// GetOSPFInterface returns raw OSPF interface output.
+func (m *Manager) GetOSPFInterface() (string, error) {
+	return vtyshCmd("show ip ospf interface")
+}
+
 // BGPPeerSummary represents a BGP peer in the summary.
 type BGPPeerSummary struct {
 	Neighbor string
