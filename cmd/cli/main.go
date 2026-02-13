@@ -630,6 +630,9 @@ func (c *ctl) showZones() error {
 		} else {
 			fmt.Printf("Zone: %s\n", z.Name)
 		}
+		if z.Description != "" {
+			fmt.Printf("  Description: %s\n", z.Description)
+		}
 		fmt.Printf("  Interfaces: %s\n", strings.Join(z.Interfaces, ", "))
 		if z.TcpRst {
 			fmt.Println("  TCP RST: enabled")

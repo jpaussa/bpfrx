@@ -453,6 +453,8 @@ func compileZones(node *Node, sec *SecurityConfig) error {
 				}
 			case "tcp-rst":
 				zone.TCPRst = true
+			case "description":
+				zone.Description = nodeVal(prop)
 			}
 		}
 

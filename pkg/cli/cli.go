@@ -1031,6 +1031,9 @@ func (c *CLI) handleShowSecurity(args []string) error {
 			} else {
 				fmt.Printf("Zone: %s\n", name)
 			}
+			if zone.Description != "" {
+				fmt.Printf("  Description: %s\n", zone.Description)
+			}
 			fmt.Printf("  Interfaces: %s\n", strings.Join(zone.Interfaces, ", "))
 			if zone.TCPRst {
 				fmt.Println("  TCP RST: enabled")
@@ -3418,6 +3421,9 @@ func (c *CLI) showInterfaces(args []string) error {
 
 		fmt.Printf("Physical interface: %s, %s, Physical link is %s\n",
 			physName, enabled, linkUp)
+		if ifCfg, ok := cfg.Interfaces.Interfaces[physName]; ok && ifCfg.Description != "" {
+			fmt.Printf("  Description: %s\n", ifCfg.Description)
+		}
 
 		// Link-level details
 		mtu := 0

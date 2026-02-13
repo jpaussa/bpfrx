@@ -541,6 +541,7 @@ type PreIDDefaultPolicy struct {
 // ZoneConfig represents a security zone.
 type ZoneConfig struct {
 	Name               string
+	Description        string
 	Interfaces         []string
 	ScreenProfile      string // reference to screen profile name
 	HostInboundTraffic *HostInboundTraffic

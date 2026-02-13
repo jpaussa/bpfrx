@@ -191,6 +191,7 @@ message ZoneInfo {
   uint64 egress_packets = 8;
   uint64 egress_bytes = 9;
   bool tcp_rst = 10;
+  string description = 11;
 }
 
 message GetPoliciesRequest {}

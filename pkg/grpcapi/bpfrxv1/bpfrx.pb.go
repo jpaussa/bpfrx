@@ -1756,6 +1756,7 @@ type ZoneInfo struct {
 	EgressPackets       uint64                 `protobuf:"varint,8,opt,name=egress_packets,json=egressPackets,proto3" json:"egress_packets,omitempty"`
 	EgressBytes         uint64                 `protobuf:"varint,9,opt,name=egress_bytes,json=egressBytes,proto3" json:"egress_bytes,omitempty"`
 	TcpRst              bool                   `protobuf:"varint,10,opt,name=tcp_rst,json=tcpRst,proto3" json:"tcp_rst,omitempty"`
+	Description         string                 `protobuf:"bytes,11,opt,name=description,proto3" json:"description,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -1858,6 +1859,13 @@ func (x *ZoneInfo) GetTcpRst() bool {
 		return x.TcpRst
 	}
 	return false
+}
+
+func (x *ZoneInfo) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
 }
 
 type GetPoliciesRequest struct {
@@ -6096,7 +6104,7 @@ const file_bpfrx_proto_rawDesc = "" +
 	" \x01(\x04R\x0ftcEgressPackets\"\x11\n" +
 	"\x0fGetZonesRequest\"<\n" +
 	"\x10GetZonesResponse\x12(\n" +
-	"\x05zones\x18\x01 \x03(\v2\x12.bpfrx.v1.ZoneInfoR\x05zones\"\xda\x02\n" +
+	"\x05zones\x18\x01 \x03(\v2\x12.bpfrx.v1.ZoneInfoR\x05zones\"\xfc\x02\n" +
 	"\bZoneInfo\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\rR\x02id\x12%\n" +
@@ -6110,7 +6118,8 @@ const file_bpfrx_proto_rawDesc = "" +
 	"\x0eegress_packets\x18\b \x01(\x04R\regressPackets\x12!\n" +
 	"\fegress_bytes\x18\t \x01(\x04R\vegressBytes\x12\x17\n" +
 	"\atcp_rst\x18\n" +
-	" \x01(\bR\x06tcpRst\"\x14\n" +
+	" \x01(\bR\x06tcpRst\x12 \n" +
+	"\vdescription\x18\v \x01(\tR\vdescription\"\x14\n" +
 	"\x12GetPoliciesRequest\"G\n" +
 	"\x13GetPoliciesResponse\x120\n" +
 	"\bpolicies\x18\x01 \x03(\v2\x14.bpfrx.v1.PolicyInfoR\bpolicies\"n\n" +

@@ -139,9 +139,10 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 	"security": {children: map[string]*schemaNode{
 		"zones": {children: map[string]*schemaNode{
 			"security-zone": {args: 1, valueHint: ValueHintZoneName, children: map[string]*schemaNode{
-				"interfaces": {children: nil},
-				"tcp-rst":    {children: nil},
-				"screen":     {args: 1, children: nil},
+				"description": {args: 1, children: nil},
+				"interfaces":  {children: nil},
+				"tcp-rst":     {children: nil},
+				"screen":      {args: 1, children: nil},
 				"host-inbound-traffic": {children: map[string]*schemaNode{
 					"system-services": {children: nil},
 					"protocols":       {children: nil},
