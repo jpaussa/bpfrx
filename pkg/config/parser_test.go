@@ -5989,3 +5989,135 @@ snmp {
 	}
 }
 
+func TestDHCPInetOptions(t *testing.T) {
+	input := `
+interfaces {
+    reth2 {
+        unit 0 {
+            family inet {
+                dhcp {
+                    lease-time 86400;
+                    retransmission-attempt 6;
+                    retransmission-interval 5;
+                    force-discover;
+                }
+            }
+        }
+    }
+}
+`
+	p := NewParser(input)
+	tree, errs := p.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+
+	ifc := cfg.Interfaces.Interfaces["reth2"]
+	if ifc == nil {
+		t.Fatal("reth2 not found")
+	}
+	unit := ifc.Units[0]
+	if unit == nil {
+		t.Fatal("unit 0 not found")
+	}
+	if !unit.DHCP {
+		t.Error("DHCP should be true")
+	}
+	opts := unit.DHCPOptions
+	if opts == nil {
+		t.Fatal("DHCPOptions is nil")
+	}
+	if opts.LeaseTime != 86400 {
+		t.Errorf("lease-time = %d, want 86400", opts.LeaseTime)
+	}
+	if opts.RetransmissionAttempt != 6 {
+		t.Errorf("retransmission-attempt = %d, want 6", opts.RetransmissionAttempt)
+	}
+	if opts.RetransmissionInterval != 5 {
+		t.Errorf("retransmission-interval = %d, want 5", opts.RetransmissionInterval)
+	}
+	if !opts.ForceDiscover {
+		t.Error("force-discover should be true")
+	}
+}
+
+func TestDHCPv6ClientExpanded(t *testing.T) {
+	input := `
+interfaces {
+    reth2 {
+        unit 0 {
+            family inet6 {
+                dhcpv6-client {
+                    client-type stateful;
+                    client-ia-type ia-pd;
+                    client-ia-type ia-na;
+                    prefix-delegating {
+                        preferred-prefix-length 60;
+                        sub-prefix-length 64;
+                    }
+                    client-identifier duid-type duid-ll;
+                    req-option dns-server;
+                    update-router-advertisement {
+                        interface reth2.0;
+                    }
+                }
+            }
+        }
+    }
+}
+`
+	p := NewParser(input)
+	tree, errs := p.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+
+	ifc := cfg.Interfaces.Interfaces["reth2"]
+	if ifc == nil {
+		t.Fatal("reth2 not found")
+	}
+	unit := ifc.Units[0]
+	if unit == nil {
+		t.Fatal("unit 0 not found")
+	}
+	if !unit.DHCPv6 {
+		t.Error("DHCPv6 should be true")
+	}
+	dc := unit.DHCPv6Client
+	if dc == nil {
+		t.Fatal("DHCPv6Client is nil")
+	}
+	if dc.ClientType != "stateful" {
+		t.Errorf("client-type = %q, want stateful", dc.ClientType)
+	}
+	if len(dc.ClientIATypes) != 2 {
+		t.Fatalf("client-ia-types = %d, want 2", len(dc.ClientIATypes))
+	}
+	if dc.ClientIATypes[0] != "ia-pd" || dc.ClientIATypes[1] != "ia-na" {
+		t.Errorf("client-ia-types = %v", dc.ClientIATypes)
+	}
+	if dc.PrefixDelegatingPrefixLen != 60 {
+		t.Errorf("preferred-prefix-length = %d, want 60", dc.PrefixDelegatingPrefixLen)
+	}
+	if dc.PrefixDelegatingSubPrefLen != 64 {
+		t.Errorf("sub-prefix-length = %d, want 64", dc.PrefixDelegatingSubPrefLen)
+	}
+	if dc.DUIDType != "duid-ll" {
+		t.Errorf("duid-type = %q, want duid-ll", dc.DUIDType)
+	}
+	if len(dc.ReqOptions) != 1 || dc.ReqOptions[0] != "dns-server" {
+		t.Errorf("req-options = %v, want [dns-server]", dc.ReqOptions)
+	}
+	if dc.UpdateRAInterface != "reth2.0" {
+		t.Errorf("update-ra interface = %q, want reth2.0", dc.UpdateRAInterface)
+	}
+}
+

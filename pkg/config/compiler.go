@@ -883,8 +883,30 @@ func compileInterfaces(node *Node, ifaces *InterfacesConfig) error {
 								unit.VRRPGroups[key] = vg
 							}
 						}
-						if afNode.FindChild("dhcp") != nil {
+						if dhcpNode := afNode.FindChild("dhcp"); dhcpNode != nil {
 							unit.DHCP = true
+							if len(dhcpNode.Children) > 0 {
+								opts := &DHCPInetOptions{}
+								for _, prop := range dhcpNode.Children {
+									switch prop.Name() {
+									case "lease-time":
+										if v := nodeVal(prop); v != "" {
+											opts.LeaseTime, _ = strconv.Atoi(v)
+										}
+									case "retransmission-attempt":
+										if v := nodeVal(prop); v != "" {
+											opts.RetransmissionAttempt, _ = strconv.Atoi(v)
+										}
+									case "retransmission-interval":
+										if v := nodeVal(prop); v != "" {
+											opts.RetransmissionInterval, _ = strconv.Atoi(v)
+										}
+									case "force-discover":
+										opts.ForceDiscover = true
+									}
+								}
+								unit.DHCPOptions = opts
+							}
 						}
 						if mtuNode := afNode.FindChild("mtu"); mtuNode != nil {
 							if v := nodeVal(mtuNode); v != "" {
@@ -949,12 +971,44 @@ func compileInterfaces(node *Node, ifaces *InterfacesConfig) error {
 						}
 						if dcNode := afNode.FindChild("dhcpv6-client"); dcNode != nil {
 							unit.DHCPv6 = true
-							unit.DHCPv6Client = &DHCPv6ClientConfig{}
-							if ciNode := dcNode.FindChild("client-identifier"); ciNode != nil {
-								if dtNode := ciNode.FindChild("duid-type"); dtNode != nil {
-									unit.DHCPv6Client.DUIDType = nodeVal(dtNode)
+							dc := &DHCPv6ClientConfig{}
+							for _, prop := range dcNode.Children {
+								switch prop.Name() {
+								case "client-identifier":
+									if dtNode := prop.FindChild("duid-type"); dtNode != nil {
+										dc.DUIDType = nodeVal(dtNode)
+									} else if nodeVal(prop) == "duid-type" && len(prop.Keys) >= 3 {
+										// Inline: client-identifier duid-type duid-ll;
+										dc.DUIDType = prop.Keys[2]
+									}
+								case "client-type":
+									dc.ClientType = nodeVal(prop)
+								case "client-ia-type":
+									if v := nodeVal(prop); v != "" {
+										dc.ClientIATypes = append(dc.ClientIATypes, v)
+									}
+								case "prefix-delegating":
+									if plNode := prop.FindChild("preferred-prefix-length"); plNode != nil {
+										if v := nodeVal(plNode); v != "" {
+											dc.PrefixDelegatingPrefixLen, _ = strconv.Atoi(v)
+										}
+									}
+									if slNode := prop.FindChild("sub-prefix-length"); slNode != nil {
+										if v := nodeVal(slNode); v != "" {
+											dc.PrefixDelegatingSubPrefLen, _ = strconv.Atoi(v)
+										}
+									}
+								case "req-option":
+									if v := nodeVal(prop); v != "" {
+										dc.ReqOptions = append(dc.ReqOptions, v)
+									}
+								case "update-router-advertisement":
+									if ifNode := prop.FindChild("interface"); ifNode != nil {
+										dc.UpdateRAInterface = nodeVal(ifNode)
+									}
 								}
 							}
+							unit.DHCPv6Client = dc
 						}
 					}
 				}

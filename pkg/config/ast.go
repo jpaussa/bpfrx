@@ -375,6 +375,12 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 						"primary":   {children: nil},
 						"preferred": {children: nil},
 					}},
+					"dhcp": {children: map[string]*schemaNode{
+						"lease-time":              {args: 1, children: nil},
+						"retransmission-attempt":  {args: 1, children: nil},
+						"retransmission-interval": {args: 1, children: nil},
+						"force-discover":          {children: nil},
+					}},
 					"sampling": {children: map[string]*schemaNode{
 						"input":  {children: nil},
 						"output": {children: nil},
@@ -400,8 +406,18 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 						"output": {args: 1, children: nil},
 					}},
 					"dhcpv6-client": {children: map[string]*schemaNode{
+						"client-type":    {args: 1, children: nil},
+						"client-ia-type": {args: 1, children: nil},
+						"prefix-delegating": {children: map[string]*schemaNode{
+							"preferred-prefix-length": {args: 1, children: nil},
+							"sub-prefix-length":       {args: 1, children: nil},
+						}},
 						"client-identifier": {children: map[string]*schemaNode{
 							"duid-type": {args: 1, children: nil},
+						}},
+						"req-option": {args: 1, children: nil},
+						"update-router-advertisement": {children: map[string]*schemaNode{
+							"interface": {args: 1, children: nil},
 						}},
 					}},
 				}},

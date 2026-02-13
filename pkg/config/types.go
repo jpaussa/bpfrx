@@ -692,6 +692,7 @@ type InterfaceUnit struct {
 	PrimaryAddress string   // address marked as primary
 	MTU            int      // family-level MTU (0 = default)
 	DHCP           bool     // family inet { dhcp; }
+	DHCPOptions    *DHCPInetOptions // dhcp sub-options (lease-time, etc.)
 	DHCPv6         bool     // family inet6 { dhcpv6; }
 	DHCPv6Client   *DHCPv6ClientConfig
 	DADDisable     bool   // family inet6 { dad-disable; }
@@ -720,7 +721,21 @@ type VRRPGroup struct {
 
 // DHCPv6ClientConfig holds DHCPv6 client options (dhcpv6-client stanza).
 type DHCPv6ClientConfig struct {
-	DUIDType string // "duid-ll" or "duid-llt"
+	DUIDType                   string   // "duid-ll" or "duid-llt"
+	ClientType                 string   // "stateful" or "stateless"
+	ClientIATypes              []string // "ia-pd", "ia-na"
+	PrefixDelegatingPrefixLen  int      // preferred-prefix-length (0 = not set)
+	PrefixDelegatingSubPrefLen int      // sub-prefix-length (0 = not set)
+	ReqOptions                 []string // dns-server, domain-name, etc.
+	UpdateRAInterface          string   // update-router-advertisement interface
+}
+
+// DHCPInetOptions holds DHCPv4 client options for family inet dhcp stanza.
+type DHCPInetOptions struct {
+	LeaseTime              int  // seconds (0 = default)
+	RetransmissionAttempt  int  // number of retransmission attempts
+	RetransmissionInterval int  // seconds between retransmissions
+	ForceDiscover          bool // always start with DISCOVER
 }
 
 // ApplicationsConfig holds application definitions.
