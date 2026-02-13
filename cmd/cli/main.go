@@ -1040,6 +1040,9 @@ func (c *ctl) showIPsec(args []string) error {
 }
 
 func (c *ctl) showInterfaces(args []string) error {
+	if len(args) > 0 && args[0] == "tunnel" {
+		return c.showText("tunnels")
+	}
 	req := &pb.ShowInterfacesDetailRequest{}
 	for _, a := range args {
 		if a == "terse" {

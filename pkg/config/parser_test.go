@@ -4128,3 +4128,125 @@ func TestPolicyOptionsSetSyntax(t *testing.T) {
 	}
 }
 
+func TestIKEProposalSetSyntax(t *testing.T) {
+	setCommands := []string{
+		`set security ike proposal ike-aes256 authentication-method pre-shared-keys`,
+		`set security ike proposal ike-aes256 encryption-algorithm aes-256-cbc`,
+		`set security ike proposal ike-aes256 authentication-algorithm sha-256`,
+		`set security ike proposal ike-aes256 dh-group group14`,
+		`set security ike proposal ike-aes256 lifetime-seconds 28800`,
+		`set security ike policy ike-strong mode main`,
+		`set security ike policy ike-strong proposals ike-aes256`,
+		`set security ike gateway remote-gw address 203.0.113.1`,
+		`set security ike gateway remote-gw ike-policy ike-strong`,
+		`set security ike gateway remote-gw external-interface untrust0`,
+	}
+	tree := &ConfigTree{}
+	for _, cmd := range setCommands {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%v): %v", path, err)
+		}
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	// Verify IKE proposal
+	prop := cfg.Security.IPsec.IKEProposals["ike-aes256"]
+	if prop == nil {
+		t.Fatal("missing IKE proposal ike-aes256")
+	}
+	if prop.AuthMethod != "pre-shared-keys" {
+		t.Errorf("auth-method = %q, want pre-shared-keys", prop.AuthMethod)
+	}
+	if prop.EncryptionAlg != "aes-256-cbc" {
+		t.Errorf("encryption = %q, want aes-256-cbc", prop.EncryptionAlg)
+	}
+	if prop.DHGroup != 14 {
+		t.Errorf("dh-group = %d, want 14", prop.DHGroup)
+	}
+	if prop.LifetimeSeconds != 28800 {
+		t.Errorf("lifetime = %d, want 28800", prop.LifetimeSeconds)
+	}
+
+	// Verify IKE policy
+	pol := cfg.Security.IPsec.IKEPolicies["ike-strong"]
+	if pol == nil {
+		t.Fatal("missing IKE policy ike-strong")
+	}
+	if pol.Mode != "main" {
+		t.Errorf("mode = %q, want main", pol.Mode)
+	}
+	if pol.Proposals != "ike-aes256" {
+		t.Errorf("proposals = %q, want ike-aes256", pol.Proposals)
+	}
+
+	// Verify IKE gateway
+	gw := cfg.Security.IPsec.Gateways["remote-gw"]
+	if gw == nil {
+		t.Fatal("missing gateway remote-gw")
+	}
+	if gw.Address != "203.0.113.1" {
+		t.Errorf("address = %q, want 203.0.113.1", gw.Address)
+	}
+	if gw.IKEPolicy != "ike-strong" {
+		t.Errorf("ike-policy = %q, want ike-strong", gw.IKEPolicy)
+	}
+}
+
+func TestIPsecProposalSetSyntax(t *testing.T) {
+	setCommands := []string{
+		`set security ipsec proposal esp-aes256 protocol esp`,
+		`set security ipsec proposal esp-aes256 encryption-algorithm aes-256-cbc`,
+		`set security ipsec proposal esp-aes256 authentication-algorithm hmac-sha-256-128`,
+		`set security ipsec proposal esp-aes256 lifetime-seconds 3600`,
+		`set security ipsec policy ipsec-strong proposals esp-aes256`,
+	}
+	tree := &ConfigTree{}
+	for _, cmd := range setCommands {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%v): %v", path, err)
+		}
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	// Verify IPsec proposal
+	prop := cfg.Security.IPsec.Proposals["esp-aes256"]
+	if prop == nil {
+		t.Fatal("missing IPsec proposal esp-aes256")
+	}
+	if prop.Protocol != "esp" {
+		t.Errorf("protocol = %q, want esp", prop.Protocol)
+	}
+	if prop.EncryptionAlg != "aes-256-cbc" {
+		t.Errorf("encryption = %q, want aes-256-cbc", prop.EncryptionAlg)
+	}
+	if prop.AuthAlg != "hmac-sha-256-128" {
+		t.Errorf("auth-alg = %q, want hmac-sha-256-128", prop.AuthAlg)
+	}
+	if prop.LifetimeSeconds != 3600 {
+		t.Errorf("lifetime = %d, want 3600", prop.LifetimeSeconds)
+	}
+
+	// Verify IPsec policy
+	pol := cfg.Security.IPsec.Policies["ipsec-strong"]
+	if pol == nil {
+		t.Fatal("missing IPsec policy ipsec-strong")
+	}
+	if pol.Proposals != "esp-aes256" {
+		t.Errorf("proposals = %q, want esp-aes256", pol.Proposals)
+	}
+}
+

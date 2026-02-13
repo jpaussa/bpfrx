@@ -2554,6 +2554,29 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 			}
 		}
 
+	case "tunnels":
+		if s.routing == nil {
+			buf.WriteString("Routing manager not available\n")
+		} else {
+			tunnels, err := s.routing.GetTunnelStatus()
+			if err != nil {
+				fmt.Fprintf(&buf, "Error: %v\n", err)
+			} else if len(tunnels) == 0 {
+				buf.WriteString("No tunnel interfaces configured\n")
+			} else {
+				for _, t := range tunnels {
+					fmt.Fprintf(&buf, "Tunnel %s:\n", t.Name)
+					fmt.Fprintf(&buf, "  State:       %s\n", t.State)
+					fmt.Fprintf(&buf, "  Source:      %s\n", t.Source)
+					fmt.Fprintf(&buf, "  Destination: %s\n", t.Destination)
+					for _, addr := range t.Addresses {
+						fmt.Fprintf(&buf, "  Address:     %s\n", addr)
+					}
+					buf.WriteString("\n")
+				}
+			}
+		}
+
 	case "rpm":
 		if s.rpmResultsFn == nil {
 			buf.WriteString("RPM probes not available\n")

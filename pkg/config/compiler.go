@@ -1855,38 +1855,39 @@ func compileIKE(node *Node, sec *SecurityConfig) error {
 	}
 
 	// IKE gateways
-	for _, child := range node.FindChildren("gateway") {
-		if len(child.Keys) < 2 {
-			continue
+	for _, inst := range namedInstances(node.FindChildren("gateway")) {
+		gw := sec.IPsec.Gateways[inst.name]
+		if gw == nil {
+			gw = &IPsecGateway{Name: inst.name}
 		}
-		gw := &IPsecGateway{Name: child.Keys[1]}
-		for _, p := range child.Children {
+		for _, p := range inst.node.Children {
+			v := nodeVal(p)
 			switch p.Name() {
 			case "address":
-				if len(p.Keys) >= 2 {
-					gw.Address = p.Keys[1]
+				if v != "" {
+					gw.Address = v
 				}
 			case "local-address":
-				if len(p.Keys) >= 2 {
-					gw.LocalAddress = p.Keys[1]
+				if v != "" {
+					gw.LocalAddress = v
 				}
 			case "ike-policy":
-				if len(p.Keys) >= 2 {
-					gw.IKEPolicy = p.Keys[1]
+				if v != "" {
+					gw.IKEPolicy = v
 				}
 			case "external-interface":
-				if len(p.Keys) >= 2 {
-					gw.ExternalIface = p.Keys[1]
+				if v != "" {
+					gw.ExternalIface = v
 				}
 			case "version":
-				if len(p.Keys) >= 2 {
-					gw.Version = p.Keys[1]
+				if v != "" {
+					gw.Version = v
 				}
 			case "no-nat-traversal":
 				gw.NoNATTraversal = true
 			case "dead-peer-detection":
-				if len(p.Keys) >= 2 {
-					gw.DeadPeerDetect = p.Keys[1]
+				if v != "" {
+					gw.DeadPeerDetect = v
 				} else {
 					gw.DeadPeerDetect = "always-send"
 				}
@@ -1896,10 +1897,8 @@ func compileIKE(node *Node, sec *SecurityConfig) error {
 					gw.LocalIDValue = p.Keys[2]
 				} else if len(p.Children) > 0 {
 					for _, c := range p.Children {
-						if len(c.Keys) >= 2 {
-							gw.LocalIDType = c.Name()
-							gw.LocalIDValue = c.Keys[1]
-						}
+						gw.LocalIDType = c.Name()
+						gw.LocalIDValue = nodeVal(c)
 					}
 				}
 			case "remote-identity":
@@ -1908,10 +1907,8 @@ func compileIKE(node *Node, sec *SecurityConfig) error {
 					gw.RemoteIDValue = p.Keys[2]
 				} else if len(p.Children) > 0 {
 					for _, c := range p.Children {
-						if len(c.Keys) >= 2 {
-							gw.RemoteIDType = c.Name()
-							gw.RemoteIDValue = c.Keys[1]
-						}
+						gw.RemoteIDType = c.Name()
+						gw.RemoteIDValue = nodeVal(c)
 					}
 				}
 			case "dynamic":
@@ -1945,63 +1942,44 @@ func compileIPsec(node *Node, sec *SecurityConfig) error {
 	}
 
 	// IPsec proposals (Phase 2 crypto)
-	for _, child := range node.FindChildren("proposal") {
-		if len(child.Keys) < 2 {
-			continue
-		}
-		prop := &IPsecProposal{Name: child.Keys[1]}
-
-		for _, p := range child.Children {
+	for _, inst := range namedInstances(node.FindChildren("proposal")) {
+		prop := &IPsecProposal{Name: inst.name}
+		for _, p := range inst.node.Children {
+			v := nodeVal(p)
 			switch p.Name() {
 			case "protocol":
-				if len(p.Keys) >= 2 {
-					prop.Protocol = p.Keys[1]
-				}
+				prop.Protocol = v
 			case "encryption-algorithm":
-				if len(p.Keys) >= 2 {
-					prop.EncryptionAlg = p.Keys[1]
-				}
+				prop.EncryptionAlg = v
 			case "authentication-algorithm":
-				if len(p.Keys) >= 2 {
-					prop.AuthAlg = p.Keys[1]
-				}
+				prop.AuthAlg = v
 			case "dh-group":
-				if len(p.Keys) >= 2 {
-					if v, err := strconv.Atoi(p.Keys[1]); err == nil {
-						prop.DHGroup = v
-					}
+				if n, err := strconv.Atoi(v); err == nil {
+					prop.DHGroup = n
 				}
 			case "lifetime-seconds":
-				if len(p.Keys) >= 2 {
-					if v, err := strconv.Atoi(p.Keys[1]); err == nil {
-						prop.LifetimeSeconds = v
-					}
+				if n, err := strconv.Atoi(v); err == nil {
+					prop.LifetimeSeconds = n
 				}
 			}
 		}
-
 		sec.IPsec.Proposals[prop.Name] = prop
 	}
 
 	// IPsec policies (PFS + proposal reference)
-	for _, child := range node.FindChildren("policy") {
-		if len(child.Keys) < 2 {
-			continue
-		}
-		pol := &IPsecPolicyDef{Name: child.Keys[1]}
-		for _, p := range child.Children {
+	for _, inst := range namedInstances(node.FindChildren("policy")) {
+		pol := &IPsecPolicyDef{Name: inst.name}
+		for _, p := range inst.node.Children {
+			v := nodeVal(p)
 			switch p.Name() {
 			case "proposals":
-				if len(p.Keys) >= 2 {
-					pol.Proposals = p.Keys[1]
-				}
+				pol.Proposals = v
 			case "perfect-forward-secrecy":
 				for _, c := range p.Children {
-					if c.Name() == "keys" && len(c.Keys) >= 2 {
-						g := c.Keys[1]
-						g = strings.TrimPrefix(g, "group")
-						if v, err := strconv.Atoi(g); err == nil {
-							pol.PFSGroup = v
+					if c.Name() == "keys" {
+						g := strings.TrimPrefix(nodeVal(c), "group")
+						if n, err := strconv.Atoi(g); err == nil {
+							pol.PFSGroup = n
 						}
 					}
 				}
@@ -2014,173 +1992,114 @@ func compileIPsec(node *Node, sec *SecurityConfig) error {
 	if sec.IPsec.Gateways == nil {
 		sec.IPsec.Gateways = make(map[string]*IPsecGateway)
 	}
-	for _, child := range node.FindChildren("gateway") {
-		// Handle both AST shapes:
-		// Hierarchical: Keys: ["gateway", "name"], Children are properties
-		// Flat set:     Keys: ["gateway"], Children are named gateway nodes
-		var gwNodes []*Node
-		if len(child.Keys) >= 2 {
-			gwNodes = append(gwNodes, child)
-		} else {
-			gwNodes = append(gwNodes, child.Children...)
+	for _, inst := range namedInstances(node.FindChildren("gateway")) {
+		gw := sec.IPsec.Gateways[inst.name]
+		if gw == nil {
+			gw = &IPsecGateway{Name: inst.name}
 		}
-		for _, gwNode := range gwNodes {
-			name := gwNode.Name()
-			if len(gwNode.Keys) >= 2 {
-				name = gwNode.Keys[1]
-			}
-			gw := sec.IPsec.Gateways[name]
-			if gw == nil {
-				gw = &IPsecGateway{Name: name}
-			}
-			for _, p := range gwNode.Children {
-				pval := ""
-				if len(p.Keys) >= 2 {
-					pval = p.Keys[1]
+		for _, p := range inst.node.Children {
+			v := nodeVal(p)
+			switch p.Name() {
+			case "address":
+				if v != "" {
+					gw.Address = v
+				}
+			case "local-address":
+				if v != "" {
+					gw.LocalAddress = v
+				}
+			case "ike-policy":
+				if v != "" {
+					gw.IKEPolicy = v
+				}
+			case "external-interface":
+				if v != "" {
+					gw.ExternalIface = v
+				}
+			case "version":
+				if v != "" {
+					gw.Version = v
+				}
+			case "no-nat-traversal":
+				gw.NoNATTraversal = true
+			case "dead-peer-detection":
+				if v != "" {
+					gw.DeadPeerDetect = v
+				} else {
+					gw.DeadPeerDetect = "always-send"
+				}
+			case "local-identity":
+				if len(p.Keys) >= 3 {
+					gw.LocalIDType = p.Keys[1]
+					gw.LocalIDValue = p.Keys[2]
 				} else if len(p.Children) > 0 {
-					pval = p.Children[0].Name()
+					for _, c := range p.Children {
+						gw.LocalIDType = c.Name()
+						gw.LocalIDValue = nodeVal(c)
+					}
 				}
-				switch p.Name() {
-				case "address":
-					if pval != "" {
-						gw.Address = pval
+			case "remote-identity":
+				if len(p.Keys) >= 3 {
+					gw.RemoteIDType = p.Keys[1]
+					gw.RemoteIDValue = p.Keys[2]
+				} else if len(p.Children) > 0 {
+					for _, c := range p.Children {
+						gw.RemoteIDType = c.Name()
+						gw.RemoteIDValue = nodeVal(c)
 					}
-				case "local-address":
-					if pval != "" {
-						gw.LocalAddress = pval
-					}
-				case "ike-policy":
-					if pval != "" {
-						gw.IKEPolicy = pval
-					}
-				case "external-interface":
-					if pval != "" {
-						gw.ExternalIface = pval
-					}
-				case "version":
-					if pval != "" {
-						gw.Version = pval
-					}
-				case "no-nat-traversal":
-					gw.NoNATTraversal = true
-				case "dead-peer-detection":
-					if pval != "" {
-						gw.DeadPeerDetect = pval
-					} else {
-						gw.DeadPeerDetect = "always-send"
-					}
-				case "local-identity":
-					if len(p.Keys) >= 3 {
-						gw.LocalIDType = p.Keys[1]
-						gw.LocalIDValue = p.Keys[2]
-					} else if len(p.Children) > 0 {
-						for _, c := range p.Children {
-							if len(c.Keys) >= 2 {
-								gw.LocalIDType = c.Name()
-								gw.LocalIDValue = c.Keys[1]
-							} else if len(c.Children) > 0 {
-								gw.LocalIDType = c.Name()
-								gw.LocalIDValue = c.Children[0].Name()
-							}
-						}
-					}
-				case "remote-identity":
-					if len(p.Keys) >= 3 {
-						gw.RemoteIDType = p.Keys[1]
-						gw.RemoteIDValue = p.Keys[2]
-					} else if len(p.Children) > 0 {
-						for _, c := range p.Children {
-							if len(c.Keys) >= 2 {
-								gw.RemoteIDType = c.Name()
-								gw.RemoteIDValue = c.Keys[1]
-							} else if len(c.Children) > 0 {
-								gw.RemoteIDType = c.Name()
-								gw.RemoteIDValue = c.Children[0].Name()
-							}
-						}
-					}
-				case "dynamic":
-					if len(p.Keys) >= 3 && p.Keys[1] == "hostname" {
-						gw.DynamicHostname = p.Keys[2]
-					} else {
-						for _, c := range p.Children {
-							if c.Name() == "hostname" {
-								if len(c.Keys) >= 2 {
-									gw.DynamicHostname = c.Keys[1]
-								} else if len(c.Children) > 0 {
-									gw.DynamicHostname = c.Children[0].Name()
-								}
-							}
+				}
+			case "dynamic":
+				if len(p.Keys) >= 3 && p.Keys[1] == "hostname" {
+					gw.DynamicHostname = p.Keys[2]
+				} else {
+					for _, c := range p.Children {
+						if c.Name() == "hostname" {
+							gw.DynamicHostname = nodeVal(c)
 						}
 					}
 				}
 			}
-			sec.IPsec.Gateways[gw.Name] = gw
 		}
+		sec.IPsec.Gateways[gw.Name] = gw
 	}
 
 	// VPN tunnels
-	for _, child := range node.FindChildren("vpn") {
-		if len(child.Keys) < 2 {
-			continue
-		}
-		vpn := &IPsecVPN{Name: child.Keys[1]}
-
-		for _, p := range child.Children {
+	for _, inst := range namedInstances(node.FindChildren("vpn")) {
+		vpn := &IPsecVPN{Name: inst.name}
+		for _, p := range inst.node.Children {
+			v := nodeVal(p)
 			switch p.Name() {
 			case "bind-interface":
-				if len(p.Keys) >= 2 {
-					vpn.BindInterface = p.Keys[1]
-				}
+				vpn.BindInterface = v
 			case "df-bit":
-				if len(p.Keys) >= 2 {
-					vpn.DFBit = p.Keys[1]
-				}
+				vpn.DFBit = v
 			case "establish-tunnels":
-				if len(p.Keys) >= 2 {
-					vpn.EstablishTunnels = p.Keys[1]
-				}
+				vpn.EstablishTunnels = v
 			case "ike":
 				// Nested ike { gateway X; ipsec-policy Y; }
 				for _, c := range p.Children {
+					cv := nodeVal(c)
 					switch c.Name() {
 					case "gateway":
-						if len(c.Keys) >= 2 {
-							vpn.Gateway = c.Keys[1]
-						}
+						vpn.Gateway = cv
 					case "ipsec-policy":
-						if len(c.Keys) >= 2 {
-							vpn.IPsecPolicy = c.Keys[1]
-						}
+						vpn.IPsecPolicy = cv
 					}
 				}
 			case "gateway":
-				if len(p.Keys) >= 2 {
-					vpn.Gateway = p.Keys[1]
-				}
+				vpn.Gateway = v
 			case "ipsec-policy":
-				if len(p.Keys) >= 2 {
-					vpn.IPsecPolicy = p.Keys[1]
-				}
+				vpn.IPsecPolicy = v
 			case "local-identity":
-				if len(p.Keys) >= 2 {
-					vpn.LocalID = p.Keys[1]
-				}
+				vpn.LocalID = v
 			case "remote-identity":
-				if len(p.Keys) >= 2 {
-					vpn.RemoteID = p.Keys[1]
-				}
+				vpn.RemoteID = v
 			case "pre-shared-key":
-				if len(p.Keys) >= 2 {
-					vpn.PSK = p.Keys[1]
-				}
+				vpn.PSK = v
 			case "local-address":
-				if len(p.Keys) >= 2 {
-					vpn.LocalAddr = p.Keys[1]
-				}
+				vpn.LocalAddr = v
 			}
 		}
-
 		sec.IPsec.VPNs[vpn.Name] = vpn
 	}
 
