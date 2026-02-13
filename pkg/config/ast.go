@@ -271,6 +271,14 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 			"allow-embedded-icmp":          {children: nil},
 			"gre-performance-acceleration": {children: nil},
 			"power-mode-disable":           {children: nil},
+			"traceoptions": {children: map[string]*schemaNode{
+				"file":          {args: 1, children: nil},
+				"flag":          {args: 1, children: nil},
+				"packet-filter": {args: 1, children: map[string]*schemaNode{
+					"source-prefix":      {args: 1, children: nil},
+					"destination-prefix": {args: 1, children: nil},
+				}},
+			}},
 		}},
 		"alg": {children: map[string]*schemaNode{
 			"dns":  {children: nil},

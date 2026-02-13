@@ -6607,6 +6607,148 @@ func TestRoutingInstanceInterfaceRoutesRibGroup(t *testing.T) {
 	}
 }
 
+func TestPreferredAddress(t *testing.T) {
+	input := `interfaces {
+    ge-0/0/0 {
+        unit 0 {
+            family inet {
+                address 10.0.0.1/24 {
+                    primary;
+                    preferred;
+                }
+                address 10.0.0.2/24;
+            }
+        }
+    }
+}`
+	p := NewParser(input)
+	tree, errs := p.Parse()
+	if errs != nil {
+		t.Fatal(errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	iface := cfg.Interfaces.Interfaces["ge-0/0/0"]
+	if iface == nil {
+		t.Fatal("interface ge-0/0/0 not found")
+	}
+	unit := iface.Units[0]
+	if unit.PrimaryAddress != "10.0.0.1/24" {
+		t.Errorf("PrimaryAddress = %q, want 10.0.0.1/24", unit.PrimaryAddress)
+	}
+	if unit.PreferredAddress != "10.0.0.1/24" {
+		t.Errorf("PreferredAddress = %q, want 10.0.0.1/24", unit.PreferredAddress)
+	}
+}
+
+func TestFlowTraceoptions(t *testing.T) {
+	input := `security {
+    flow {
+        traceoptions {
+            file flowtrace.log size 100000 files 2;
+            flag basic-datapath;
+            flag session;
+            packet-filter f0 {
+                destination-prefix 104.21.54.91/32;
+            }
+        }
+    }
+}`
+	p := NewParser(input)
+	tree, errs := p.Parse()
+	if errs != nil {
+		t.Fatal(errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	to := cfg.Security.Flow.Traceoptions
+	if to == nil {
+		t.Fatal("Traceoptions is nil")
+	}
+	if to.File != "flowtrace.log" {
+		t.Errorf("File = %q, want flowtrace.log", to.File)
+	}
+	if to.FileSize != 100000 {
+		t.Errorf("FileSize = %d, want 100000", to.FileSize)
+	}
+	if to.FileCount != 2 {
+		t.Errorf("FileCount = %d, want 2", to.FileCount)
+	}
+	if len(to.Flags) != 2 {
+		t.Fatalf("Flags = %d, want 2", len(to.Flags))
+	}
+	if to.Flags[0] != "basic-datapath" || to.Flags[1] != "session" {
+		t.Errorf("Flags = %v", to.Flags)
+	}
+	if len(to.PacketFilters) != 1 {
+		t.Fatalf("PacketFilters = %d, want 1", len(to.PacketFilters))
+	}
+	if to.PacketFilters[0].DestinationPrefix != "104.21.54.91/32" {
+		t.Errorf("DestinationPrefix = %q", to.PacketFilters[0].DestinationPrefix)
+	}
+}
+
+func TestDNATMultiPort(t *testing.T) {
+	input := `security {
+    nat {
+        destination {
+            pool web-server {
+                address 10.0.1.100/32;
+                address port 80;
+            }
+            rule-set untrust-dnat {
+                from zone untrust;
+                rule multi-port {
+                    match {
+                        destination-address 10.0.2.10/32;
+                        destination-port {
+                            32400;
+                            443;
+                        }
+                    }
+                    then {
+                        destination-nat pool web-server;
+                    }
+                }
+            }
+        }
+    }
+}`
+	p := NewParser(input)
+	tree, errs := p.Parse()
+	if errs != nil {
+		t.Fatal(errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Security.NAT.Destination == nil {
+		t.Fatal("Destination NAT is nil")
+	}
+	if len(cfg.Security.NAT.Destination.RuleSets) != 1 {
+		t.Fatalf("RuleSets = %d, want 1", len(cfg.Security.NAT.Destination.RuleSets))
+	}
+	rules := cfg.Security.NAT.Destination.RuleSets[0].Rules
+	if len(rules) != 1 {
+		t.Fatalf("Rules = %d, want 1", len(rules))
+	}
+	rule := rules[0]
+	if rule.Match.DestinationPort != 32400 {
+		t.Errorf("DestinationPort = %d, want 32400", rule.Match.DestinationPort)
+	}
+	if len(rule.Match.DestinationPorts) != 2 {
+		t.Fatalf("DestinationPorts = %d, want 2", len(rule.Match.DestinationPorts))
+	}
+	if rule.Match.DestinationPorts[0] != 32400 || rule.Match.DestinationPorts[1] != 443 {
+		t.Errorf("DestinationPorts = %v, want [32400, 443]", rule.Match.DestinationPorts)
+	}
+}
+
 func TestFormatJSON(t *testing.T) {
 	input := `system {
     host-name fw1;

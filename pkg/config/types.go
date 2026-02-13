@@ -239,8 +239,9 @@ type LoginUser struct {
 
 // ServicesConfig holds service configuration (flow-monitoring, RPM, etc.).
 type ServicesConfig struct {
-	FlowMonitoring *FlowMonitoringConfig
-	RPM            *RPMConfig
+	FlowMonitoring           *FlowMonitoringConfig
+	RPM                      *RPMConfig
+	ApplicationIdentification bool // DPI-based application detection
 }
 
 // RPMConfig holds RPM (Real-time Performance Monitoring) configuration.
@@ -270,7 +271,22 @@ type RPMTest struct {
 
 // FlowMonitoringConfig holds flow monitoring configuration.
 type FlowMonitoringConfig struct {
-	Version9 *NetFlowV9Config
+	Version9     *NetFlowV9Config
+	VersionIPFIX *NetFlowIPFIXConfig
+}
+
+// NetFlowIPFIXConfig holds IPFIX (NetFlow v10) template definitions.
+type NetFlowIPFIXConfig struct {
+	Templates map[string]*NetFlowIPFIXTemplate
+}
+
+// NetFlowIPFIXTemplate defines an IPFIX export template.
+type NetFlowIPFIXTemplate struct {
+	Name                string
+	FlowActiveTimeout   int      // seconds
+	FlowInactiveTimeout int      // seconds
+	TemplateRefreshRate int      // seconds
+	ExportExtensions    []string // e.g. "app-id", "flow-dir"
 }
 
 // NetFlowV9Config holds NetFlow v9 template definitions.
@@ -288,8 +304,9 @@ type NetFlowV9Template struct {
 
 // ForwardingOptionsConfig holds forwarding/sampling configuration.
 type ForwardingOptionsConfig struct {
-	Sampling  *SamplingConfig
-	DHCPRelay *DHCPRelayConfig
+	Sampling       *SamplingConfig
+	DHCPRelay      *DHCPRelayConfig
+	FamilyInet6Mode string // "flow-based" or "packet-based" (default "flow-based")
 }
 
 // DHCPRelayConfig holds DHCP relay agent configuration.
@@ -451,6 +468,23 @@ type FlowConfig struct {
 	AllowEmbeddedICMP          bool
 	GREPerformanceAcceleration bool
 	PowerModeDisable           bool
+	Traceoptions               *FlowTraceoptions
+}
+
+// FlowTraceoptions holds flow trace debugging configuration.
+type FlowTraceoptions struct {
+	File          string // log file name
+	FileSize      int    // max file size in bytes
+	FileCount     int    // number of rotated files
+	Flags         []string // trace flags (e.g. "basic-datapath", "session")
+	PacketFilters []*TracePacketFilter
+}
+
+// TracePacketFilter defines a packet filter for flow tracing.
+type TracePacketFilter struct {
+	Name              string
+	SourcePrefix      string
+	DestinationPrefix string
 }
 
 // ALGConfig holds ALG (Application Layer Gateway) disable flags.
@@ -604,7 +638,8 @@ type NATRule struct {
 type NATMatch struct {
 	SourceAddress      string // CIDR
 	DestinationAddress string
-	DestinationPort    int
+	DestinationPort    int    // primary port (first port for BPF rule)
+	DestinationPorts   []int  // all matched ports (for multi-port DNAT rules)
 	Protocol           string // "tcp", "udp", or "" (auto)
 	Application        string // application name (e.g. "junos-http")
 }
@@ -724,7 +759,11 @@ type InterfacesConfig struct {
 type InterfaceConfig struct {
 	Name            string
 	Description     string // free-text interface description
+	MTU             int    // interface-level MTU (overridden by unit MTU)
+	Speed           string // interface speed (e.g. "1g", "10g", "auto")
+	Duplex          string // "full", "half", "auto"
 	VlanTagging     bool   // 802.1Q trunk mode
+	Disable         bool   // administratively disabled
 	RedundantParent string // gigether-options redundant-parent (HA)
 	RedundancyGroup int    // redundant-ether-options redundancy-group (0 = none)
 	FabricMembers   []string // fabric-options member-interfaces
@@ -739,7 +778,8 @@ type InterfaceUnit struct {
 	VlanID         int      // 0 = native/untagged, >0 = 802.1Q tagged
 	PointToPoint   bool     // point-to-point link (for tunnels)
 	Addresses      []string // CIDR notation
-	PrimaryAddress string   // address marked as primary
+	PrimaryAddress   string // address marked as primary
+	PreferredAddress string // address marked as preferred
 	MTU            int      // family-level MTU (0 = default)
 	DHCP           bool     // family inet { dhcp; }
 	DHCPOptions    *DHCPInetOptions // dhcp sub-options (lease-time, etc.)

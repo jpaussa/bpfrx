@@ -844,6 +844,9 @@ func compileInterfaces(node *Node, ifaces *InterfacesConfig) error {
 							if addrInst.node.FindChild("primary") != nil {
 								unit.PrimaryAddress = addrInst.name
 							}
+							if addrInst.node.FindChild("preferred") != nil {
+								unit.PreferredAddress = addrInst.name
+							}
 							// Parse VRRP groups under address
 							for _, vrrpInst := range namedInstances(addrInst.node.FindChildren("vrrp-group")) {
 								groupID, err := strconv.Atoi(vrrpInst.name)
@@ -944,6 +947,9 @@ func compileInterfaces(node *Node, ifaces *InterfacesConfig) error {
 							unit.Addresses = append(unit.Addresses, addrInst.name)
 							if addrInst.node.FindChild("primary") != nil && unit.PrimaryAddress == "" {
 								unit.PrimaryAddress = addrInst.name
+							}
+							if addrInst.node.FindChild("preferred") != nil && unit.PreferredAddress == "" {
+								unit.PreferredAddress = addrInst.name
 							}
 						}
 						if afNode.FindChild("dhcpv6") != nil {
@@ -1212,9 +1218,19 @@ func compileNATSource(node *Node, sec *SecurityConfig) error {
 					case "destination-address":
 						rule.Match.DestinationAddress = nodeVal(m)
 					case "destination-port":
-						if v := nodeVal(m); v != "" {
+						if len(m.Children) > 0 {
+							for _, child := range m.Children {
+								if n, err := strconv.Atoi(child.Name()); err == nil {
+									rule.Match.DestinationPorts = append(rule.Match.DestinationPorts, n)
+									if rule.Match.DestinationPort == 0 {
+										rule.Match.DestinationPort = n
+									}
+								}
+							}
+						} else if v := nodeVal(m); v != "" {
 							if n, err := strconv.Atoi(v); err == nil {
 								rule.Match.DestinationPort = n
+								rule.Match.DestinationPorts = append(rule.Match.DestinationPorts, n)
 							}
 						}
 					case "application":
@@ -1331,9 +1347,21 @@ func compileNATDestination(node *Node, sec *SecurityConfig) error {
 					case "destination-address":
 						rule.Match.DestinationAddress = nodeVal(m)
 					case "destination-port":
-						if v := nodeVal(m); v != "" {
+						if len(m.Children) > 0 {
+							// Multiple ports as children: destination-port { 32400; 443; }
+							for _, child := range m.Children {
+								if n, err := strconv.Atoi(child.Name()); err == nil {
+									rule.Match.DestinationPorts = append(rule.Match.DestinationPorts, n)
+									if rule.Match.DestinationPort == 0 {
+										rule.Match.DestinationPort = n
+									}
+								}
+							}
+						} else if v := nodeVal(m); v != "" {
+							// Single port: destination-port 8080;
 							if n, err := strconv.Atoi(v); err == nil {
 								rule.Match.DestinationPort = n
+								rule.Match.DestinationPorts = append(rule.Match.DestinationPorts, n)
 							}
 						}
 					case "source-address":
@@ -1610,6 +1638,57 @@ func compileFlow(node *Node, sec *SecurityConfig) error {
 	// power-mode-disable
 	if node.FindChild("power-mode-disable") != nil {
 		sec.Flow.PowerModeDisable = true
+	}
+
+	// traceoptions
+	if toNode := node.FindChild("traceoptions"); toNode != nil {
+		to := &FlowTraceoptions{}
+		if fileNode := toNode.FindChild("file"); fileNode != nil {
+			to.File = nodeVal(fileNode)
+			for i := 2; i < len(fileNode.Keys)-1; i++ {
+				switch fileNode.Keys[i] {
+				case "size":
+					if n, err := strconv.Atoi(fileNode.Keys[i+1]); err == nil {
+						to.FileSize = n
+					}
+				case "files":
+					if n, err := strconv.Atoi(fileNode.Keys[i+1]); err == nil {
+						to.FileCount = n
+					}
+				}
+			}
+			// Also check children for hierarchical syntax
+			if sNode := fileNode.FindChild("size"); sNode != nil {
+				if v := nodeVal(sNode); v != "" {
+					if n, err := strconv.Atoi(v); err == nil {
+						to.FileSize = n
+					}
+				}
+			}
+			if fNode := fileNode.FindChild("files"); fNode != nil {
+				if v := nodeVal(fNode); v != "" {
+					if n, err := strconv.Atoi(v); err == nil {
+						to.FileCount = n
+					}
+				}
+			}
+		}
+		for _, flagNode := range toNode.FindChildren("flag") {
+			if v := nodeVal(flagNode); v != "" {
+				to.Flags = append(to.Flags, v)
+			}
+		}
+		for _, pfInst := range namedInstances(toNode.FindChildren("packet-filter")) {
+			pf := &TracePacketFilter{Name: pfInst.name}
+			if spNode := pfInst.node.FindChild("source-prefix"); spNode != nil {
+				pf.SourcePrefix = nodeVal(spNode)
+			}
+			if dpNode := pfInst.node.FindChild("destination-prefix"); dpNode != nil {
+				pf.DestinationPrefix = nodeVal(dpNode)
+			}
+			to.PacketFilters = append(to.PacketFilters, pf)
+		}
+		sec.Flow.Traceoptions = to
 	}
 
 	return nil
