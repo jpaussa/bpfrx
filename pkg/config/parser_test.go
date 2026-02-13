@@ -5723,3 +5723,269 @@ func TestSystemConfigSetSyntax(t *testing.T) {
 	}
 }
 
+func TestSecurityZoneTCPRst(t *testing.T) {
+	input := `
+security {
+    zones {
+        security-zone trust {
+            tcp-rst;
+            interfaces {
+                ge-0/0/0.0;
+            }
+        }
+        security-zone untrust {
+            interfaces {
+                ge-0/0/1.0;
+            }
+        }
+    }
+}
+`
+	p := NewParser(input)
+	tree, errs := p.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+	if !cfg.Security.Zones["trust"].TCPRst {
+		t.Error("trust zone tcp-rst should be true")
+	}
+	if cfg.Security.Zones["untrust"].TCPRst {
+		t.Error("untrust zone tcp-rst should be false")
+	}
+}
+
+func TestSSHKnownHostsAndPolicyStats(t *testing.T) {
+	input := `
+security {
+    ssh-known-hosts {
+        host 192.168.0.253 {
+            ecdsa-sha2-nistp256-key AAAAE2VjZHNhLXNoYTItbmlzdHAyNTY;
+        }
+    }
+    policy-stats {
+        system-wide enable;
+    }
+    pre-id-default-policy {
+        then {
+            log {
+                session-close;
+            }
+        }
+    }
+}
+`
+	p := NewParser(input)
+	tree, errs := p.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+
+	// ssh-known-hosts
+	if len(cfg.Security.SSHKnownHosts) != 1 {
+		t.Fatalf("ssh-known-hosts count = %d, want 1", len(cfg.Security.SSHKnownHosts))
+	}
+	keys := cfg.Security.SSHKnownHosts["192.168.0.253"]
+	if len(keys) != 1 {
+		t.Fatalf("host keys count = %d, want 1", len(keys))
+	}
+	if keys[0].Type != "ecdsa-sha2-nistp256-key" {
+		t.Errorf("key type = %q", keys[0].Type)
+	}
+
+	// policy-stats
+	if !cfg.Security.PolicyStatsEnabled {
+		t.Error("policy-stats should be enabled")
+	}
+
+	// pre-id-default-policy
+	pidp := cfg.Security.PreIDDefaultPolicy
+	if pidp == nil {
+		t.Fatal("pre-id-default-policy is nil")
+	}
+	if pidp.LogSessionInit {
+		t.Error("session-init should be false")
+	}
+	if !pidp.LogSessionClose {
+		t.Error("session-close should be true")
+	}
+}
+
+func TestInterfaceRedundancyAndFabric(t *testing.T) {
+	input := `
+interfaces {
+    reth0 {
+        redundant-ether-options {
+            redundancy-group 1;
+        }
+        unit 0 {
+            family inet {
+                address 10.0.0.1/24 {
+                    primary;
+                    preferred;
+                }
+            }
+        }
+    }
+    fab0 {
+        fabric-options {
+            member-interfaces {
+                ge-0/0/7;
+                ge-7/0/7;
+            }
+        }
+    }
+}
+`
+	p := NewParser(input)
+	tree, errs := p.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+
+	reth := cfg.Interfaces.Interfaces["reth0"]
+	if reth == nil {
+		t.Fatal("reth0 not found")
+	}
+	if reth.RedundancyGroup != 1 {
+		t.Errorf("redundancy-group = %d, want 1", reth.RedundancyGroup)
+	}
+	unit0 := reth.Units[0]
+	if unit0 == nil {
+		t.Fatal("reth0 unit 0 not found")
+	}
+	if unit0.PrimaryAddress != "10.0.0.1/24" {
+		t.Errorf("primary address = %q, want 10.0.0.1/24", unit0.PrimaryAddress)
+	}
+
+	fab := cfg.Interfaces.Interfaces["fab0"]
+	if fab == nil {
+		t.Fatal("fab0 not found")
+	}
+	if len(fab.FabricMembers) != 2 {
+		t.Fatalf("fabric members = %d, want 2", len(fab.FabricMembers))
+	}
+	if fab.FabricMembers[0] != "ge-0/0/7" {
+		t.Errorf("fabric member[0] = %q", fab.FabricMembers[0])
+	}
+}
+
+func TestInterfaceSamplingAndFilterOutput(t *testing.T) {
+	input := `
+interfaces {
+    ge-0/0/0 {
+        unit 0 {
+            family inet {
+                sampling {
+                    input;
+                    output;
+                }
+                filter {
+                    input ingress-filter;
+                    output egress-filter;
+                }
+                address 10.0.0.1/24;
+            }
+            family inet6 {
+                dad-disable;
+                sampling {
+                    input;
+                }
+                filter {
+                    input ingress-v6;
+                    output egress-v6;
+                }
+                address 2001:db8::1/64;
+            }
+        }
+    }
+}
+`
+	p := NewParser(input)
+	tree, errs := p.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+
+	ifc := cfg.Interfaces.Interfaces["ge-0/0/0"]
+	if ifc == nil {
+		t.Fatal("ge-0/0/0 not found")
+	}
+	unit := ifc.Units[0]
+	if unit == nil {
+		t.Fatal("unit 0 not found")
+	}
+
+	// Sampling
+	if !unit.SamplingInput {
+		t.Error("sampling input should be true")
+	}
+	if !unit.SamplingOutput {
+		t.Error("sampling output should be true")
+	}
+
+	// Filter output
+	if unit.FilterInputV4 != "ingress-filter" {
+		t.Errorf("FilterInputV4 = %q", unit.FilterInputV4)
+	}
+	if unit.FilterOutputV4 != "egress-filter" {
+		t.Errorf("FilterOutputV4 = %q", unit.FilterOutputV4)
+	}
+	if unit.FilterInputV6 != "ingress-v6" {
+		t.Errorf("FilterInputV6 = %q", unit.FilterInputV6)
+	}
+	if unit.FilterOutputV6 != "egress-v6" {
+		t.Errorf("FilterOutputV6 = %q", unit.FilterOutputV6)
+	}
+
+	// DAD disable
+	if !unit.DADDisable {
+		t.Error("dad-disable should be true")
+	}
+}
+
+func TestTopLevelSNMP(t *testing.T) {
+	input := `
+snmp {
+    community public {
+        authorization read-only;
+    }
+}
+`
+	p := NewParser(input)
+	tree, errs := p.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+
+	if cfg.System.SNMP == nil {
+		t.Fatal("SNMP is nil")
+	}
+	comm := cfg.System.SNMP.Communities["public"]
+	if comm == nil {
+		t.Fatal("community public not found")
+	}
+	if comm.Authorization != "read-only" {
+		t.Errorf("authorization = %q, want read-only", comm.Authorization)
+	}
+}
+

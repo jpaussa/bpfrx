@@ -139,11 +139,12 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 		"zones": {children: map[string]*schemaNode{
 			"security-zone": {args: 1, valueHint: ValueHintZoneName, children: map[string]*schemaNode{
 				"interfaces": {children: nil},
+				"tcp-rst":    {children: nil},
+				"screen":     {args: 1, children: nil},
 				"host-inbound-traffic": {children: map[string]*schemaNode{
 					"system-services": {children: nil},
 					"protocols":       {children: nil},
 				}},
-				// "screen <profile>" not listed here → becomes leaf
 			}},
 		}},
 		"policies": {children: map[string]*schemaNode{
@@ -325,12 +326,32 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 		"dynamic-address": {children: map[string]*schemaNode{
 			"feed-server": {args: 1, children: nil},
 		}},
+		"ssh-known-hosts": {children: map[string]*schemaNode{
+			"host": {args: 1, children: nil},
+		}},
+		"policy-stats": {children: map[string]*schemaNode{
+			"system-wide": {args: 1, children: nil},
+		}},
+		"pre-id-default-policy": {children: map[string]*schemaNode{
+			"then": {children: map[string]*schemaNode{
+				"log": {children: map[string]*schemaNode{
+					"session-init":  {children: nil},
+					"session-close": {children: nil},
+				}},
+			}},
+		}},
 	}},
 	"interfaces": {wildcard: &schemaNode{valueHint: ValueHintInterfaceName, children: map[string]*schemaNode{
 		"description":  {args: 1, children: nil},
 		"vlan-tagging": {children: nil},
 		"gigether-options": {children: map[string]*schemaNode{
 			"redundant-parent": {args: 1, children: nil},
+		}},
+		"redundant-ether-options": {children: map[string]*schemaNode{
+			"redundancy-group": {args: 1, children: nil},
+		}},
+		"fabric-options": {children: map[string]*schemaNode{
+			"member-interfaces": {children: nil},
 		}},
 		"tunnel": {children: map[string]*schemaNode{
 			"source":      {args: 1, children: nil},
@@ -349,12 +370,35 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 			"tunnel":         {children: nil},
 			"family": {children: map[string]*schemaNode{
 				"inet": {children: map[string]*schemaNode{
-					"mtu":    {args: 1, children: nil},
-					"filter": {children: nil},
+					"mtu":     {args: 1, children: nil},
+					"address": {args: 1, children: map[string]*schemaNode{
+						"primary":   {children: nil},
+						"preferred": {children: nil},
+					}},
+					"sampling": {children: map[string]*schemaNode{
+						"input":  {children: nil},
+						"output": {children: nil},
+					}},
+					"filter": {children: map[string]*schemaNode{
+						"input":  {args: 1, children: nil},
+						"output": {args: 1, children: nil},
+					}},
 				}},
 				"inet6": {children: map[string]*schemaNode{
-					"mtu":    {args: 1, children: nil},
-					"filter": {children: nil},
+					"mtu":         {args: 1, children: nil},
+					"dad-disable": {children: nil},
+					"address":     {args: 1, children: map[string]*schemaNode{
+						"primary":   {children: nil},
+						"preferred": {children: nil},
+					}},
+					"sampling": {children: map[string]*schemaNode{
+						"input":  {children: nil},
+						"output": {children: nil},
+					}},
+					"filter": {children: map[string]*schemaNode{
+						"input":  {args: 1, children: nil},
+						"output": {args: 1, children: nil},
+					}},
 					"dhcpv6-client": {children: map[string]*schemaNode{
 						"client-identifier": {children: map[string]*schemaNode{
 							"duid-type": {args: 1, children: nil},
@@ -389,6 +433,12 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 		"forwarding-table": {children: map[string]*schemaNode{
 			"export": {args: 1, children: nil},
 		}},
+	}},
+	"snmp": {children: map[string]*schemaNode{
+		"community": {args: 1, children: map[string]*schemaNode{
+			"authorization": {args: 1, children: nil},
+		}},
+		"trap-group": {args: 1, children: nil},
 	}},
 	"policy-options": {children: map[string]*schemaNode{
 		"prefix-list": {args: 1, children: nil},

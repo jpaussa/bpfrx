@@ -73,6 +73,11 @@ func CompileConfig(tree *ConfigTree) (*Config, error) {
 			if err := compilePolicyOptions(node, &cfg.PolicyOptions); err != nil {
 				return nil, fmt.Errorf("policy-options: %w", err)
 			}
+		case "snmp":
+			// Top-level snmp stanza (same format as system { snmp { ... } })
+			if err := compileSNMP(node, &cfg.System); err != nil {
+				return nil, fmt.Errorf("snmp: %w", err)
+			}
 		}
 	}
 
@@ -249,6 +254,20 @@ func ValidateConfig(cfg *Config) []string {
 					warnings = append(warnings, fmt.Sprintf(
 						"interface %s unit %d: filter input-v6 %q not defined",
 						ifName, unitNum, unit.FilterInputV6))
+				}
+			}
+			if unit.FilterOutputV4 != "" {
+				if _, ok := cfg.Firewall.FiltersInet[unit.FilterOutputV4]; !ok {
+					warnings = append(warnings, fmt.Sprintf(
+						"interface %s unit %d: filter output %q not defined",
+						ifName, unitNum, unit.FilterOutputV4))
+				}
+			}
+			if unit.FilterOutputV6 != "" {
+				if _, ok := cfg.Firewall.FiltersInet6[unit.FilterOutputV6]; !ok {
+					warnings = append(warnings, fmt.Sprintf(
+						"interface %s unit %d: filter output-v6 %q not defined",
+						ifName, unitNum, unit.FilterOutputV6))
 				}
 			}
 		}
@@ -813,6 +832,10 @@ func compileInterfaces(node *Node, ifaces *InterfacesConfig) error {
 					case "inet":
 						for _, addrInst := range namedInstances(afNode.FindChildren("address")) {
 							unit.Addresses = append(unit.Addresses, addrInst.name)
+							// Check for primary/preferred flags
+							if addrInst.node.FindChild("primary") != nil {
+								unit.PrimaryAddress = addrInst.name
+							}
 							// Parse VRRP groups under address
 							for _, vrrpInst := range namedInstances(addrInst.node.FindChildren("vrrp-group")) {
 								groupID, err := strconv.Atoi(vrrpInst.name)
@@ -870,17 +893,34 @@ func compileInterfaces(node *Node, ifaces *InterfacesConfig) error {
 								}
 							}
 						}
+						if sampNode := afNode.FindChild("sampling"); sampNode != nil {
+							if sampNode.FindChild("input") != nil {
+								unit.SamplingInput = true
+							}
+							if sampNode.FindChild("output") != nil {
+								unit.SamplingOutput = true
+							}
+						}
 						if filterNode := afNode.FindChild("filter"); filterNode != nil {
 							if inputNode := filterNode.FindChild("input"); inputNode != nil {
 								unit.FilterInputV4 = nodeVal(inputNode)
+							}
+							if outputNode := filterNode.FindChild("output"); outputNode != nil {
+								unit.FilterOutputV4 = nodeVal(outputNode)
 							}
 						}
 					case "inet6":
 						for _, addrInst := range namedInstances(afNode.FindChildren("address")) {
 							unit.Addresses = append(unit.Addresses, addrInst.name)
+							if addrInst.node.FindChild("primary") != nil && unit.PrimaryAddress == "" {
+								unit.PrimaryAddress = addrInst.name
+							}
 						}
 						if afNode.FindChild("dhcpv6") != nil {
 							unit.DHCPv6 = true
+						}
+						if afNode.FindChild("dad-disable") != nil {
+							unit.DADDisable = true
 						}
 						if mtuNode := afNode.FindChild("mtu"); mtuNode != nil {
 							if v := nodeVal(mtuNode); v != "" {
@@ -891,9 +931,20 @@ func compileInterfaces(node *Node, ifaces *InterfacesConfig) error {
 								}
 							}
 						}
+						if sampNode := afNode.FindChild("sampling"); sampNode != nil {
+							if sampNode.FindChild("input") != nil {
+								unit.SamplingInput = true
+							}
+							if sampNode.FindChild("output") != nil {
+								unit.SamplingOutput = true
+							}
+						}
 						if filterNode := afNode.FindChild("filter"); filterNode != nil {
 							if inputNode := filterNode.FindChild("input"); inputNode != nil {
 								unit.FilterInputV6 = nodeVal(inputNode)
+							}
+							if outputNode := filterNode.FindChild("output"); outputNode != nil {
+								unit.FilterOutputV6 = nodeVal(outputNode)
 							}
 						}
 						if dcNode := afNode.FindChild("dhcpv6-client"); dcNode != nil {
