@@ -1549,19 +1549,22 @@ func (*GetGlobalStatsRequest) Descriptor() ([]byte, []int) {
 }
 
 type GetGlobalStatsResponse struct {
-	state             protoimpl.MessageState `protogen:"open.v1"`
-	RxPackets         uint64                 `protobuf:"varint,1,opt,name=rx_packets,json=rxPackets,proto3" json:"rx_packets,omitempty"`
-	TxPackets         uint64                 `protobuf:"varint,2,opt,name=tx_packets,json=txPackets,proto3" json:"tx_packets,omitempty"`
-	Drops             uint64                 `protobuf:"varint,3,opt,name=drops,proto3" json:"drops,omitempty"`
-	SessionsCreated   uint64                 `protobuf:"varint,4,opt,name=sessions_created,json=sessionsCreated,proto3" json:"sessions_created,omitempty"`
-	SessionsClosed    uint64                 `protobuf:"varint,5,opt,name=sessions_closed,json=sessionsClosed,proto3" json:"sessions_closed,omitempty"`
-	ScreenDrops       uint64                 `protobuf:"varint,6,opt,name=screen_drops,json=screenDrops,proto3" json:"screen_drops,omitempty"`
-	PolicyDenies      uint64                 `protobuf:"varint,7,opt,name=policy_denies,json=policyDenies,proto3" json:"policy_denies,omitempty"`
-	NatAllocFailures  uint64                 `protobuf:"varint,8,opt,name=nat_alloc_failures,json=natAllocFailures,proto3" json:"nat_alloc_failures,omitempty"`
-	HostInboundDenies uint64                 `protobuf:"varint,9,opt,name=host_inbound_denies,json=hostInboundDenies,proto3" json:"host_inbound_denies,omitempty"`
-	TcEgressPackets   uint64                 `protobuf:"varint,10,opt,name=tc_egress_packets,json=tcEgressPackets,proto3" json:"tc_egress_packets,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	RxPackets          uint64                 `protobuf:"varint,1,opt,name=rx_packets,json=rxPackets,proto3" json:"rx_packets,omitempty"`
+	TxPackets          uint64                 `protobuf:"varint,2,opt,name=tx_packets,json=txPackets,proto3" json:"tx_packets,omitempty"`
+	Drops              uint64                 `protobuf:"varint,3,opt,name=drops,proto3" json:"drops,omitempty"`
+	SessionsCreated    uint64                 `protobuf:"varint,4,opt,name=sessions_created,json=sessionsCreated,proto3" json:"sessions_created,omitempty"`
+	SessionsClosed     uint64                 `protobuf:"varint,5,opt,name=sessions_closed,json=sessionsClosed,proto3" json:"sessions_closed,omitempty"`
+	ScreenDrops        uint64                 `protobuf:"varint,6,opt,name=screen_drops,json=screenDrops,proto3" json:"screen_drops,omitempty"`
+	PolicyDenies       uint64                 `protobuf:"varint,7,opt,name=policy_denies,json=policyDenies,proto3" json:"policy_denies,omitempty"`
+	NatAllocFailures   uint64                 `protobuf:"varint,8,opt,name=nat_alloc_failures,json=natAllocFailures,proto3" json:"nat_alloc_failures,omitempty"`
+	HostInboundDenies  uint64                 `protobuf:"varint,9,opt,name=host_inbound_denies,json=hostInboundDenies,proto3" json:"host_inbound_denies,omitempty"`
+	TcEgressPackets    uint64                 `protobuf:"varint,10,opt,name=tc_egress_packets,json=tcEgressPackets,proto3" json:"tc_egress_packets,omitempty"`
+	Nat64Translations  uint64                 `protobuf:"varint,11,opt,name=nat64_translations,json=nat64Translations,proto3" json:"nat64_translations,omitempty"`
+	HostInboundAllowed uint64                 `protobuf:"varint,12,opt,name=host_inbound_allowed,json=hostInboundAllowed,proto3" json:"host_inbound_allowed,omitempty"`
+	ScreenDropDetails  map[string]uint64      `protobuf:"bytes,13,rep,name=screen_drop_details,json=screenDropDetails,proto3" json:"screen_drop_details,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *GetGlobalStatsResponse) Reset() {
@@ -1662,6 +1665,27 @@ func (x *GetGlobalStatsResponse) GetTcEgressPackets() uint64 {
 		return x.TcEgressPackets
 	}
 	return 0
+}
+
+func (x *GetGlobalStatsResponse) GetNat64Translations() uint64 {
+	if x != nil {
+		return x.Nat64Translations
+	}
+	return 0
+}
+
+func (x *GetGlobalStatsResponse) GetHostInboundAllowed() uint64 {
+	if x != nil {
+		return x.HostInboundAllowed
+	}
+	return 0
+}
+
+func (x *GetGlobalStatsResponse) GetScreenDropDetails() map[string]uint64 {
+	if x != nil {
+		return x.ScreenDropDetails
+	}
+	return nil
 }
 
 type GetZonesRequest struct {
@@ -6095,7 +6119,7 @@ const file_bpfrx_proto_rawDesc = "" +
 	"\n" +
 	"zone_count\x18\x04 \x01(\x05R\tzoneCount\x12#\n" +
 	"\rsession_count\x18\x05 \x01(\x05R\fsessionCount\"\x17\n" +
-	"\x15GetGlobalStatsRequest\"\x92\x03\n" +
+	"\x15GetGlobalStatsRequest\"\xa2\x05\n" +
 	"\x16GetGlobalStatsResponse\x12\x1d\n" +
 	"\n" +
 	"rx_packets\x18\x01 \x01(\x04R\trxPackets\x12\x1d\n" +
@@ -6109,7 +6133,13 @@ const file_bpfrx_proto_rawDesc = "" +
 	"\x12nat_alloc_failures\x18\b \x01(\x04R\x10natAllocFailures\x12.\n" +
 	"\x13host_inbound_denies\x18\t \x01(\x04R\x11hostInboundDenies\x12*\n" +
 	"\x11tc_egress_packets\x18\n" +
-	" \x01(\x04R\x0ftcEgressPackets\"\x11\n" +
+	" \x01(\x04R\x0ftcEgressPackets\x12-\n" +
+	"\x12nat64_translations\x18\v \x01(\x04R\x11nat64Translations\x120\n" +
+	"\x14host_inbound_allowed\x18\f \x01(\x04R\x12hostInboundAllowed\x12g\n" +
+	"\x13screen_drop_details\x18\r \x03(\v27.bpfrx.v1.GetGlobalStatsResponse.ScreenDropDetailsEntryR\x11screenDropDetails\x1aD\n" +
+	"\x16ScreenDropDetailsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\x04R\x05value:\x028\x01\"\x11\n" +
 	"\x0fGetZonesRequest\"<\n" +
 	"\x10GetZonesResponse\x12(\n" +
 	"\x05zones\x18\x01 \x03(\v2\x12.bpfrx.v1.ZoneInfoR\x05zones\"\xfc\x02\n" +
@@ -6491,7 +6521,7 @@ func file_bpfrx_proto_rawDescGZIP() []byte {
 }
 
 var file_bpfrx_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_bpfrx_proto_msgTypes = make([]protoimpl.MessageInfo, 112)
+var file_bpfrx_proto_msgTypes = make([]protoimpl.MessageInfo, 113)
 var file_bpfrx_proto_goTypes = []any{
 	(ConfigFormat)(0),                         // 0: bpfrx.v1.ConfigFormat
 	(ConfigTarget)(0),                         // 1: bpfrx.v1.ConfigTarget
@@ -6607,128 +6637,130 @@ var file_bpfrx_proto_goTypes = []any{
 	(*GetSystemInfoResponse)(nil),             // 111: bpfrx.v1.GetSystemInfoResponse
 	(*SystemActionRequest)(nil),               // 112: bpfrx.v1.SystemActionRequest
 	(*SystemActionResponse)(nil),              // 113: bpfrx.v1.SystemActionResponse
+	nil,                                       // 114: bpfrx.v1.GetGlobalStatsResponse.ScreenDropDetailsEntry
 }
 var file_bpfrx_proto_depIdxs = []int32{
 	0,   // 0: bpfrx.v1.ShowConfigRequest.format:type_name -> bpfrx.v1.ConfigFormat
 	1,   // 1: bpfrx.v1.ShowConfigRequest.target:type_name -> bpfrx.v1.ConfigTarget
 	0,   // 2: bpfrx.v1.ShowRollbackRequest.format:type_name -> bpfrx.v1.ConfigFormat
 	32,  // 3: bpfrx.v1.ListHistoryResponse.entries:type_name -> bpfrx.v1.HistoryEntry
-	39,  // 4: bpfrx.v1.GetZonesResponse.zones:type_name -> bpfrx.v1.ZoneInfo
-	42,  // 5: bpfrx.v1.GetPoliciesResponse.policies:type_name -> bpfrx.v1.PolicyInfo
-	43,  // 6: bpfrx.v1.PolicyInfo.rules:type_name -> bpfrx.v1.PolicyRule
-	46,  // 7: bpfrx.v1.GetSessionsResponse.sessions:type_name -> bpfrx.v1.SessionEntry
-	51,  // 8: bpfrx.v1.GetNATSourceResponse.rules:type_name -> bpfrx.v1.NATSourceInfo
-	54,  // 9: bpfrx.v1.GetNATDestinationResponse.rules:type_name -> bpfrx.v1.NATDestInfo
-	57,  // 10: bpfrx.v1.GetScreenResponse.screens:type_name -> bpfrx.v1.ScreenInfo
-	60,  // 11: bpfrx.v1.GetEventsResponse.events:type_name -> bpfrx.v1.EventEntry
-	63,  // 12: bpfrx.v1.GetInterfacesResponse.interfaces:type_name -> bpfrx.v1.InterfaceInfo
-	68,  // 13: bpfrx.v1.GetDHCPLeasesResponse.leases:type_name -> bpfrx.v1.DHCPLeaseInfo
-	71,  // 14: bpfrx.v1.GetDHCPClientIdentifiersResponse.identifiers:type_name -> bpfrx.v1.DHCPClientIdentifierInfo
-	76,  // 15: bpfrx.v1.GetRoutesResponse.routes:type_name -> bpfrx.v1.RouteInfo
-	97,  // 16: bpfrx.v1.GetNATPoolStatsResponse.pools:type_name -> bpfrx.v1.NATPoolStats
-	100, // 17: bpfrx.v1.GetVRRPStatusResponse.instances:type_name -> bpfrx.v1.VRRPInstanceInfo
-	105, // 18: bpfrx.v1.GetNATRuleStatsResponse.rules:type_name -> bpfrx.v1.NATRuleStats
-	2,   // 19: bpfrx.v1.BpfrxService.EnterConfigure:input_type -> bpfrx.v1.EnterConfigureRequest
-	4,   // 20: bpfrx.v1.BpfrxService.ExitConfigure:input_type -> bpfrx.v1.ExitConfigureRequest
-	6,   // 21: bpfrx.v1.BpfrxService.GetConfigModeStatus:input_type -> bpfrx.v1.GetConfigModeStatusRequest
-	8,   // 22: bpfrx.v1.BpfrxService.Set:input_type -> bpfrx.v1.SetRequest
-	10,  // 23: bpfrx.v1.BpfrxService.Delete:input_type -> bpfrx.v1.DeleteRequest
-	12,  // 24: bpfrx.v1.BpfrxService.Load:input_type -> bpfrx.v1.LoadRequest
-	14,  // 25: bpfrx.v1.BpfrxService.Commit:input_type -> bpfrx.v1.CommitRequest
-	16,  // 26: bpfrx.v1.BpfrxService.CommitCheck:input_type -> bpfrx.v1.CommitCheckRequest
-	18,  // 27: bpfrx.v1.BpfrxService.CommitConfirmed:input_type -> bpfrx.v1.CommitConfirmedRequest
-	20,  // 28: bpfrx.v1.BpfrxService.ConfirmCommit:input_type -> bpfrx.v1.ConfirmCommitRequest
-	22,  // 29: bpfrx.v1.BpfrxService.Rollback:input_type -> bpfrx.v1.RollbackRequest
-	24,  // 30: bpfrx.v1.BpfrxService.ShowConfig:input_type -> bpfrx.v1.ShowConfigRequest
-	26,  // 31: bpfrx.v1.BpfrxService.ShowCompare:input_type -> bpfrx.v1.ShowCompareRequest
-	28,  // 32: bpfrx.v1.BpfrxService.ShowRollback:input_type -> bpfrx.v1.ShowRollbackRequest
-	30,  // 33: bpfrx.v1.BpfrxService.ListHistory:input_type -> bpfrx.v1.ListHistoryRequest
-	33,  // 34: bpfrx.v1.BpfrxService.GetStatus:input_type -> bpfrx.v1.GetStatusRequest
-	35,  // 35: bpfrx.v1.BpfrxService.GetGlobalStats:input_type -> bpfrx.v1.GetGlobalStatsRequest
-	37,  // 36: bpfrx.v1.BpfrxService.GetZones:input_type -> bpfrx.v1.GetZonesRequest
-	40,  // 37: bpfrx.v1.BpfrxService.GetPolicies:input_type -> bpfrx.v1.GetPoliciesRequest
-	44,  // 38: bpfrx.v1.BpfrxService.GetSessions:input_type -> bpfrx.v1.GetSessionsRequest
-	47,  // 39: bpfrx.v1.BpfrxService.GetSessionSummary:input_type -> bpfrx.v1.GetSessionSummaryRequest
-	49,  // 40: bpfrx.v1.BpfrxService.GetNATSource:input_type -> bpfrx.v1.GetNATSourceRequest
-	52,  // 41: bpfrx.v1.BpfrxService.GetNATDestination:input_type -> bpfrx.v1.GetNATDestinationRequest
-	55,  // 42: bpfrx.v1.BpfrxService.GetScreen:input_type -> bpfrx.v1.GetScreenRequest
-	58,  // 43: bpfrx.v1.BpfrxService.GetEvents:input_type -> bpfrx.v1.GetEventsRequest
-	61,  // 44: bpfrx.v1.BpfrxService.GetInterfaces:input_type -> bpfrx.v1.GetInterfacesRequest
-	64,  // 45: bpfrx.v1.BpfrxService.ShowInterfacesDetail:input_type -> bpfrx.v1.ShowInterfacesDetailRequest
-	66,  // 46: bpfrx.v1.BpfrxService.GetDHCPLeases:input_type -> bpfrx.v1.GetDHCPLeasesRequest
-	69,  // 47: bpfrx.v1.BpfrxService.GetDHCPClientIdentifiers:input_type -> bpfrx.v1.GetDHCPClientIdentifiersRequest
-	74,  // 48: bpfrx.v1.BpfrxService.GetRoutes:input_type -> bpfrx.v1.GetRoutesRequest
-	77,  // 49: bpfrx.v1.BpfrxService.GetOSPFStatus:input_type -> bpfrx.v1.GetOSPFStatusRequest
-	79,  // 50: bpfrx.v1.BpfrxService.GetBGPStatus:input_type -> bpfrx.v1.GetBGPStatusRequest
-	81,  // 51: bpfrx.v1.BpfrxService.GetRIPStatus:input_type -> bpfrx.v1.GetRIPStatusRequest
-	83,  // 52: bpfrx.v1.BpfrxService.GetISISStatus:input_type -> bpfrx.v1.GetISISStatusRequest
-	85,  // 53: bpfrx.v1.BpfrxService.GetIPsecSA:input_type -> bpfrx.v1.GetIPsecSARequest
-	95,  // 54: bpfrx.v1.BpfrxService.GetNATPoolStats:input_type -> bpfrx.v1.GetNATPoolStatsRequest
-	103, // 55: bpfrx.v1.BpfrxService.GetNATRuleStats:input_type -> bpfrx.v1.GetNATRuleStatsRequest
-	98,  // 56: bpfrx.v1.BpfrxService.GetVRRPStatus:input_type -> bpfrx.v1.GetVRRPStatusRequest
-	101, // 57: bpfrx.v1.BpfrxService.MatchPolicies:input_type -> bpfrx.v1.MatchPoliciesRequest
-	87,  // 58: bpfrx.v1.BpfrxService.Ping:input_type -> bpfrx.v1.PingRequest
-	89,  // 59: bpfrx.v1.BpfrxService.Traceroute:input_type -> bpfrx.v1.TracerouteRequest
-	91,  // 60: bpfrx.v1.BpfrxService.ClearSessions:input_type -> bpfrx.v1.ClearSessionsRequest
-	93,  // 61: bpfrx.v1.BpfrxService.ClearCounters:input_type -> bpfrx.v1.ClearCountersRequest
-	72,  // 62: bpfrx.v1.BpfrxService.ClearDHCPClientIdentifier:input_type -> bpfrx.v1.ClearDHCPClientIdentifierRequest
-	108, // 63: bpfrx.v1.BpfrxService.ShowText:input_type -> bpfrx.v1.ShowTextRequest
-	110, // 64: bpfrx.v1.BpfrxService.GetSystemInfo:input_type -> bpfrx.v1.GetSystemInfoRequest
-	112, // 65: bpfrx.v1.BpfrxService.SystemAction:input_type -> bpfrx.v1.SystemActionRequest
-	106, // 66: bpfrx.v1.BpfrxService.Complete:input_type -> bpfrx.v1.CompleteRequest
-	3,   // 67: bpfrx.v1.BpfrxService.EnterConfigure:output_type -> bpfrx.v1.EnterConfigureResponse
-	5,   // 68: bpfrx.v1.BpfrxService.ExitConfigure:output_type -> bpfrx.v1.ExitConfigureResponse
-	7,   // 69: bpfrx.v1.BpfrxService.GetConfigModeStatus:output_type -> bpfrx.v1.GetConfigModeStatusResponse
-	9,   // 70: bpfrx.v1.BpfrxService.Set:output_type -> bpfrx.v1.SetResponse
-	11,  // 71: bpfrx.v1.BpfrxService.Delete:output_type -> bpfrx.v1.DeleteResponse
-	13,  // 72: bpfrx.v1.BpfrxService.Load:output_type -> bpfrx.v1.LoadResponse
-	15,  // 73: bpfrx.v1.BpfrxService.Commit:output_type -> bpfrx.v1.CommitResponse
-	17,  // 74: bpfrx.v1.BpfrxService.CommitCheck:output_type -> bpfrx.v1.CommitCheckResponse
-	19,  // 75: bpfrx.v1.BpfrxService.CommitConfirmed:output_type -> bpfrx.v1.CommitConfirmedResponse
-	21,  // 76: bpfrx.v1.BpfrxService.ConfirmCommit:output_type -> bpfrx.v1.ConfirmCommitResponse
-	23,  // 77: bpfrx.v1.BpfrxService.Rollback:output_type -> bpfrx.v1.RollbackResponse
-	25,  // 78: bpfrx.v1.BpfrxService.ShowConfig:output_type -> bpfrx.v1.ShowConfigResponse
-	27,  // 79: bpfrx.v1.BpfrxService.ShowCompare:output_type -> bpfrx.v1.ShowCompareResponse
-	29,  // 80: bpfrx.v1.BpfrxService.ShowRollback:output_type -> bpfrx.v1.ShowRollbackResponse
-	31,  // 81: bpfrx.v1.BpfrxService.ListHistory:output_type -> bpfrx.v1.ListHistoryResponse
-	34,  // 82: bpfrx.v1.BpfrxService.GetStatus:output_type -> bpfrx.v1.GetStatusResponse
-	36,  // 83: bpfrx.v1.BpfrxService.GetGlobalStats:output_type -> bpfrx.v1.GetGlobalStatsResponse
-	38,  // 84: bpfrx.v1.BpfrxService.GetZones:output_type -> bpfrx.v1.GetZonesResponse
-	41,  // 85: bpfrx.v1.BpfrxService.GetPolicies:output_type -> bpfrx.v1.GetPoliciesResponse
-	45,  // 86: bpfrx.v1.BpfrxService.GetSessions:output_type -> bpfrx.v1.GetSessionsResponse
-	48,  // 87: bpfrx.v1.BpfrxService.GetSessionSummary:output_type -> bpfrx.v1.GetSessionSummaryResponse
-	50,  // 88: bpfrx.v1.BpfrxService.GetNATSource:output_type -> bpfrx.v1.GetNATSourceResponse
-	53,  // 89: bpfrx.v1.BpfrxService.GetNATDestination:output_type -> bpfrx.v1.GetNATDestinationResponse
-	56,  // 90: bpfrx.v1.BpfrxService.GetScreen:output_type -> bpfrx.v1.GetScreenResponse
-	59,  // 91: bpfrx.v1.BpfrxService.GetEvents:output_type -> bpfrx.v1.GetEventsResponse
-	62,  // 92: bpfrx.v1.BpfrxService.GetInterfaces:output_type -> bpfrx.v1.GetInterfacesResponse
-	65,  // 93: bpfrx.v1.BpfrxService.ShowInterfacesDetail:output_type -> bpfrx.v1.ShowInterfacesDetailResponse
-	67,  // 94: bpfrx.v1.BpfrxService.GetDHCPLeases:output_type -> bpfrx.v1.GetDHCPLeasesResponse
-	70,  // 95: bpfrx.v1.BpfrxService.GetDHCPClientIdentifiers:output_type -> bpfrx.v1.GetDHCPClientIdentifiersResponse
-	75,  // 96: bpfrx.v1.BpfrxService.GetRoutes:output_type -> bpfrx.v1.GetRoutesResponse
-	78,  // 97: bpfrx.v1.BpfrxService.GetOSPFStatus:output_type -> bpfrx.v1.GetOSPFStatusResponse
-	80,  // 98: bpfrx.v1.BpfrxService.GetBGPStatus:output_type -> bpfrx.v1.GetBGPStatusResponse
-	82,  // 99: bpfrx.v1.BpfrxService.GetRIPStatus:output_type -> bpfrx.v1.GetRIPStatusResponse
-	84,  // 100: bpfrx.v1.BpfrxService.GetISISStatus:output_type -> bpfrx.v1.GetISISStatusResponse
-	86,  // 101: bpfrx.v1.BpfrxService.GetIPsecSA:output_type -> bpfrx.v1.GetIPsecSAResponse
-	96,  // 102: bpfrx.v1.BpfrxService.GetNATPoolStats:output_type -> bpfrx.v1.GetNATPoolStatsResponse
-	104, // 103: bpfrx.v1.BpfrxService.GetNATRuleStats:output_type -> bpfrx.v1.GetNATRuleStatsResponse
-	99,  // 104: bpfrx.v1.BpfrxService.GetVRRPStatus:output_type -> bpfrx.v1.GetVRRPStatusResponse
-	102, // 105: bpfrx.v1.BpfrxService.MatchPolicies:output_type -> bpfrx.v1.MatchPoliciesResponse
-	88,  // 106: bpfrx.v1.BpfrxService.Ping:output_type -> bpfrx.v1.PingResponse
-	90,  // 107: bpfrx.v1.BpfrxService.Traceroute:output_type -> bpfrx.v1.TracerouteResponse
-	92,  // 108: bpfrx.v1.BpfrxService.ClearSessions:output_type -> bpfrx.v1.ClearSessionsResponse
-	94,  // 109: bpfrx.v1.BpfrxService.ClearCounters:output_type -> bpfrx.v1.ClearCountersResponse
-	73,  // 110: bpfrx.v1.BpfrxService.ClearDHCPClientIdentifier:output_type -> bpfrx.v1.ClearDHCPClientIdentifierResponse
-	109, // 111: bpfrx.v1.BpfrxService.ShowText:output_type -> bpfrx.v1.ShowTextResponse
-	111, // 112: bpfrx.v1.BpfrxService.GetSystemInfo:output_type -> bpfrx.v1.GetSystemInfoResponse
-	113, // 113: bpfrx.v1.BpfrxService.SystemAction:output_type -> bpfrx.v1.SystemActionResponse
-	107, // 114: bpfrx.v1.BpfrxService.Complete:output_type -> bpfrx.v1.CompleteResponse
-	67,  // [67:115] is the sub-list for method output_type
-	19,  // [19:67] is the sub-list for method input_type
-	19,  // [19:19] is the sub-list for extension type_name
-	19,  // [19:19] is the sub-list for extension extendee
-	0,   // [0:19] is the sub-list for field type_name
+	114, // 4: bpfrx.v1.GetGlobalStatsResponse.screen_drop_details:type_name -> bpfrx.v1.GetGlobalStatsResponse.ScreenDropDetailsEntry
+	39,  // 5: bpfrx.v1.GetZonesResponse.zones:type_name -> bpfrx.v1.ZoneInfo
+	42,  // 6: bpfrx.v1.GetPoliciesResponse.policies:type_name -> bpfrx.v1.PolicyInfo
+	43,  // 7: bpfrx.v1.PolicyInfo.rules:type_name -> bpfrx.v1.PolicyRule
+	46,  // 8: bpfrx.v1.GetSessionsResponse.sessions:type_name -> bpfrx.v1.SessionEntry
+	51,  // 9: bpfrx.v1.GetNATSourceResponse.rules:type_name -> bpfrx.v1.NATSourceInfo
+	54,  // 10: bpfrx.v1.GetNATDestinationResponse.rules:type_name -> bpfrx.v1.NATDestInfo
+	57,  // 11: bpfrx.v1.GetScreenResponse.screens:type_name -> bpfrx.v1.ScreenInfo
+	60,  // 12: bpfrx.v1.GetEventsResponse.events:type_name -> bpfrx.v1.EventEntry
+	63,  // 13: bpfrx.v1.GetInterfacesResponse.interfaces:type_name -> bpfrx.v1.InterfaceInfo
+	68,  // 14: bpfrx.v1.GetDHCPLeasesResponse.leases:type_name -> bpfrx.v1.DHCPLeaseInfo
+	71,  // 15: bpfrx.v1.GetDHCPClientIdentifiersResponse.identifiers:type_name -> bpfrx.v1.DHCPClientIdentifierInfo
+	76,  // 16: bpfrx.v1.GetRoutesResponse.routes:type_name -> bpfrx.v1.RouteInfo
+	97,  // 17: bpfrx.v1.GetNATPoolStatsResponse.pools:type_name -> bpfrx.v1.NATPoolStats
+	100, // 18: bpfrx.v1.GetVRRPStatusResponse.instances:type_name -> bpfrx.v1.VRRPInstanceInfo
+	105, // 19: bpfrx.v1.GetNATRuleStatsResponse.rules:type_name -> bpfrx.v1.NATRuleStats
+	2,   // 20: bpfrx.v1.BpfrxService.EnterConfigure:input_type -> bpfrx.v1.EnterConfigureRequest
+	4,   // 21: bpfrx.v1.BpfrxService.ExitConfigure:input_type -> bpfrx.v1.ExitConfigureRequest
+	6,   // 22: bpfrx.v1.BpfrxService.GetConfigModeStatus:input_type -> bpfrx.v1.GetConfigModeStatusRequest
+	8,   // 23: bpfrx.v1.BpfrxService.Set:input_type -> bpfrx.v1.SetRequest
+	10,  // 24: bpfrx.v1.BpfrxService.Delete:input_type -> bpfrx.v1.DeleteRequest
+	12,  // 25: bpfrx.v1.BpfrxService.Load:input_type -> bpfrx.v1.LoadRequest
+	14,  // 26: bpfrx.v1.BpfrxService.Commit:input_type -> bpfrx.v1.CommitRequest
+	16,  // 27: bpfrx.v1.BpfrxService.CommitCheck:input_type -> bpfrx.v1.CommitCheckRequest
+	18,  // 28: bpfrx.v1.BpfrxService.CommitConfirmed:input_type -> bpfrx.v1.CommitConfirmedRequest
+	20,  // 29: bpfrx.v1.BpfrxService.ConfirmCommit:input_type -> bpfrx.v1.ConfirmCommitRequest
+	22,  // 30: bpfrx.v1.BpfrxService.Rollback:input_type -> bpfrx.v1.RollbackRequest
+	24,  // 31: bpfrx.v1.BpfrxService.ShowConfig:input_type -> bpfrx.v1.ShowConfigRequest
+	26,  // 32: bpfrx.v1.BpfrxService.ShowCompare:input_type -> bpfrx.v1.ShowCompareRequest
+	28,  // 33: bpfrx.v1.BpfrxService.ShowRollback:input_type -> bpfrx.v1.ShowRollbackRequest
+	30,  // 34: bpfrx.v1.BpfrxService.ListHistory:input_type -> bpfrx.v1.ListHistoryRequest
+	33,  // 35: bpfrx.v1.BpfrxService.GetStatus:input_type -> bpfrx.v1.GetStatusRequest
+	35,  // 36: bpfrx.v1.BpfrxService.GetGlobalStats:input_type -> bpfrx.v1.GetGlobalStatsRequest
+	37,  // 37: bpfrx.v1.BpfrxService.GetZones:input_type -> bpfrx.v1.GetZonesRequest
+	40,  // 38: bpfrx.v1.BpfrxService.GetPolicies:input_type -> bpfrx.v1.GetPoliciesRequest
+	44,  // 39: bpfrx.v1.BpfrxService.GetSessions:input_type -> bpfrx.v1.GetSessionsRequest
+	47,  // 40: bpfrx.v1.BpfrxService.GetSessionSummary:input_type -> bpfrx.v1.GetSessionSummaryRequest
+	49,  // 41: bpfrx.v1.BpfrxService.GetNATSource:input_type -> bpfrx.v1.GetNATSourceRequest
+	52,  // 42: bpfrx.v1.BpfrxService.GetNATDestination:input_type -> bpfrx.v1.GetNATDestinationRequest
+	55,  // 43: bpfrx.v1.BpfrxService.GetScreen:input_type -> bpfrx.v1.GetScreenRequest
+	58,  // 44: bpfrx.v1.BpfrxService.GetEvents:input_type -> bpfrx.v1.GetEventsRequest
+	61,  // 45: bpfrx.v1.BpfrxService.GetInterfaces:input_type -> bpfrx.v1.GetInterfacesRequest
+	64,  // 46: bpfrx.v1.BpfrxService.ShowInterfacesDetail:input_type -> bpfrx.v1.ShowInterfacesDetailRequest
+	66,  // 47: bpfrx.v1.BpfrxService.GetDHCPLeases:input_type -> bpfrx.v1.GetDHCPLeasesRequest
+	69,  // 48: bpfrx.v1.BpfrxService.GetDHCPClientIdentifiers:input_type -> bpfrx.v1.GetDHCPClientIdentifiersRequest
+	74,  // 49: bpfrx.v1.BpfrxService.GetRoutes:input_type -> bpfrx.v1.GetRoutesRequest
+	77,  // 50: bpfrx.v1.BpfrxService.GetOSPFStatus:input_type -> bpfrx.v1.GetOSPFStatusRequest
+	79,  // 51: bpfrx.v1.BpfrxService.GetBGPStatus:input_type -> bpfrx.v1.GetBGPStatusRequest
+	81,  // 52: bpfrx.v1.BpfrxService.GetRIPStatus:input_type -> bpfrx.v1.GetRIPStatusRequest
+	83,  // 53: bpfrx.v1.BpfrxService.GetISISStatus:input_type -> bpfrx.v1.GetISISStatusRequest
+	85,  // 54: bpfrx.v1.BpfrxService.GetIPsecSA:input_type -> bpfrx.v1.GetIPsecSARequest
+	95,  // 55: bpfrx.v1.BpfrxService.GetNATPoolStats:input_type -> bpfrx.v1.GetNATPoolStatsRequest
+	103, // 56: bpfrx.v1.BpfrxService.GetNATRuleStats:input_type -> bpfrx.v1.GetNATRuleStatsRequest
+	98,  // 57: bpfrx.v1.BpfrxService.GetVRRPStatus:input_type -> bpfrx.v1.GetVRRPStatusRequest
+	101, // 58: bpfrx.v1.BpfrxService.MatchPolicies:input_type -> bpfrx.v1.MatchPoliciesRequest
+	87,  // 59: bpfrx.v1.BpfrxService.Ping:input_type -> bpfrx.v1.PingRequest
+	89,  // 60: bpfrx.v1.BpfrxService.Traceroute:input_type -> bpfrx.v1.TracerouteRequest
+	91,  // 61: bpfrx.v1.BpfrxService.ClearSessions:input_type -> bpfrx.v1.ClearSessionsRequest
+	93,  // 62: bpfrx.v1.BpfrxService.ClearCounters:input_type -> bpfrx.v1.ClearCountersRequest
+	72,  // 63: bpfrx.v1.BpfrxService.ClearDHCPClientIdentifier:input_type -> bpfrx.v1.ClearDHCPClientIdentifierRequest
+	108, // 64: bpfrx.v1.BpfrxService.ShowText:input_type -> bpfrx.v1.ShowTextRequest
+	110, // 65: bpfrx.v1.BpfrxService.GetSystemInfo:input_type -> bpfrx.v1.GetSystemInfoRequest
+	112, // 66: bpfrx.v1.BpfrxService.SystemAction:input_type -> bpfrx.v1.SystemActionRequest
+	106, // 67: bpfrx.v1.BpfrxService.Complete:input_type -> bpfrx.v1.CompleteRequest
+	3,   // 68: bpfrx.v1.BpfrxService.EnterConfigure:output_type -> bpfrx.v1.EnterConfigureResponse
+	5,   // 69: bpfrx.v1.BpfrxService.ExitConfigure:output_type -> bpfrx.v1.ExitConfigureResponse
+	7,   // 70: bpfrx.v1.BpfrxService.GetConfigModeStatus:output_type -> bpfrx.v1.GetConfigModeStatusResponse
+	9,   // 71: bpfrx.v1.BpfrxService.Set:output_type -> bpfrx.v1.SetResponse
+	11,  // 72: bpfrx.v1.BpfrxService.Delete:output_type -> bpfrx.v1.DeleteResponse
+	13,  // 73: bpfrx.v1.BpfrxService.Load:output_type -> bpfrx.v1.LoadResponse
+	15,  // 74: bpfrx.v1.BpfrxService.Commit:output_type -> bpfrx.v1.CommitResponse
+	17,  // 75: bpfrx.v1.BpfrxService.CommitCheck:output_type -> bpfrx.v1.CommitCheckResponse
+	19,  // 76: bpfrx.v1.BpfrxService.CommitConfirmed:output_type -> bpfrx.v1.CommitConfirmedResponse
+	21,  // 77: bpfrx.v1.BpfrxService.ConfirmCommit:output_type -> bpfrx.v1.ConfirmCommitResponse
+	23,  // 78: bpfrx.v1.BpfrxService.Rollback:output_type -> bpfrx.v1.RollbackResponse
+	25,  // 79: bpfrx.v1.BpfrxService.ShowConfig:output_type -> bpfrx.v1.ShowConfigResponse
+	27,  // 80: bpfrx.v1.BpfrxService.ShowCompare:output_type -> bpfrx.v1.ShowCompareResponse
+	29,  // 81: bpfrx.v1.BpfrxService.ShowRollback:output_type -> bpfrx.v1.ShowRollbackResponse
+	31,  // 82: bpfrx.v1.BpfrxService.ListHistory:output_type -> bpfrx.v1.ListHistoryResponse
+	34,  // 83: bpfrx.v1.BpfrxService.GetStatus:output_type -> bpfrx.v1.GetStatusResponse
+	36,  // 84: bpfrx.v1.BpfrxService.GetGlobalStats:output_type -> bpfrx.v1.GetGlobalStatsResponse
+	38,  // 85: bpfrx.v1.BpfrxService.GetZones:output_type -> bpfrx.v1.GetZonesResponse
+	41,  // 86: bpfrx.v1.BpfrxService.GetPolicies:output_type -> bpfrx.v1.GetPoliciesResponse
+	45,  // 87: bpfrx.v1.BpfrxService.GetSessions:output_type -> bpfrx.v1.GetSessionsResponse
+	48,  // 88: bpfrx.v1.BpfrxService.GetSessionSummary:output_type -> bpfrx.v1.GetSessionSummaryResponse
+	50,  // 89: bpfrx.v1.BpfrxService.GetNATSource:output_type -> bpfrx.v1.GetNATSourceResponse
+	53,  // 90: bpfrx.v1.BpfrxService.GetNATDestination:output_type -> bpfrx.v1.GetNATDestinationResponse
+	56,  // 91: bpfrx.v1.BpfrxService.GetScreen:output_type -> bpfrx.v1.GetScreenResponse
+	59,  // 92: bpfrx.v1.BpfrxService.GetEvents:output_type -> bpfrx.v1.GetEventsResponse
+	62,  // 93: bpfrx.v1.BpfrxService.GetInterfaces:output_type -> bpfrx.v1.GetInterfacesResponse
+	65,  // 94: bpfrx.v1.BpfrxService.ShowInterfacesDetail:output_type -> bpfrx.v1.ShowInterfacesDetailResponse
+	67,  // 95: bpfrx.v1.BpfrxService.GetDHCPLeases:output_type -> bpfrx.v1.GetDHCPLeasesResponse
+	70,  // 96: bpfrx.v1.BpfrxService.GetDHCPClientIdentifiers:output_type -> bpfrx.v1.GetDHCPClientIdentifiersResponse
+	75,  // 97: bpfrx.v1.BpfrxService.GetRoutes:output_type -> bpfrx.v1.GetRoutesResponse
+	78,  // 98: bpfrx.v1.BpfrxService.GetOSPFStatus:output_type -> bpfrx.v1.GetOSPFStatusResponse
+	80,  // 99: bpfrx.v1.BpfrxService.GetBGPStatus:output_type -> bpfrx.v1.GetBGPStatusResponse
+	82,  // 100: bpfrx.v1.BpfrxService.GetRIPStatus:output_type -> bpfrx.v1.GetRIPStatusResponse
+	84,  // 101: bpfrx.v1.BpfrxService.GetISISStatus:output_type -> bpfrx.v1.GetISISStatusResponse
+	86,  // 102: bpfrx.v1.BpfrxService.GetIPsecSA:output_type -> bpfrx.v1.GetIPsecSAResponse
+	96,  // 103: bpfrx.v1.BpfrxService.GetNATPoolStats:output_type -> bpfrx.v1.GetNATPoolStatsResponse
+	104, // 104: bpfrx.v1.BpfrxService.GetNATRuleStats:output_type -> bpfrx.v1.GetNATRuleStatsResponse
+	99,  // 105: bpfrx.v1.BpfrxService.GetVRRPStatus:output_type -> bpfrx.v1.GetVRRPStatusResponse
+	102, // 106: bpfrx.v1.BpfrxService.MatchPolicies:output_type -> bpfrx.v1.MatchPoliciesResponse
+	88,  // 107: bpfrx.v1.BpfrxService.Ping:output_type -> bpfrx.v1.PingResponse
+	90,  // 108: bpfrx.v1.BpfrxService.Traceroute:output_type -> bpfrx.v1.TracerouteResponse
+	92,  // 109: bpfrx.v1.BpfrxService.ClearSessions:output_type -> bpfrx.v1.ClearSessionsResponse
+	94,  // 110: bpfrx.v1.BpfrxService.ClearCounters:output_type -> bpfrx.v1.ClearCountersResponse
+	73,  // 111: bpfrx.v1.BpfrxService.ClearDHCPClientIdentifier:output_type -> bpfrx.v1.ClearDHCPClientIdentifierResponse
+	109, // 112: bpfrx.v1.BpfrxService.ShowText:output_type -> bpfrx.v1.ShowTextResponse
+	111, // 113: bpfrx.v1.BpfrxService.GetSystemInfo:output_type -> bpfrx.v1.GetSystemInfoResponse
+	113, // 114: bpfrx.v1.BpfrxService.SystemAction:output_type -> bpfrx.v1.SystemActionResponse
+	107, // 115: bpfrx.v1.BpfrxService.Complete:output_type -> bpfrx.v1.CompleteResponse
+	68,  // [68:116] is the sub-list for method output_type
+	20,  // [20:68] is the sub-list for method input_type
+	20,  // [20:20] is the sub-list for extension type_name
+	20,  // [20:20] is the sub-list for extension extendee
+	0,   // [0:20] is the sub-list for field type_name
 }
 
 func init() { file_bpfrx_proto_init() }
@@ -6742,7 +6774,7 @@ func file_bpfrx_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_bpfrx_proto_rawDesc), len(file_bpfrx_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   112,
+			NumMessages:   113,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

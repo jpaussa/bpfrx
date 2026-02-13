@@ -174,6 +174,9 @@ message GetGlobalStatsResponse {
   uint64 nat_alloc_failures = 8;
   uint64 host_inbound_denies = 9;
   uint64 tc_egress_packets = 10;
+  uint64 nat64_translations = 11;
+  uint64 host_inbound_allowed = 12;
+  map<string, uint64> screen_drop_details = 13;
 }
 
 message GetZonesRequest {}
