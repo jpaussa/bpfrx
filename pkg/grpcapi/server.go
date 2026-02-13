@@ -2617,6 +2617,12 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 			if flow.AllowEmbeddedICMP {
 				buf.WriteString("  Allow embedded ICMP:  enabled\n")
 			}
+			if flow.GREPerformanceAcceleration {
+				buf.WriteString("  GRE acceleration:     enabled\n")
+			}
+			if flow.PowerModeDisable {
+				buf.WriteString("  Power mode:           disabled\n")
+			}
 		}
 
 	case "flow-traceoptions":
@@ -3260,6 +3266,34 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 			}
 			if len(po.PrefixLists) == 0 && len(po.PolicyStatements) == 0 {
 				buf.WriteString("No policy-options configured\n")
+			}
+		}
+
+	case "backup-router":
+		if cfg == nil || cfg.System.BackupRouter == "" {
+			buf.WriteString("No backup router configured\n")
+		} else {
+			fmt.Fprintf(&buf, "Backup router: %s\n", cfg.System.BackupRouter)
+			if cfg.System.BackupRouterDst != "" {
+				fmt.Fprintf(&buf, "  Destination: %s\n", cfg.System.BackupRouterDst)
+			} else {
+				buf.WriteString("  Destination: 0.0.0.0/0 (default)\n")
+			}
+		}
+
+	case "nat64":
+		if cfg == nil || len(cfg.Security.NAT.NAT64) == 0 {
+			buf.WriteString("No NAT64 rule-sets configured\n")
+		} else {
+			for _, rs := range cfg.Security.NAT.NAT64 {
+				fmt.Fprintf(&buf, "NAT64 rule-set: %s\n", rs.Name)
+				if rs.Prefix != "" {
+					fmt.Fprintf(&buf, "  Prefix:      %s\n", rs.Prefix)
+				}
+				if rs.SourcePool != "" {
+					fmt.Fprintf(&buf, "  Source pool:  %s\n", rs.SourcePool)
+				}
+				buf.WriteString("\n")
 			}
 		}
 

@@ -798,6 +798,7 @@ func (c *ctl) handleShowNAT(args []string) error {
 		fmt.Println("  source           Show source NAT rules")
 		fmt.Println("  destination      Show destination NAT rules")
 		fmt.Println("  static           Show static NAT rules")
+		fmt.Println("  nat64            Show NAT64 rule-sets")
 		return nil
 	}
 	switch args[0] {
@@ -848,6 +849,8 @@ func (c *ctl) handleShowNAT(args []string) error {
 			fmt.Println()
 		}
 		return nil
+	case "nat64":
+		return c.showText("nat64")
 	default:
 		return fmt.Errorf("unknown show security nat target: %s", args[0])
 	}
@@ -1255,6 +1258,7 @@ func (c *ctl) handleShowSystem(args []string) error {
 	if len(args) == 0 {
 		fmt.Println("show system:")
 		fmt.Println("  alarms             Show system alarms")
+		fmt.Println("  backup-router      Show backup router configuration")
 		fmt.Println("  internet-options   Show internet options")
 		fmt.Println("  license            Show system license")
 		fmt.Println("  login              Show configured login users")
@@ -1382,6 +1386,9 @@ func (c *ctl) handleShowSystem(args []string) error {
 
 	case "root-authentication":
 		return c.showText("root-authentication")
+
+	case "backup-router":
+		return c.showText("backup-router")
 
 	default:
 		return fmt.Errorf("unknown show system target: %s", args[0])

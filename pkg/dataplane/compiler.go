@@ -2079,7 +2079,8 @@ func (m *Manager) compileFirewallFilters(cfg *config.Config, result *CompileResu
 	// Map interfaces to their assigned filters
 	for _, ifCfg := range cfg.Interfaces.Interfaces {
 		for _, unit := range ifCfg.Units {
-			if unit.FilterInputV4 == "" && unit.FilterInputV6 == "" {
+			if unit.FilterInputV4 == "" && unit.FilterInputV6 == "" &&
+				unit.FilterOutputV4 == "" && unit.FilterOutputV6 == "" {
 				continue
 			}
 
@@ -2149,6 +2150,61 @@ func (m *Manager) compileFirewallFilters(cfg *config.Config, result *CompileResu
 					slog.Info("assigned filter to interface",
 						"interface", physName, "vlan", vlanID,
 						"family", "inet6", "filter", unit.FilterInputV6)
+				}
+			}
+
+			// Output filters use direction=1 and the egress ifindex.
+			// For VLAN sub-interfaces, TC egress sees skb->ifindex as
+			// the sub-interface, so use its ifindex (not parent).
+			egressIfindex := ifindex
+			if vlanID > 0 {
+				subName := fmt.Sprintf("%s.%d", physName, vlanID)
+				if subIface, err := net.InterfaceByName(subName); err == nil {
+					egressIfindex = uint32(subIface.Index)
+				}
+			}
+
+			if unit.FilterOutputV4 != "" {
+				fid, ok := filterIDs["inet:"+unit.FilterOutputV4]
+				if !ok {
+					slog.Warn("output filter not found for interface",
+						"filter", unit.FilterOutputV4, "interface", physName)
+				} else {
+					key := IfaceFilterKey{
+						Ifindex:   egressIfindex,
+						VlanID:    0, // TC egress doesn't track VLAN separately
+						Family:    AFInet,
+						Direction: 1,
+					}
+					if err := m.SetIfaceFilter(key, fid); err != nil {
+						return fmt.Errorf("set output filter %s inet: %w", physName, err)
+					}
+					writtenIfaceFilter[key] = true
+					slog.Info("assigned output filter to interface",
+						"interface", physName, "vlan", vlanID,
+						"family", "inet", "filter", unit.FilterOutputV4)
+				}
+			}
+
+			if unit.FilterOutputV6 != "" {
+				fid, ok := filterIDs["inet6:"+unit.FilterOutputV6]
+				if !ok {
+					slog.Warn("output filter not found for interface",
+						"filter", unit.FilterOutputV6, "interface", physName)
+				} else {
+					key := IfaceFilterKey{
+						Ifindex:   egressIfindex,
+						VlanID:    0,
+						Family:    AFInet6,
+						Direction: 1,
+					}
+					if err := m.SetIfaceFilter(key, fid); err != nil {
+						return fmt.Errorf("set output filter %s inet6: %w", physName, err)
+					}
+					writtenIfaceFilter[key] = true
+					slog.Info("assigned output filter to interface",
+						"interface", physName, "vlan", vlanID,
+						"family", "inet6", "filter", unit.FilterOutputV6)
 				}
 			}
 		}

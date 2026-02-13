@@ -143,11 +143,11 @@ type bpfrxTcScreenEgressIfaceCounterValue struct {
 }
 
 type bpfrxTcScreenEgressIfaceFilterKey struct {
-	_       structs.HostLayout
-	Ifindex uint32
-	VlanId  uint16
-	Family  uint8
-	Pad     uint8
+	_         structs.HostLayout
+	Ifindex   uint32
+	VlanId    uint16
+	Family    uint8
+	Direction uint8
 }
 
 type bpfrxTcScreenEgressIfaceZoneKey struct {

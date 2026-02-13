@@ -2079,7 +2079,7 @@ func (c *CLI) showFlowTimeouts() error {
 	}
 
 	// Flow options
-	if flow.AllowDNSReply || flow.AllowEmbeddedICMP {
+	if flow.AllowDNSReply || flow.AllowEmbeddedICMP || flow.GREPerformanceAcceleration || flow.PowerModeDisable {
 		fmt.Println()
 		fmt.Println("Flow options:")
 		if flow.AllowDNSReply {
@@ -2087,6 +2087,12 @@ func (c *CLI) showFlowTimeouts() error {
 		}
 		if flow.AllowEmbeddedICMP {
 			fmt.Println("  allow-embedded-icmp:           enabled")
+		}
+		if flow.GREPerformanceAcceleration {
+			fmt.Println("  gre-performance-acceleration:  enabled")
+		}
+		if flow.PowerModeDisable {
+			fmt.Println("  power-mode-disable:            yes")
 		}
 	}
 
@@ -2246,6 +2252,7 @@ func (c *CLI) handleShowNAT(args []string) error {
 		fmt.Println("  source persistent-nat-table  Show persistent NAT bindings")
 		fmt.Println("  destination                  Show destination NAT rules")
 		fmt.Println("  static                       Show static 1:1 NAT rules")
+		fmt.Println("  nat64                        Show NAT64 rule-sets")
 		return nil
 	}
 
@@ -2259,6 +2266,8 @@ func (c *CLI) handleShowNAT(args []string) error {
 		return c.showNATDestination(cfg)
 	case "static":
 		return c.showNATStatic(cfg)
+	case "nat64":
+		return c.showNAT64(cfg)
 	default:
 		return fmt.Errorf("unknown show security nat target: %s", args[0])
 	}
@@ -2650,6 +2659,26 @@ func (c *CLI) showNATStatic(cfg *config.Config) error {
 			fmt.Printf("  Rule: %s\n", rule.Name)
 			fmt.Printf("    Match destination-address: %s\n", rule.Match)
 			fmt.Printf("    Then static-nat prefix:    %s\n", rule.Then)
+		}
+		fmt.Println()
+	}
+
+	return nil
+}
+
+func (c *CLI) showNAT64(cfg *config.Config) error {
+	if cfg == nil || len(cfg.Security.NAT.NAT64) == 0 {
+		fmt.Println("No NAT64 rule-sets configured.")
+		return nil
+	}
+
+	for _, rs := range cfg.Security.NAT.NAT64 {
+		fmt.Printf("NAT64 rule-set: %s\n", rs.Name)
+		if rs.Prefix != "" {
+			fmt.Printf("  Prefix:      %s\n", rs.Prefix)
+		}
+		if rs.SourcePool != "" {
+			fmt.Printf("  Source pool:  %s\n", rs.SourcePool)
 		}
 		fmt.Println()
 	}
@@ -3973,6 +4002,9 @@ func (c *CLI) handleShowSystem(args []string) error {
 		fmt.Println("License: open-source (no license required)")
 		return nil
 
+	case "backup-router":
+		return c.showBackupRouter()
+
 	case "ntp":
 		return c.showSystemNTP()
 
@@ -3987,7 +4019,25 @@ func (c *CLI) handleShowSystem(args []string) error {
 	}
 }
 
-// showSystemNTP displays NTP server configuration and sync status.
+func (c *CLI) showBackupRouter() error {
+	cfg := c.store.ActiveConfig()
+	if cfg == nil {
+		fmt.Println("No active configuration")
+		return nil
+	}
+	if cfg.System.BackupRouter == "" {
+		fmt.Println("No backup router configured")
+		return nil
+	}
+	fmt.Printf("Backup router: %s\n", cfg.System.BackupRouter)
+	if cfg.System.BackupRouterDst != "" {
+		fmt.Printf("  Destination: %s\n", cfg.System.BackupRouterDst)
+	} else {
+		fmt.Println("  Destination: 0.0.0.0/0 (default)")
+	}
+	return nil
+}
+
 func (c *CLI) showSystemNTP() error {
 	cfg := c.store.ActiveConfig()
 	if cfg == nil {

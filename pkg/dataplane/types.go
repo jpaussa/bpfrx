@@ -585,10 +585,10 @@ type FilterConfig struct {
 
 // IfaceFilterKey mirrors the C struct iface_filter_key.
 type IfaceFilterKey struct {
-	Ifindex uint32
-	VlanID  uint16
-	Family  uint8
-	Pad     uint8
+	Ifindex   uint32
+	VlanID    uint16
+	Family    uint8
+	Direction uint8 // 0=input, 1=output
 }
 
 // FilterRule mirrors the C struct filter_rule.

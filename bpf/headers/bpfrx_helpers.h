@@ -981,6 +981,120 @@ evaluate_firewall_filter(struct pkt_meta *meta)
 	return 0;
 }
 
+/* evaluate_firewall_filter_output — same as input but uses egress
+ * interface index and direction=1 for the map lookup.
+ * Returns:
+ *   0  = no filter or "accept"
+ *   -1 = "discard" — drop the packet
+ */
+static __always_inline int
+evaluate_firewall_filter_output(struct pkt_meta *meta, __u32 egress_ifindex)
+{
+	struct iface_filter_key fkey = {
+		.ifindex   = egress_ifindex,
+		.vlan_id   = 0,  /* egress VLAN not tracked separately */
+		.family    = meta->addr_family,
+		.direction = 1,
+	};
+	__u32 *filter_id = bpf_map_lookup_elem(&iface_filter_map, &fkey);
+	if (!filter_id)
+		return 0;
+
+	struct filter_config *fcfg = bpf_map_lookup_elem(&filter_configs, filter_id);
+	if (!fcfg || fcfg->num_rules == 0)
+		return 0;
+
+	__u32 start = fcfg->rule_start;
+	__u32 count = fcfg->num_rules;
+	if (count > MAX_FILTER_RULES_PER_FILTER)
+		count = MAX_FILTER_RULES_PER_FILTER;
+
+	#pragma unroll
+	for (__u32 i = 0; i < MAX_FILTER_RULES_PER_FILTER; i++) {
+		if (i >= count)
+			break;
+
+		__u32 idx = start + i;
+		if (idx >= MAX_FILTER_RULES)
+			break;
+
+		struct filter_rule *rule = bpf_map_lookup_elem(&filter_rules, &idx);
+		if (!rule)
+			break;
+
+		__u16 flags = rule->match_flags;
+		int match = 1;
+
+		if ((flags & FILTER_MATCH_DSCP) && rule->dscp != meta->dscp)
+			match = 0;
+		if (match && (flags & FILTER_MATCH_PROTOCOL) &&
+		    rule->protocol != meta->protocol)
+			match = 0;
+		if (match && (flags & FILTER_MATCH_DST_PORT) &&
+		    rule->dst_port != meta->dst_port)
+			match = 0;
+		if (match && (flags & FILTER_MATCH_ICMP_TYPE) &&
+		    rule->icmp_type != meta->icmp_type)
+			match = 0;
+		if (match && (flags & FILTER_MATCH_ICMP_CODE) &&
+		    rule->icmp_code != meta->icmp_code)
+			match = 0;
+
+		if (match && (flags & FILTER_MATCH_SRC_ADDR)) {
+			if (meta->addr_family == AF_INET) {
+				__be32 masked = meta->src_ip.v4 &
+					*(__be32 *)rule->src_mask;
+				if (masked != *(__be32 *)rule->src_addr)
+					match = 0;
+			} else {
+				for (int j = 0; j < 16; j += 4) {
+					__u32 m = *(__u32 *)(meta->src_ip.v6 + j) &
+						  *(__u32 *)(rule->src_mask + j);
+					if (m != *(__u32 *)(rule->src_addr + j)) {
+						match = 0;
+						break;
+					}
+				}
+			}
+		}
+
+		if (match && (flags & FILTER_MATCH_DST_ADDR)) {
+			if (meta->addr_family == AF_INET) {
+				__be32 masked = meta->dst_ip.v4 &
+					*(__be32 *)rule->dst_mask;
+				if (masked != *(__be32 *)rule->dst_addr)
+					match = 0;
+			} else {
+				for (int j = 0; j < 16; j += 4) {
+					__u32 m = *(__u32 *)(meta->dst_ip.v6 + j) &
+						  *(__u32 *)(rule->dst_mask + j);
+					if (m != *(__u32 *)(rule->dst_addr + j)) {
+						match = 0;
+						break;
+					}
+				}
+			}
+		}
+
+		if (!match)
+			continue;
+
+		struct counter_value *fc =
+			bpf_map_lookup_elem(&filter_counters, &idx);
+		if (fc) { fc->packets++; fc->bytes += meta->pkt_len; }
+
+		switch (rule->action) {
+		case FILTER_ACTION_ACCEPT:
+			return 0;
+		case FILTER_ACTION_DISCARD:
+		case FILTER_ACTION_REJECT:
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
 /* ============================================================
  * TCP MSS clamping
  *

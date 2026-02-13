@@ -15,7 +15,14 @@ int tc_forward_prog(struct __sk_buff *skb)
 {
 	__u32 zero = 0;
 	struct pkt_meta *meta = bpf_map_lookup_elem(&pkt_meta_scratch, &zero);
-	if (meta && meta->egress_zone > 0)
+	if (!meta)
+		return TC_ACT_OK;
+
+	/* Evaluate output firewall filter before forwarding */
+	if (evaluate_firewall_filter_output(meta, skb->ifindex) < 0)
+		return TC_ACT_SHOT;
+
+	if (meta->egress_zone > 0)
 		inc_zone_egress((__u32)meta->egress_zone, meta->pkt_len);
 
 	return TC_ACT_OK;

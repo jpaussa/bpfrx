@@ -575,12 +575,12 @@ struct filter_config {
 	__u32 rule_start;   /* index into filter_rules array */
 };
 
-/* Interface filter assignment key: {ifindex, vlan_id, family} -> filter_id */
+/* Interface filter assignment key: {ifindex, vlan_id, family, direction} -> filter_id */
 struct iface_filter_key {
 	__u32 ifindex;
 	__u16 vlan_id;
-	__u8  family;  /* AF_INET=2, AF_INET6=10 */
-	__u8  pad;
+	__u8  family;     /* AF_INET=2, AF_INET6=10 */
+	__u8  direction;  /* 0=input, 1=output */
 };
 
 /* Unified filter rule (works for both v4 and v6) */
