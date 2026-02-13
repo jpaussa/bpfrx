@@ -102,12 +102,18 @@ func (d *Daemon) Run(ctx context.Context) error {
 		"config", d.opts.ConfigFile,
 		"pid", os.Getpid())
 
-	// Load persisted configuration
+	// Load persisted configuration from DB, falling back to text config file
 	if err := d.store.Load(); err != nil {
-		slog.Warn("failed to load config, starting with empty config",
-			"err", err)
+		slog.Warn("failed to load config from db", "err", err)
+	}
+
+	// If DB had no active config, bootstrap from the text config file
+	if d.store.ActiveConfig() == nil {
+		if err := d.bootstrapFromFile(); err != nil {
+			slog.Warn("failed to bootstrap config from file", "err", err)
+		}
 	} else {
-		slog.Info("configuration loaded", "file", d.opts.ConfigFile)
+		slog.Info("configuration loaded from db")
 	}
 
 	// Initialize routing, FRR, and IPsec managers
@@ -484,6 +490,45 @@ func isInteractive() bool {
 
 // applyConfig applies a compiled config in the correct order:
 // 0. Create VRF devices and bind interfaces (routing instances)
+// bootstrapFromFile reads the text Junos config file and imports it as the
+// initial active configuration. This is called on first start when the DB
+// has no active config yet.
+func (d *Daemon) bootstrapFromFile() error {
+	data, err := os.ReadFile(d.opts.ConfigFile)
+	if err != nil {
+		return fmt.Errorf("read config file: %w", err)
+	}
+
+	parser := config.NewParser(string(data))
+	tree, errs := parser.Parse()
+	if len(errs) > 0 {
+		return fmt.Errorf("parse config file: %v", errs[0])
+	}
+
+	compiled, err := config.CompileConfig(tree)
+	if err != nil {
+		return fmt.Errorf("compile config: %w", err)
+	}
+
+	// Import into the store: enter config mode, load, commit
+	if err := d.store.EnterConfigure(); err != nil {
+		return fmt.Errorf("enter configure: %w", err)
+	}
+	if err := d.store.LoadOverride(string(data)); err != nil {
+		d.store.ExitConfigure()
+		return fmt.Errorf("load override: %w", err)
+	}
+	if _, err := d.store.Commit(); err != nil {
+		d.store.ExitConfigure()
+		return fmt.Errorf("commit: %w", err)
+	}
+	d.store.ExitConfigure()
+
+	_ = compiled // store.Commit() recompiles; ActiveConfig() will return it
+	slog.Info("configuration bootstrapped from file", "file", d.opts.ConfigFile)
+	return nil
+}
+
 // 1. Create tunnels (so interfaces exist for zone binding)
 // 2. Compile eBPF (attaches XDP/TC to interfaces including tunnels)
 // 3. Install static routes (global + per-instance)

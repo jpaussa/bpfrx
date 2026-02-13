@@ -494,8 +494,9 @@ func rtProtoName(p netlink.RouteProtocol) string {
 const nextTableRulePriority = 100
 
 // ribGroupRulePriority is the base priority for rib-group ip rules.
-// We use 200-299 range for rib-group route leaking rules.
-const ribGroupRulePriority = 200
+// Must be AFTER the main table (32766) so VRF routes supplement rather
+// than override main table routing. We use 33000-33099 range.
+const ribGroupRulePriority = 33000
 
 // ApplyNextTableRules creates Linux policy routing rules (ip rule) for
 // static routes with next-table directives. This implements inter-VRF
@@ -673,6 +674,7 @@ func (m *Manager) ApplyRibGroupRules(ribGroups map[string]*config.RibGroup, inst
 }
 
 // clearRibGroupRules removes all ip rules in the rib-group priority range.
+// Also cleans up legacy rules from the old 200-299 range.
 func (m *Manager) clearRibGroupRules() error {
 	for _, family := range []int{unix.AF_INET, unix.AF_INET6} {
 		rules, err := m.nlHandle.RuleList(family)
@@ -680,7 +682,9 @@ func (m *Manager) clearRibGroupRules() error {
 			continue
 		}
 		for _, r := range rules {
-			if r.Priority >= ribGroupRulePriority && r.Priority < ribGroupRulePriority+100 {
+			inCurrent := r.Priority >= ribGroupRulePriority && r.Priority < ribGroupRulePriority+100
+			inLegacy := r.Priority >= 200 && r.Priority < 300
+			if inCurrent || inLegacy {
 				if err := m.nlHandle.RuleDel(&r); err != nil {
 					slog.Debug("failed to delete stale rib-group rule",
 						"priority", r.Priority, "err", err)
