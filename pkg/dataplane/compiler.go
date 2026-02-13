@@ -473,6 +473,22 @@ func (m *Manager) compileZones(cfg *config.Config, result *CompileResult) error 
 					reconcileInterfaceAddresses(subName, addrs)
 				}
 
+				// Apply unit-level MTU to VLAN sub-interface
+				if ifCfg, ok := cfg.Interfaces.Interfaces[physName]; ok {
+					if unit, ok := ifCfg.Units[unitNum]; ok && unit.MTU > 0 {
+						if nl, err := netlink.LinkByName(subName); err == nil {
+							if nl.Attrs().MTU != unit.MTU {
+								if err := netlink.LinkSetMTU(nl, unit.MTU); err != nil {
+									slog.Warn("failed to set VLAN sub-interface MTU",
+										"name", subName, "mtu", unit.MTU, "err", err)
+								} else {
+									slog.Info("set VLAN sub-interface MTU", "name", subName, "mtu", unit.MTU)
+								}
+							}
+						}
+					}
+				}
+
 				slog.Info("VLAN sub-interface configured",
 					"parent", physName, "vlan_id", vlanID,
 					"sub_ifindex", subIfindex, "zone", name)
@@ -547,14 +563,29 @@ func (m *Manager) compileZones(cfg *config.Config, result *CompileResult) error 
 			if vlanID == 0 {
 				var addrs []string
 				isDHCP := false
+				var unitMTU int
 				if ifCfg, ok := cfg.Interfaces.Interfaces[physName]; ok {
 					if unit, ok := ifCfg.Units[unitNum]; ok {
 						addrs = unit.Addresses
 						isDHCP = unit.DHCP || unit.DHCPv6
+						unitMTU = unit.MTU
 					}
 				}
 				if !isDHCP {
 					reconcileInterfaceAddresses(physName, addrs)
+				}
+				// Apply unit-level MTU (overrides interface-level MTU)
+				if unitMTU > 0 {
+					if nl, err := netlink.LinkByName(physName); err == nil {
+						if nl.Attrs().MTU != unitMTU {
+							if err := netlink.LinkSetMTU(nl, unitMTU); err != nil {
+								slog.Warn("failed to set unit MTU",
+									"name", physName, "mtu", unitMTU, "err", err)
+							} else {
+								slog.Info("set unit MTU", "name", physName, "unit", unitNum, "mtu", unitMTU)
+							}
+						}
+					}
 				}
 			}
 
@@ -604,11 +635,13 @@ func (m *Manager) compileZones(cfg *config.Config, result *CompileResult) error 
 					if !seen[subName] {
 						seen[subName] = true
 						result.ManagedInterfaces = append(result.ManagedInterfaces, networkd.InterfaceConfig{
-							Name:       subName,
-							Addresses:  unit.Addresses,
-							DHCPv4:     unit.DHCP,
-							DHCPv6:     unit.DHCPv6,
-							DADDisable: unit.DADDisable,
+							Name:        subName,
+							Addresses:   unit.Addresses,
+							DHCPv4:      unit.DHCP,
+							DHCPv6:      unit.DHCPv6,
+							DADDisable:  unit.DADDisable,
+							MTU:         unit.MTU,
+							Description: unit.Description,
 						})
 					}
 				}
