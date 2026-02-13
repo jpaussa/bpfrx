@@ -3379,6 +3379,62 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 			}
 		}
 
+	case "routing-instances":
+		if cfg == nil || len(cfg.RoutingInstances) == 0 {
+			buf.WriteString("No routing instances configured\n")
+		} else {
+			fmt.Fprintf(&buf, "%-20s %-16s %-6s %s\n", "Instance", "Type", "Table", "Interfaces")
+			for _, ri := range cfg.RoutingInstances {
+				tableID := "-"
+				if ri.TableID > 0 {
+					tableID = fmt.Sprintf("%d", ri.TableID)
+				}
+				ifaces := "-"
+				if len(ri.Interfaces) > 0 {
+					ifaces = strings.Join(ri.Interfaces, ", ")
+				}
+				fmt.Fprintf(&buf, "%-20s %-16s %-6s %s\n", ri.Name, ri.InstanceType, tableID, ifaces)
+			}
+			buf.WriteString("\n")
+			// Per-instance details
+			for _, ri := range cfg.RoutingInstances {
+				fmt.Fprintf(&buf, "Instance: %s\n", ri.Name)
+				fmt.Fprintf(&buf, "  Type: %s\n", ri.InstanceType)
+				if ri.TableID > 0 {
+					fmt.Fprintf(&buf, "  Table ID: %d\n", ri.TableID)
+				}
+				if len(ri.Interfaces) > 0 {
+					fmt.Fprintf(&buf, "  Interfaces: %s\n", strings.Join(ri.Interfaces, ", "))
+				}
+				if len(ri.StaticRoutes) > 0 {
+					buf.WriteString("  Static routes:\n")
+					for _, sr := range ri.StaticRoutes {
+						if sr.Discard {
+							fmt.Fprintf(&buf, "    %s -> discard\n", sr.Destination)
+							continue
+						}
+						for _, nh := range sr.NextHops {
+							nhStr := nh.Address
+							if nh.Interface != "" {
+								nhStr += " via " + nh.Interface
+							}
+							fmt.Fprintf(&buf, "    %s -> %s\n", sr.Destination, nhStr)
+						}
+					}
+				}
+				if ri.OSPF != nil {
+					buf.WriteString("  Protocols: OSPF\n")
+				}
+				if ri.BGP != nil {
+					buf.WriteString("  Protocols: BGP\n")
+				}
+				if ri.RIP != nil {
+					buf.WriteString("  Protocols: RIP\n")
+				}
+				buf.WriteString("\n")
+			}
+		}
+
 	case "login":
 		if cfg == nil || cfg.System.Login == nil || len(cfg.System.Login.Users) == 0 {
 			buf.WriteString("No login users configured\n")

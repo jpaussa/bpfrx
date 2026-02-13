@@ -382,6 +382,7 @@ func (c *ctl) handleShow(args []string) error {
 		fmt.Println("  system           Show system information")
 		fmt.Println("  policy-options   Show prefix-lists and policy-statements")
 		fmt.Println("  event-options    Show event-driven policies")
+		fmt.Println("  routing-instances Show VRF/virtual-router instances")
 		fmt.Println("  routing-options  Show static routes and routing config")
 		fmt.Println("  forwarding-options Show forwarding/sampling config")
 		fmt.Println("  version          Show software version")
@@ -509,6 +510,9 @@ func (c *ctl) handleShow(args []string) error {
 
 	case "routing-options":
 		return c.showText("routing-options")
+
+	case "routing-instances":
+		return c.showText("routing-instances")
 
 	case "forwarding-options":
 		return c.showText("forwarding-options")
