@@ -350,6 +350,54 @@ func keysOf(m map[string]*completionNode) []string {
 	return keys
 }
 
+// resolveCommand performs Junos-style prefix matching.
+// Given a partial input and a list of valid commands, it returns:
+// - The full command name if exactly one match
+// - "" and an error if ambiguous (multiple matches)
+// - "" and an error if no match
+func resolveCommand(input string, validCommands []string) (string, error) {
+	if input == "" {
+		return "", fmt.Errorf("missing command")
+	}
+	// Exact match first
+	for _, cmd := range validCommands {
+		if cmd == input {
+			return cmd, nil
+		}
+	}
+	// Prefix match
+	var matches []string
+	for _, cmd := range validCommands {
+		if strings.HasPrefix(cmd, input) {
+			matches = append(matches, cmd)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("unknown command: %s", input)
+	case 1:
+		return matches[0], nil
+	default:
+		sort.Strings(matches)
+		return "", fmt.Errorf("'%s' is ambiguous.\nPossible completions:\n%s",
+			input, formatAmbiguousMatches(matches))
+	}
+}
+
+func formatAmbiguousMatches(matches []string) string {
+	var sb strings.Builder
+	maxWidth := 0
+	for _, m := range matches {
+		if len(m) > maxWidth {
+			maxWidth = len(m)
+		}
+	}
+	for _, m := range matches {
+		sb.WriteString(fmt.Sprintf("  %s\n", m))
+	}
+	return sb.String()
+}
+
 func filterPrefix(items []string, prefix string) []string {
 	if prefix == "" {
 		return items
@@ -639,11 +687,27 @@ func (c *CLI) dispatchWithPager(line string) error {
 	return cmdErr
 }
 
+var operationalCommands = []string{
+	"configure", "show", "clear", "ping", "traceroute",
+	"monitor", "request", "quit", "exit",
+}
+
 func (c *CLI) dispatchOperational(line string) error {
 	parts := strings.Fields(line)
 	if len(parts) == 0 {
 		return nil
 	}
+
+	if parts[0] == "?" || parts[0] == "help" {
+		c.showOperationalHelp()
+		return nil
+	}
+
+	resolved, err := resolveCommand(parts[0], operationalCommands)
+	if err != nil {
+		return err
+	}
+	parts[0] = resolved
 
 	switch parts[0] {
 	case "configure":
@@ -748,13 +812,21 @@ func (c *CLI) dispatchConfig(line string) error {
 	}
 }
 
+var showCommands = []string{
+	"chassis", "configuration", "dhcp", "dhcp-relay", "dhcp-server",
+	"firewall", "flow-monitoring", "route", "schedulers", "security",
+	"services", "snmp", "interfaces", "protocols", "system", "version",
+}
+
 func (c *CLI) handleShow(args []string) error {
 	if len(args) == 0 {
 		fmt.Println("show: specify what to show")
+		fmt.Println("Possible completions:")
 		fmt.Println("  chassis          Show hardware information")
 		fmt.Println("  configuration    Show active configuration")
 		fmt.Println("  dhcp             Show DHCP information")
 		fmt.Println("  dhcp-relay       Show DHCP relay status")
+		fmt.Println("  dhcp-server      Show DHCP server leases")
 		fmt.Println("  firewall         Show firewall filters")
 		fmt.Println("  flow-monitoring  Show flow monitoring/NetFlow configuration")
 		fmt.Println("  route            Show routing table")
@@ -768,6 +840,12 @@ func (c *CLI) handleShow(args []string) error {
 		fmt.Println("  version          Show software version")
 		return nil
 	}
+
+	resolved, err := resolveCommand(args[0], showCommands)
+	if err != nil {
+		return err
+	}
+	args[0] = resolved
 
 	switch args[0] {
 	case "version":
@@ -840,30 +918,38 @@ func (c *CLI) handleShow(args []string) error {
 	}
 }
 
+var showSecurityCommands = []string{
+	"zones", "policies", "screen", "flow", "nat",
+	"address-book", "applications", "alg", "ipsec",
+	"dynamic-address", "match-policies", "log", "statistics", "vrrp",
+}
+
 func (c *CLI) handleShowSecurity(args []string) error {
 	if len(args) == 0 {
 		fmt.Println("show security:")
-		fmt.Println("  zones            Show security zones")
+		fmt.Println("Possible completions:")
+		fmt.Println("  address-book     Show address book entries")
+		fmt.Println("  alg              Show ALG (Application Layer Gateway) status")
+		fmt.Println("  applications     Show application definitions")
+		fmt.Println("  dynamic-address  Show dynamic address feeds")
+		fmt.Println("  flow             Show flow timeouts / active sessions")
+		fmt.Println("  ipsec            Show IPsec VPN status")
+		fmt.Println("  log              Show recent security events")
+		fmt.Println("  match-policies   Match 5-tuple against policies")
+		fmt.Println("  nat              Show NAT information")
 		fmt.Println("  policies         Show security policies")
 		fmt.Println("  screen           Show screen/IDS profiles")
-		fmt.Println("  flow             Show flow timeouts")
-		fmt.Println("  flow session     Show active sessions [zone <n>] [protocol <p>] [source-prefix <cidr>]")
-	fmt.Println("                   [destination-prefix <cidr>] [source-port <p>] [destination-port <p>]")
-	fmt.Println("                   [nat] [interface <name>] [summary]")
-		fmt.Println("  nat source       Show source NAT information")
-		fmt.Println("  nat destination  Show destination NAT information")
-		fmt.Println("  address-book     Show address book entries")
-		fmt.Println("  applications     Show application definitions")
-		fmt.Println("  alg              Show ALG (Application Layer Gateway) status")
-		fmt.Println("  ipsec            Show IPsec VPN status")
-		fmt.Println("  dynamic-address  Show dynamic address feeds")
-		fmt.Println("  match-policies   Match 5-tuple against policies")
-		fmt.Println("  log [N] [zone <name>] [protocol <proto>] [action <act>]")
 		fmt.Println("  statistics       Show global statistics")
 		fmt.Println("  vrrp             Show VRRP high availability status")
-		fmt.Println("  match-policies   Match 5-tuple against policies")
+		fmt.Println("  zones            Show security zones")
 		return nil
 	}
+
+	resolved, err := resolveCommand(args[0], showSecurityCommands)
+	if err != nil {
+		return err
+	}
+	args[0] = resolved
 
 	cfg := c.store.ActiveConfig()
 	if cfg == nil && args[0] != "statistics" && args[0] != "ipsec" {
@@ -3310,12 +3396,14 @@ func (c *CLI) showOperationalContextHelp(words []string) {
 				if cfg != nil {
 					dynItems := node.dynamicFn(cfg)
 					sort.Strings(dynItems)
+					fmt.Println("Possible completions:")
 					for _, name := range dynItems {
 						fmt.Printf("  %-20s (configured)\n", name)
 					}
 					return
 				}
 			}
+			fmt.Println("Possible completions:")
 			fmt.Printf("  %-20s %s\n", w, node.desc)
 			return
 		}
@@ -3323,7 +3411,7 @@ func (c *CLI) showOperationalContextHelp(words []string) {
 		current = node.children
 	}
 
-	// Show children with descriptions.
+	// Show children with descriptions (Junos-style).
 	items := make([]string, 0, len(current))
 	for name := range current {
 		items = append(items, name)
@@ -3334,11 +3422,19 @@ func (c *CLI) showOperationalContextHelp(words []string) {
 		items = append(items, currentNode.dynamicFn(cfg)...)
 	}
 	sort.Strings(items)
+	// Find the maximum name width for aligned formatting.
+	maxWidth := 20
+	for _, name := range items {
+		if len(name)+2 > maxWidth {
+			maxWidth = len(name) + 2
+		}
+	}
+	fmt.Println("Possible completions:")
 	for _, name := range items {
 		if node, ok := current[name]; ok {
-			fmt.Printf("  %-20s %s\n", name, node.desc)
+			fmt.Printf("  %-*s %s\n", maxWidth, name, node.desc)
 		} else {
-			fmt.Printf("  %-20s (configured)\n", name)
+			fmt.Printf("  %-*s (configured)\n", maxWidth, name)
 		}
 	}
 }
@@ -3351,6 +3447,7 @@ func (c *CLI) showConfigContextHelp(words []string) {
 			items = append(items, name)
 		}
 		sort.Strings(items)
+		fmt.Println("Possible completions:")
 		for _, name := range items {
 			fmt.Printf("  %-20s %s\n", name, configTopLevel[name].desc)
 		}
@@ -3365,6 +3462,7 @@ func (c *CLI) showConfigContextHelp(words []string) {
 			return
 		}
 		sort.Strings(completions)
+		fmt.Println("Possible completions:")
 		for _, name := range completions {
 			fmt.Printf("  %s\n", name)
 		}

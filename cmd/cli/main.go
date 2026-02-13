@@ -1509,6 +1509,7 @@ func (c *ctl) showContextHelp(prefix string) {
 	}
 
 	sort.Strings(resp.Candidates)
+	fmt.Println("Possible completions:")
 	for _, cand := range resp.Candidates {
 		fmt.Printf("  %s\n", cand)
 	}
