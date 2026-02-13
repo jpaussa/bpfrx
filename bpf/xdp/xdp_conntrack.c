@@ -33,20 +33,36 @@ handle_ct_hit_v4(struct xdp_md *ctx, struct pkt_meta *meta,
 		__sync_fetch_and_add(&sess->rev_bytes, meta->pkt_len);
 	}
 
+	/* Compute actual packet direction relative to the session.
+	 * 'direction' is the lookup direction (0=found on first try),
+	 * which with dual entries is almost always 0 regardless of
+	 * packet direction.  XOR with is_reverse gives the true
+	 * direction: 0=initiator (forward), 1=responder (reverse). */
+	int is_fwd = (direction == sess->is_reverse);
+	__u8 pkt_dir = direction ^ sess->is_reverse;
+
 	if (meta->protocol == PROTO_TCP) {
 		__u8 new_state = ct_tcp_update_state(
-			sess->state, meta->tcp_flags, direction);
+			sess->state, meta->tcp_flags, pkt_dir);
 		if (new_state != sess->state) {
 			sess->state = new_state;
 			sess->timeout = ct_get_timeout(PROTO_TCP, new_state);
+			/* Sync state to paired entry so both entries
+			 * share the same TCP state and timeout. */
+			struct session_value *paired =
+				bpf_map_lookup_elem(&sessions,
+						    &sess->reverse_key);
+			if (paired) {
+				paired->state = new_state;
+				paired->timeout = sess->timeout;
+				paired->last_seen = now;
+			}
 		}
 	}
 
 	meta->ct_state = sess->state;
 	meta->ct_direction = direction;
 	meta->policy_id = sess->policy_id;
-
-	int is_fwd = (direction == sess->is_reverse);
 
 	if (sess->flags & SESS_FLAG_SNAT) {
 		if (is_fwd) {
@@ -111,20 +127,33 @@ handle_ct_hit_v6(struct xdp_md *ctx, struct pkt_meta *meta,
 		__sync_fetch_and_add(&sess->rev_bytes, meta->pkt_len);
 	}
 
+	/* Compute actual packet direction relative to the session.
+	 * See handle_ct_hit_v4 for explanation. */
+	int is_fwd = (direction == sess->is_reverse);
+	__u8 pkt_dir = direction ^ sess->is_reverse;
+
 	if (meta->protocol == PROTO_TCP) {
 		__u8 new_state = ct_tcp_update_state(
-			sess->state, meta->tcp_flags, direction);
+			sess->state, meta->tcp_flags, pkt_dir);
 		if (new_state != sess->state) {
 			sess->state = new_state;
 			sess->timeout = ct_get_timeout(PROTO_TCP, new_state);
+			/* Sync state to paired entry so both entries
+			 * share the same TCP state and timeout. */
+			struct session_value_v6 *paired =
+				bpf_map_lookup_elem(&sessions_v6,
+						    &sess->reverse_key);
+			if (paired) {
+				paired->state = new_state;
+				paired->timeout = sess->timeout;
+				paired->last_seen = now;
+			}
 		}
 	}
 
 	meta->ct_state = sess->state;
 	meta->ct_direction = direction;
 	meta->policy_id = sess->policy_id;
-
-	int is_fwd = (direction == sess->is_reverse);
 
 	if (sess->flags & SESS_FLAG_SNAT) {
 		if (is_fwd) {

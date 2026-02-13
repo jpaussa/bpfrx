@@ -14,10 +14,14 @@ import (
 
 const bpfPinPath = "/sys/fs/bpf/bpfrx"
 
-// pinnedMaps lists stateful maps that survive daemon restarts.
+// pinnedMaps lists maps that survive daemon restarts via BPF filesystem pins.
 // Config-derived maps are repopulated from config on every Compile().
-// Infrastructure maps (per-CPU scratch, counters, prog arrays) are
-// recreated fresh each time.
+// Infrastructure maps (per-CPU scratch, counters) are recreated fresh each time.
+//
+// PROG_ARRAY maps (xdp_progs, tc_progs) MUST be pinned: the kernel clears
+// all PROG_ARRAY entries when usercnt drops to 0 (bpf_fd_array_map_clear).
+// Without pinning, daemon exit closes all FDs → usercnt=0 → entries cleared
+// → tail calls fail → XDP_PASS → kernel forwards un-NAT'd traffic → RSTs.
 var pinnedMaps = map[string]bool{
 	"sessions":          true,
 	"sessions_v6":       true,
@@ -25,6 +29,8 @@ var pinnedMaps = map[string]bool{
 	"dnat_table_v6":     true,
 	"nat64_state":       true,
 	"nat_port_counters": true,
+	"xdp_progs":         true,
+	"tc_progs":          true,
 }
 
 // loadAllObjects loads all eBPF programs and populates the Manager's
@@ -195,7 +201,9 @@ func (m *Manager) loadAllObjects() error {
 	}
 	m.programs["xdp_zone_prog"] = zoneObjs.XdpZoneProg
 	m.maps["flow_config_map"] = zoneObjs.FlowConfigMap
+	m.maps["fib_gen_map"] = zoneObjs.FibGenMap
 	replaceOpts.MapReplacements["flow_config_map"] = zoneObjs.FlowConfigMap
+	replaceOpts.MapReplacements["fib_gen_map"] = zoneObjs.FibGenMap
 
 	// Load XDP conntrack program.
 	conntrackReplaceOpts := &ebpf.CollectionOptions{

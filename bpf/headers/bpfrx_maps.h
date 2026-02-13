@@ -283,6 +283,20 @@ struct {
 } global_counters SEC(".maps");
 
 /* ============================================================
+ * FIB cache generation counter.
+ * Bumped by Go on recompile; BPF checks session.fib_gen == fib_gen_map[0]
+ * to validate cached FIB entries. Avoids userspace session write-back
+ * (which causes RCU replacement and stale BPF pointers).
+ * ============================================================ */
+
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, 1);
+	__type(key, __u32);
+	__type(value, __u32);
+} fib_gen_map SEC(".maps");
+
+/* ============================================================
  * Forwarding -- device map for XDP_REDIRECT
  * ============================================================ */
 

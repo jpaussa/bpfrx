@@ -1258,45 +1258,31 @@ func (m *Manager) ZeroStaleFilterConfigs(startID uint32) {
 	}
 }
 
-// InvalidateFIBCache zeros the cached FIB fields (fwd_ifindex, dmac, smac)
-// in all session entries, forcing BPF to re-run bpf_fib_lookup on next packet.
-func (m *Manager) InvalidateFIBCache() {
-	count := 0
-	if sm, ok := m.maps["sessions"]; ok {
-		var key SessionKey
-		var val SessionValue
-		iter := sm.Iterate()
-		for iter.Next(&key, &val) {
-			if val.FibIfindex == 0 {
-				continue
-			}
-			val.FibIfindex = 0
-			val.FibVlanID = 0
-			val.FibDmac = [6]byte{}
-			val.FibSmac = [6]byte{}
-			if err := sm.Update(key, val, ebpf.UpdateExist); err == nil {
-				count++
-			}
-		}
+// BumpFIBGeneration increments the global FIB generation counter, causing
+// all cached FIB entries in sessions to miss on the next packet. BPF programs
+// compare session.fib_gen against fib_gen_map[0] and re-run bpf_fib_lookup
+// when they differ.
+//
+// This replaces the old InvalidateFIBCache() approach which iterated sessions
+// and wrote them back via sm.Update(). That caused RCU replacement of hash map
+// entries — BPF programs holding pointers from bpf_map_lookup_elem would write
+// to the OLD (about-to-be-freed) entry, losing counter/last_seen updates and
+// causing sessions to expire prematurely.
+func (m *Manager) BumpFIBGeneration() {
+	zm, ok := m.maps["fib_gen_map"]
+	if !ok {
+		slog.Warn("fib_gen_map not found, cannot bump FIB generation")
+		return
 	}
-	if sm, ok := m.maps["sessions_v6"]; ok {
-		var key SessionKeyV6
-		var val SessionValueV6
-		iter := sm.Iterate()
-		for iter.Next(&key, &val) {
-			if val.FibIfindex == 0 {
-				continue
-			}
-			val.FibIfindex = 0
-			val.FibVlanID = 0
-			val.FibDmac = [6]byte{}
-			val.FibSmac = [6]byte{}
-			if err := sm.Update(key, val, ebpf.UpdateExist); err == nil {
-				count++
-			}
-		}
+	var key uint32
+	var gen uint32
+	if err := zm.Lookup(key, &gen); err != nil {
+		gen = 0
 	}
-	if count > 0 {
-		slog.Info("invalidated FIB cache in sessions", "count", count)
+	gen++
+	if err := zm.Update(key, gen, ebpf.UpdateAny); err != nil {
+		slog.Warn("failed to bump FIB generation", "err", err)
+		return
 	}
+	slog.Info("bumped FIB generation counter", "generation", gen)
 }

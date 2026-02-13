@@ -58,7 +58,7 @@ struct session_value {
 	__u16 fib_vlan_id;
 	__u8  fib_dmac[6];
 	__u8  fib_smac[6];
-	__u8  pad_fib[2];
+	__u16 fib_gen;      /* FIB cache generation (matches fib_gen_map[0]) */
 };
 
 /* IPv6 session key -- 5-tuple with 128-bit addresses. */
@@ -116,7 +116,7 @@ struct session_value_v6 {
 	__u16 fib_vlan_id;
 	__u8  fib_dmac[6];
 	__u8  fib_smac[6];
-	__u8  pad_fib[2];
+	__u16 fib_gen;      /* FIB cache generation (matches fib_gen_map[0]) */
 };
 
 /* TCP state machine transition. Returns new state. */

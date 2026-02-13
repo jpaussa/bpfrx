@@ -368,7 +368,7 @@ type bpfrxXdpNat64SessionValue struct {
 	FibVlanId   uint16
 	FibDmac     [6]uint8
 	FibSmac     [6]uint8
-	PadFib      [2]uint8
+	FibGen      uint16
 }
 
 type bpfrxXdpNat64SessionValueV6 struct {
@@ -400,7 +400,7 @@ type bpfrxXdpNat64SessionValueV6 struct {
 	FibVlanId   uint16
 	FibDmac     [6]uint8
 	FibSmac     [6]uint8
-	PadFib      [2]uint8
+	FibGen      uint16
 }
 
 type bpfrxXdpNat64SnatKey struct {
@@ -529,6 +529,7 @@ type bpfrxXdpNat64MapSpecs struct {
 	DnatTable         *ebpf.MapSpec `ebpf:"dnat_table"`
 	DnatTableV6       *ebpf.MapSpec `ebpf:"dnat_table_v6"`
 	Events            *ebpf.MapSpec `ebpf:"events"`
+	FibGenMap         *ebpf.MapSpec `ebpf:"fib_gen_map"`
 	FilterConfigs     *ebpf.MapSpec `ebpf:"filter_configs"`
 	FilterRules       *ebpf.MapSpec `ebpf:"filter_rules"`
 	FloodCounters     *ebpf.MapSpec `ebpf:"flood_counters"`
@@ -605,6 +606,7 @@ type bpfrxXdpNat64Maps struct {
 	DnatTable         *ebpf.Map `ebpf:"dnat_table"`
 	DnatTableV6       *ebpf.Map `ebpf:"dnat_table_v6"`
 	Events            *ebpf.Map `ebpf:"events"`
+	FibGenMap         *ebpf.Map `ebpf:"fib_gen_map"`
 	FilterConfigs     *ebpf.Map `ebpf:"filter_configs"`
 	FilterRules       *ebpf.Map `ebpf:"filter_rules"`
 	FloodCounters     *ebpf.Map `ebpf:"flood_counters"`
@@ -657,6 +659,7 @@ func (m *bpfrxXdpNat64Maps) Close() error {
 		m.DnatTable,
 		m.DnatTableV6,
 		m.Events,
+		m.FibGenMap,
 		m.FilterConfigs,
 		m.FilterRules,
 		m.FloodCounters,

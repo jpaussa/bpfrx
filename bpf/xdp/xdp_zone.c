@@ -32,20 +32,33 @@ zone_ct_update_v4(struct xdp_md *ctx, struct pkt_meta *meta,
 		__sync_fetch_and_add(&sess->rev_bytes, meta->pkt_len);
 	}
 
+	/* Compute actual packet direction relative to the session.
+	 * See handle_ct_hit_v4 in xdp_conntrack for explanation. */
+	int is_fwd = (direction == sess->is_reverse);
+	__u8 pkt_dir = direction ^ sess->is_reverse;
+
 	if (meta->protocol == PROTO_TCP) {
 		__u8 new_state = ct_tcp_update_state(
-			sess->state, meta->tcp_flags, direction);
+			sess->state, meta->tcp_flags, pkt_dir);
 		if (new_state != sess->state) {
 			sess->state = new_state;
 			sess->timeout = ct_get_timeout(PROTO_TCP, new_state);
+			/* Sync state to paired entry so both entries
+			 * share the same TCP state and timeout. */
+			struct session_value *paired =
+				bpf_map_lookup_elem(&sessions,
+						    &sess->reverse_key);
+			if (paired) {
+				paired->state = new_state;
+				paired->timeout = sess->timeout;
+				paired->last_seen = now;
+			}
 		}
 	}
 
 	meta->ct_state = sess->state;
 	meta->ct_direction = direction;
 	meta->policy_id = sess->policy_id;
-
-	int is_fwd = (direction == sess->is_reverse);
 
 	if (sess->flags & SESS_FLAG_SNAT) {
 		if (is_fwd) {
@@ -99,20 +112,33 @@ zone_ct_update_v6(struct xdp_md *ctx, struct pkt_meta *meta,
 		__sync_fetch_and_add(&sess->rev_bytes, meta->pkt_len);
 	}
 
+	/* Compute actual packet direction relative to the session.
+	 * See handle_ct_hit_v4 in xdp_conntrack for explanation. */
+	int is_fwd = (direction == sess->is_reverse);
+	__u8 pkt_dir = direction ^ sess->is_reverse;
+
 	if (meta->protocol == PROTO_TCP) {
 		__u8 new_state = ct_tcp_update_state(
-			sess->state, meta->tcp_flags, direction);
+			sess->state, meta->tcp_flags, pkt_dir);
 		if (new_state != sess->state) {
 			sess->state = new_state;
 			sess->timeout = ct_get_timeout(PROTO_TCP, new_state);
+			/* Sync state to paired entry so both entries
+			 * share the same TCP state and timeout. */
+			struct session_value_v6 *paired =
+				bpf_map_lookup_elem(&sessions_v6,
+						    &sess->reverse_key);
+			if (paired) {
+				paired->state = new_state;
+				paired->timeout = sess->timeout;
+				paired->last_seen = now;
+			}
 		}
 	}
 
 	meta->ct_state = sess->state;
 	meta->ct_direction = direction;
 	meta->policy_id = sess->policy_id;
-
-	int is_fwd = (direction == sess->is_reverse);
 
 	if (sess->flags & SESS_FLAG_SNAT) {
 		if (is_fwd) {
@@ -341,6 +367,12 @@ int xdp_zone_prog(struct xdp_md *ctx)
 	struct session_value_v6 *sv6 = NULL;
 	__u8 ct_direction = 0;
 
+	/* Read global FIB generation counter for cache validation */
+	__u32 fib_gen = 0;
+	__u32 *fib_gen_ptr = bpf_map_lookup_elem(&fib_gen_map, &zero);
+	if (fib_gen_ptr)
+		fib_gen = *fib_gen_ptr;
+
 	if (!is_tcp_syn && meta->addr_family == AF_INET) {
 		struct session_key sk = {};
 		sk.src_ip   = meta->src_ip.v4;
@@ -356,7 +388,8 @@ int xdp_zone_prog(struct xdp_md *ctx)
 			sv4 = bpf_map_lookup_elem(&sessions, &rk);
 			if (sv4) ct_direction = 1;
 		}
-		if (sv4 && sv4->fib_ifindex != 0) {
+		if (sv4 && sv4->fib_ifindex != 0 &&
+		    sv4->fib_gen == (__u16)fib_gen) {
 			meta->fwd_ifindex    = sv4->fib_ifindex;
 			meta->egress_vlan_id = sv4->fib_vlan_id;
 			__builtin_memcpy(meta->fwd_dmac, sv4->fib_dmac, 6);
@@ -379,7 +412,8 @@ int xdp_zone_prog(struct xdp_md *ctx)
 			sv6 = bpf_map_lookup_elem(&sessions_v6, &rk6);
 			if (sv6) ct_direction = 1;
 		}
-		if (sv6 && sv6->fib_ifindex != 0) {
+		if (sv6 && sv6->fib_ifindex != 0 &&
+		    sv6->fib_gen == (__u16)fib_gen) {
 			meta->fwd_ifindex    = sv6->fib_ifindex;
 			meta->egress_vlan_id = sv6->fib_vlan_id;
 			__builtin_memcpy(meta->fwd_dmac, sv6->fib_dmac, 6);
@@ -448,6 +482,7 @@ int xdp_zone_prog(struct xdp_md *ctx)
 			sv4->fib_vlan_id = meta->egress_vlan_id;
 			__builtin_memcpy(sv4->fib_dmac, meta->fwd_dmac, 6);
 			__builtin_memcpy(sv4->fib_smac, meta->fwd_smac, 6);
+			sv4->fib_gen = (__u16)fib_gen;
 			return zone_ct_update_v4(ctx, meta, sv4, ct_direction);
 		}
 		if (sv6) {
@@ -455,6 +490,7 @@ int xdp_zone_prog(struct xdp_md *ctx)
 			sv6->fib_vlan_id = meta->egress_vlan_id;
 			__builtin_memcpy(sv6->fib_dmac, meta->fwd_dmac, 6);
 			__builtin_memcpy(sv6->fib_smac, meta->fwd_smac, 6);
+			sv6->fib_gen = (__u16)fib_gen;
 			return zone_ct_update_v6(ctx, meta, sv6, ct_direction);
 		}
 

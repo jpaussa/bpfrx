@@ -48,7 +48,7 @@ type SessionValue struct {
 	FibVlanID  uint16
 	FibDmac    [6]byte
 	FibSmac    [6]byte
-	PadFib     [2]byte
+	FibGen     uint16
 }
 
 // SessionKeyV6 mirrors the C struct session_key_v6 (5-tuple with 128-bit IPs).
@@ -97,7 +97,7 @@ type SessionValueV6 struct {
 	FibVlanID  uint16
 	FibDmac    [6]byte
 	FibSmac    [6]byte
-	PadFib     [2]byte
+	FibGen     uint16
 }
 
 // ZoneConfig mirrors the C struct zone_config.

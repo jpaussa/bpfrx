@@ -164,6 +164,19 @@ func (m *Manager) Compile(cfg *config.Config) (*CompileResult, error) {
 	if len(result.pendingXDP) > 0 {
 		rcMap := m.maps["redirect_capable"]
 
+		// Populate redirect_capable BEFORE link.Update() swaps programs.
+		// When the new XDP programs start running after link.Update(),
+		// xdp_forward checks redirect_capable to decide between
+		// bpf_redirect_map (fast path) and XDP_PASS (kernel forwarding).
+		// If redirect_capable is empty, XDP_PASS sends NAT'd packets
+		// through the kernel — TC drops them because session keys use
+		// pre-NAT addresses, permanently killing SNAT TCP connections.
+		if rcMap != nil {
+			for _, ifidx := range result.pendingXDP {
+				rcMap.Update(uint32(ifidx), uint8(1), ebpf.UpdateAny)
+			}
+		}
+
 		// Try native XDP on all interfaces first. If any interface lacks
 		// native support, ALL must use generic mode because bpf_redirect_map
 		// from native XDP cannot target non-ndo_xdp_xmit interfaces.
@@ -193,19 +206,14 @@ func (m *Manager) Compile(cfg *config.Config) (*CompileResult, error) {
 				}
 			}
 		}
-
-		// All interfaces use the same mode — redirect works between all of them.
-		if rcMap != nil {
-			for _, ifidx := range result.pendingXDP {
-				rcMap.Update(uint32(ifidx), uint8(1), ebpf.UpdateAny)
-			}
-		}
 	}
 
-	// Invalidate FIB cache on recompile so sessions re-run bpf_fib_lookup
-	// with potentially changed interface indices or MAC addresses.
+	// Bump FIB generation counter on recompile so sessions re-run
+	// bpf_fib_lookup with potentially changed interface indices or MAC
+	// addresses. BPF checks session.fib_gen != fib_gen_map[0] and
+	// treats cached entries as stale — no session write-back needed.
 	if m.lastCompile != nil {
-		m.InvalidateFIBCache()
+		m.BumpFIBGeneration()
 	}
 
 	slog.Info("config compiled to dataplane",
