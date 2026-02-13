@@ -5115,3 +5115,331 @@ func TestDNATApplicationMatch(t *testing.T) {
 	}
 }
 
+func TestInterfaceDescriptionAndRedundantParent(t *testing.T) {
+	input := `interfaces {
+    ge-0/0/0 {
+        description "Uplink to core";
+        gigether-options {
+            redundant-parent reth0;
+        }
+    }
+    reth0 {
+        description "Redundant Ethernet 0";
+        unit 0 {
+            description "Management VLAN";
+            family inet {
+                address 10.0.1.1/24;
+            }
+        }
+    }
+}`
+	parser := NewParser(input)
+	tree, errs := parser.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+	ge := cfg.Interfaces.Interfaces["ge-0/0/0"]
+	if ge == nil {
+		t.Fatal("ge-0/0/0 not found")
+	}
+	if ge.Description != "Uplink to core" {
+		t.Errorf("ge description = %q, want %q", ge.Description, "Uplink to core")
+	}
+	if ge.RedundantParent != "reth0" {
+		t.Errorf("redundant-parent = %q, want reth0", ge.RedundantParent)
+	}
+
+	reth := cfg.Interfaces.Interfaces["reth0"]
+	if reth == nil {
+		t.Fatal("reth0 not found")
+	}
+	if reth.Description != "Redundant Ethernet 0" {
+		t.Errorf("reth description = %q, want %q", reth.Description, "Redundant Ethernet 0")
+	}
+	unit0 := reth.Units[0]
+	if unit0 == nil {
+		t.Fatal("reth0 unit 0 not found")
+	}
+	if unit0.Description != "Management VLAN" {
+		t.Errorf("unit description = %q, want %q", unit0.Description, "Management VLAN")
+	}
+}
+
+func TestInterfacePointToPointAndMTU(t *testing.T) {
+	input := `interfaces {
+    gr-0/0/0 {
+        unit 0 {
+            point-to-point;
+            tunnel {
+                source 10.0.0.1;
+                destination 10.0.0.2;
+                routing-instance {
+                    destination my-vrf;
+                }
+            }
+            family inet {
+                mtu 1456;
+                address 10.255.0.1/30;
+            }
+            family inet6 {
+                mtu 1436;
+                address fe80::1/64;
+            }
+        }
+    }
+}`
+	parser := NewParser(input)
+	tree, errs := parser.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+	gr := cfg.Interfaces.Interfaces["gr-0/0/0"]
+	if gr == nil {
+		t.Fatal("gr-0/0/0 not found")
+	}
+	unit0 := gr.Units[0]
+	if unit0 == nil {
+		t.Fatal("unit 0 not found")
+	}
+	if !unit0.PointToPoint {
+		t.Error("point-to-point should be true")
+	}
+	// MTU: inet has 1456, inet6 has 1436 — takes the smaller
+	if unit0.MTU != 1436 {
+		t.Errorf("MTU = %d, want 1436", unit0.MTU)
+	}
+	if gr.Tunnel == nil {
+		t.Fatal("tunnel not set")
+	}
+	if gr.Tunnel.Source != "10.0.0.1" {
+		t.Errorf("tunnel source = %q, want 10.0.0.1", gr.Tunnel.Source)
+	}
+	if gr.Tunnel.Destination != "10.0.0.2" {
+		t.Errorf("tunnel destination = %q, want 10.0.0.2", gr.Tunnel.Destination)
+	}
+	if gr.Tunnel.RoutingInstance != "my-vrf" {
+		t.Errorf("tunnel routing-instance = %q, want my-vrf", gr.Tunnel.RoutingInstance)
+	}
+}
+
+func TestRoutingOptionsExtended(t *testing.T) {
+	input := `routing-options {
+    autonomous-system 64701;
+    rib inet6.0 {
+        static {
+            route ::/0 next-hop 2001:db8::1;
+        }
+    }
+    static {
+        route 0.0.0.0/0 next-hop 10.0.0.1;
+        route 10.1.0.0/16 next-hop 10.0.1.1;
+    }
+    forwarding-table {
+        export load-balancing-policy;
+    }
+}`
+	parser := NewParser(input)
+	tree, errs := parser.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+	ro := cfg.RoutingOptions
+	if ro.AutonomousSystem != 64701 {
+		t.Errorf("AS = %d, want 64701", ro.AutonomousSystem)
+	}
+	if ro.ForwardingTableExport != "load-balancing-policy" {
+		t.Errorf("forwarding-table export = %q, want load-balancing-policy", ro.ForwardingTableExport)
+	}
+	if len(ro.StaticRoutes) != 2 {
+		t.Fatalf("got %d static routes, want 2", len(ro.StaticRoutes))
+	}
+	if len(ro.Inet6StaticRoutes) != 1 {
+		t.Fatalf("got %d inet6 static routes, want 1", len(ro.Inet6StaticRoutes))
+	}
+	v6 := ro.Inet6StaticRoutes[0]
+	if v6.Destination != "::/0" {
+		t.Errorf("inet6 route dest = %q, want ::/0", v6.Destination)
+	}
+	if len(v6.NextHops) != 1 || v6.NextHops[0].Address != "2001:db8::1" {
+		t.Errorf("inet6 route next-hop = %v, want 2001:db8::1", v6.NextHops)
+	}
+}
+
+func TestPolicyStatementNextHopAndLoadBalance(t *testing.T) {
+	input := `policy-options {
+    policy-statement load-balancing-policy {
+        then {
+            load-balance consistent-hash;
+        }
+    }
+    policy-statement to-peer {
+        term send-routes {
+            from {
+                protocol direct;
+                prefix-list management-hosts;
+                route-filter 10.0.0.0/8 exact;
+            }
+            then {
+                next-hop peer-address;
+                accept;
+            }
+        }
+        then reject;
+    }
+}`
+	parser := NewParser(input)
+	tree, errs := parser.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+	lb := cfg.PolicyOptions.PolicyStatements["load-balancing-policy"]
+	if lb == nil {
+		t.Fatal("load-balancing-policy not found")
+	}
+
+	peer := cfg.PolicyOptions.PolicyStatements["to-peer"]
+	if peer == nil {
+		t.Fatal("to-peer not found")
+	}
+	if len(peer.Terms) != 1 {
+		t.Fatalf("got %d terms, want 1", len(peer.Terms))
+	}
+	term := peer.Terms[0]
+	if term.FromProtocol != "direct" {
+		t.Errorf("from protocol = %q, want direct", term.FromProtocol)
+	}
+	if term.PrefixList != "management-hosts" {
+		t.Errorf("prefix-list = %q, want management-hosts", term.PrefixList)
+	}
+	if term.NextHop != "peer-address" {
+		t.Errorf("next-hop = %q, want peer-address", term.NextHop)
+	}
+	if term.Action != "accept" {
+		t.Errorf("action = %q, want accept", term.Action)
+	}
+	if len(term.RouteFilters) != 1 {
+		t.Fatalf("got %d route-filters, want 1", len(term.RouteFilters))
+	}
+	if peer.DefaultAction != "reject" {
+		t.Errorf("default action = %q, want reject", peer.DefaultAction)
+	}
+}
+
+func TestPolicyStatementSetSyntax(t *testing.T) {
+	cmds := []string{
+		"set policy-options policy-statement lb then load-balance consistent-hash",
+		"set policy-options policy-statement to-peer term t1 from protocol direct",
+		"set policy-options policy-statement to-peer term t1 from prefix-list mgmt",
+		"set policy-options policy-statement to-peer term t1 then next-hop peer-address",
+		"set policy-options policy-statement to-peer term t1 then accept",
+		"set policy-options policy-statement to-peer then reject",
+	}
+	tree := &ConfigTree{}
+	for _, cmd := range cmds {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%q): %v", cmd, err)
+		}
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+
+	peer := cfg.PolicyOptions.PolicyStatements["to-peer"]
+	if peer == nil {
+		t.Fatal("to-peer not found")
+	}
+	if len(peer.Terms) != 1 {
+		t.Fatalf("got %d terms, want 1", len(peer.Terms))
+	}
+	term := peer.Terms[0]
+	if term.PrefixList != "mgmt" {
+		t.Errorf("prefix-list = %q, want mgmt", term.PrefixList)
+	}
+	if term.NextHop != "peer-address" {
+		t.Errorf("next-hop = %q, want peer-address", term.NextHop)
+	}
+	if term.Action != "accept" {
+		t.Errorf("action = %q, want accept", term.Action)
+	}
+
+	lb := cfg.PolicyOptions.PolicyStatements["lb"]
+	if lb == nil {
+		t.Fatal("lb not found")
+	}
+}
+
+func TestInterfaceDescriptionSetSyntax(t *testing.T) {
+	cmds := []string{
+		"set interfaces ge-0/0/0 description \"Uplink to core\"",
+		"set interfaces ge-0/0/0 gigether-options redundant-parent reth0",
+		"set interfaces gr-0/0/0 unit 0 point-to-point",
+		"set interfaces gr-0/0/0 unit 0 description \"Tunnel unit\"",
+		"set interfaces gr-0/0/0 unit 0 family inet mtu 1420",
+		"set interfaces gr-0/0/0 unit 0 family inet address 10.0.0.1/30",
+	}
+	tree := &ConfigTree{}
+	for _, cmd := range cmds {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%q): %v", cmd, err)
+		}
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+
+	ge := cfg.Interfaces.Interfaces["ge-0/0/0"]
+	if ge == nil {
+		t.Fatal("ge-0/0/0 not found")
+	}
+	if ge.Description != "Uplink to core" {
+		t.Errorf("ge description = %q, want %q", ge.Description, "Uplink to core")
+	}
+	if ge.RedundantParent != "reth0" {
+		t.Errorf("redundant-parent = %q, want reth0", ge.RedundantParent)
+	}
+
+	gr := cfg.Interfaces.Interfaces["gr-0/0/0"]
+	if gr == nil {
+		t.Fatal("gr-0/0/0 not found")
+	}
+	unit0 := gr.Units[0]
+	if unit0 == nil {
+		t.Fatal("gr unit 0 not found")
+	}
+	if !unit0.PointToPoint {
+		t.Error("point-to-point should be true")
+	}
+	if unit0.Description != "Tunnel unit" {
+		t.Errorf("unit description = %q, want %q", unit0.Description, "Tunnel unit")
+	}
+	if unit0.MTU != 1420 {
+		t.Errorf("MTU = %d, want 1420", unit0.MTU)
+	}
+}
+

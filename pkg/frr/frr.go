@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -58,10 +59,14 @@ type FullConfig struct {
 	BGP           *config.BGPConfig
 	RIP           *config.RIPConfig
 	ISIS          *config.ISISConfig
-	StaticRoutes  []*config.StaticRoute
-	DHCPRoutes    []DHCPRoute
-	Instances     []InstanceConfig
-	PolicyOptions *config.PolicyOptionsConfig
+	StaticRoutes      []*config.StaticRoute
+	Inet6StaticRoutes []*config.StaticRoute // rib inet6.0 static routes
+	DHCPRoutes        []DHCPRoute
+	Instances         []InstanceConfig
+	PolicyOptions     *config.PolicyOptionsConfig
+
+	// ForwardingTableExport is the export policy for the forwarding table (ECMP).
+	ForwardingTableExport string
 
 	// BackupRouter is the fallback default gateway (system backup-router).
 	// Installed with admin distance 250 so it's only used when all other defaults fail.
@@ -184,7 +189,7 @@ func (m *Manager) ApplyFull(fc *FullConfig) error {
 	}
 
 	hasContent := fc.OSPF != nil || fc.BGP != nil || fc.RIP != nil || fc.ISIS != nil ||
-		len(fc.StaticRoutes) > 0 || len(fc.DHCPRoutes) > 0 || fc.BackupRouter != ""
+		len(fc.StaticRoutes) > 0 || len(fc.Inet6StaticRoutes) > 0 || len(fc.DHCPRoutes) > 0 || fc.BackupRouter != ""
 	for _, inst := range fc.Instances {
 		if inst.OSPF != nil || inst.BGP != nil || inst.RIP != nil || inst.ISIS != nil || len(inst.StaticRoutes) > 0 {
 			hasContent = true
@@ -202,6 +207,14 @@ func (m *Manager) ApplyFull(fc *FullConfig) error {
 	// Global static routes
 	if len(fc.StaticRoutes) > 0 {
 		for _, sr := range fc.StaticRoutes {
+			b.WriteString(m.generateStaticRoute(sr, ""))
+		}
+		b.WriteString("!\n")
+	}
+
+	// IPv6 RIB static routes (rib inet6.0)
+	if len(fc.Inet6StaticRoutes) > 0 {
+		for _, sr := range fc.Inet6StaticRoutes {
 			b.WriteString(m.generateStaticRoute(sr, ""))
 		}
 		b.WriteString("!\n")
@@ -728,10 +741,19 @@ func (m *Manager) generatePolicyOptions(po *config.PolicyOptionsConfig) string {
 					case "exact":
 						matchStr = ""
 					case "longer":
-						matchStr = "ge 1"
+						// longer = strictly more specific (not the prefix itself)
+						parts := strings.SplitN(rf.Prefix, "/", 2)
+						if len(parts) == 2 {
+							if plen, err := strconv.Atoi(parts[1]); err == nil {
+								maxLen := 32
+								if strings.Contains(rf.Prefix, ":") {
+									maxLen = 128
+								}
+								matchStr = fmt.Sprintf("ge %d le %d", plen+1, maxLen)
+							}
+						}
 					case "orlonger":
-						// orlonger = exact match or any longer prefix
-						matchStr = "" // already matches prefix itself
+						// orlonger = this prefix or any more specific (default le 32/128)
 					}
 					if strings.Contains(rf.Prefix, ":") {
 						fmt.Fprintf(&b, "ipv6 prefix-list %s seq %d permit %s", plName, (i+1)*5, rf.Prefix)
@@ -750,12 +772,32 @@ func (m *Manager) generatePolicyOptions(po *config.PolicyOptionsConfig) string {
 				}
 			}
 
+			if term.PrefixList != "" {
+				fmt.Fprintf(&b, " match ip address prefix-list %s\n", term.PrefixList)
+			}
+
 			if term.FromProtocol != "" {
 				proto := term.FromProtocol
 				if proto == "direct" {
 					proto = "connected"
 				}
 				fmt.Fprintf(&b, " match source-protocol %s\n", proto)
+			}
+
+			// then actions
+			if term.NextHop != "" {
+				if term.NextHop == "peer-address" {
+					// peer-address is handled by BGP neighbor config
+				} else if term.NextHop == "self" {
+					fmt.Fprintf(&b, " set ip next-hop peer-address\n")
+				} else {
+					fmt.Fprintf(&b, " set ip next-hop %s\n", term.NextHop)
+				}
+			}
+
+			if term.LoadBalance != "" {
+				// FRR handles ECMP load balancing via forwarding-table export
+				// The route-map just needs to be a permit
 			}
 
 			b.WriteString("exit\n")

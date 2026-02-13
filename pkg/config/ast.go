@@ -327,16 +327,34 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 		}},
 	}},
 	"interfaces": {wildcard: &schemaNode{valueHint: ValueHintInterfaceName, children: map[string]*schemaNode{
+		"description":  {args: 1, children: nil},
 		"vlan-tagging": {children: nil},
-		"tunnel":       {children: nil}, // tunnel source/destination/key/ttl are leaves
+		"gigether-options": {children: map[string]*schemaNode{
+			"redundant-parent": {args: 1, children: nil},
+		}},
+		"tunnel": {children: map[string]*schemaNode{
+			"source":      {args: 1, children: nil},
+			"destination": {args: 1, children: nil},
+			"mode":        {args: 1, children: nil},
+			"key":         {args: 1, children: nil},
+			"ttl":         {args: 1, children: nil},
+			"routing-instance": {children: map[string]*schemaNode{
+				"destination": {args: 1, children: nil},
+			}},
+		}},
 		"unit": {args: 1, children: map[string]*schemaNode{
-			"vlan-id": {args: 1, children: nil},
+			"description":    {args: 1, children: nil},
+			"point-to-point": {children: nil},
+			"vlan-id":        {args: 1, children: nil},
+			"tunnel":         {children: nil},
 			"family": {children: map[string]*schemaNode{
 				"inet": {children: map[string]*schemaNode{
+					"mtu":    {args: 1, children: nil},
 					"filter": {children: nil},
 				}},
 				"inet6": {children: map[string]*schemaNode{
-					"filter":        {children: nil},
+					"mtu":    {args: 1, children: nil},
+					"filter": {children: nil},
 					"dhcpv6-client": {children: map[string]*schemaNode{
 						"client-identifier": {children: map[string]*schemaNode{
 							"duid-type": {args: 1, children: nil},
@@ -360,12 +378,36 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 	}},
 	"routing-options": {children: map[string]*schemaNode{
 		"static": {children: map[string]*schemaNode{
-			"route": {args: 1, children: nil}, // route <prefix/len>
+			"route": {args: 1, children: nil},
+		}},
+		"rib": {args: 1, children: map[string]*schemaNode{
+			"static": {children: map[string]*schemaNode{
+				"route": {args: 1, children: nil},
+			}},
+		}},
+		"autonomous-system": {args: 1, children: nil},
+		"forwarding-table": {children: map[string]*schemaNode{
+			"export": {args: 1, children: nil},
 		}},
 	}},
 	"policy-options": {children: map[string]*schemaNode{
-		"prefix-list":      {args: 1, children: nil},
-		"policy-statement": {args: 1, children: nil},
+		"prefix-list": {args: 1, children: nil},
+		"policy-statement": {args: 1, children: map[string]*schemaNode{
+			"term": {args: 1, children: map[string]*schemaNode{
+				"from": {children: map[string]*schemaNode{
+					"protocol":     {args: 1, children: nil},
+					"prefix-list":  {args: 1, children: nil},
+					"route-filter": {args: 2, children: nil},
+				}},
+				"then": {children: map[string]*schemaNode{
+					"accept":       {children: nil},
+					"reject":       {children: nil},
+					"next-hop":     {args: 1, children: nil},
+					"load-balance": {args: 1, children: nil},
+				}},
+			}},
+			"then": {children: nil},
+		}},
 	}},
 	"protocols": {children: map[string]*schemaNode{
 		"ospf": {children: map[string]*schemaNode{

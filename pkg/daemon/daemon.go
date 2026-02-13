@@ -523,15 +523,17 @@ func (d *Daemon) applyConfig(cfg *config.Config) {
 	// 3. Apply all routes + dynamic protocols via FRR
 	if d.frr != nil {
 		fc := &frr.FullConfig{
-			OSPF:            cfg.Protocols.OSPF,
-			BGP:             cfg.Protocols.BGP,
-			RIP:             cfg.Protocols.RIP,
-			ISIS:            cfg.Protocols.ISIS,
-			StaticRoutes:    cfg.RoutingOptions.StaticRoutes,
-			DHCPRoutes:      d.collectDHCPRoutes(),
-			PolicyOptions:   &cfg.PolicyOptions,
-			BackupRouter:    cfg.System.BackupRouter,
-			BackupRouterDst: cfg.System.BackupRouterDst,
+			OSPF:                  cfg.Protocols.OSPF,
+			BGP:                   cfg.Protocols.BGP,
+			RIP:                   cfg.Protocols.RIP,
+			ISIS:                  cfg.Protocols.ISIS,
+			StaticRoutes:          cfg.RoutingOptions.StaticRoutes,
+			Inet6StaticRoutes:     cfg.RoutingOptions.Inet6StaticRoutes,
+			DHCPRoutes:            d.collectDHCPRoutes(),
+			PolicyOptions:         &cfg.PolicyOptions,
+			ForwardingTableExport: cfg.RoutingOptions.ForwardingTableExport,
+			BackupRouter:          cfg.System.BackupRouter,
+			BackupRouterDst:       cfg.System.BackupRouterDst,
 		}
 		for _, ri := range cfg.RoutingInstances {
 			fc.Instances = append(fc.Instances, frr.InstanceConfig{
@@ -696,7 +698,8 @@ func (d *Daemon) resolveNeighbors(cfg *config.Config) {
 	}
 
 	// 1. Static route next-hops (resolve interface via FIB if not specified)
-	for _, sr := range cfg.RoutingOptions.StaticRoutes {
+	allStaticRoutes := append(cfg.RoutingOptions.StaticRoutes, cfg.RoutingOptions.Inet6StaticRoutes...)
+	for _, sr := range allStaticRoutes {
 		if sr.Discard {
 			continue
 		}

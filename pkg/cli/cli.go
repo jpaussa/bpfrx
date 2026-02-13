@@ -185,6 +185,10 @@ var operationalTree = map[string]*completionNode{
 				"routes":    {desc: "Show IS-IS routes"},
 			}},
 		}},
+		"arp":         {desc: "Show ARP table"},
+		"ipv6": {desc: "Show IPv6 information", children: map[string]*completionNode{
+			"neighbors": {desc: "Show IPv6 neighbor cache"},
+		}},
 		"schedulers":  {desc: "Show policy schedulers"},
 		"dhcp-relay":   {desc: "Show DHCP relay status"},
 		"dhcp-server": {desc: "Show DHCP server leases"},
@@ -928,6 +932,12 @@ func (c *CLI) handleShow(args []string) error {
 
 	case "snmp":
 		return c.showSNMP()
+
+	case "arp":
+		return c.showARP()
+
+	case "ipv6":
+		return c.handleShowIPv6(args[1:])
 
 	default:
 		return fmt.Errorf("unknown show target: %s", args[0])
@@ -4805,6 +4815,95 @@ func fmtBytes(b uint64) string {
 		return fmt.Sprintf("%.1fK", float64(b)/float64(1<<10))
 	default:
 		return fmt.Sprintf("%dB", b)
+	}
+}
+
+// showARP shows the kernel ARP table (like Junos "show arp").
+func (c *CLI) showARP() error {
+	neighbors, err := netlink.NeighList(0, netlink.FAMILY_V4)
+	if err != nil {
+		return fmt.Errorf("listing ARP entries: %w", err)
+	}
+
+	fmt.Printf("%-18s %-20s %-12s %-10s\n", "MAC Address", "Address", "Interface", "State")
+	for _, n := range neighbors {
+		if n.IP == nil || n.HardwareAddr == nil {
+			continue
+		}
+		ifName := ""
+		if link, err := netlink.LinkByIndex(n.LinkIndex); err == nil {
+			ifName = link.Attrs().Name
+		}
+		state := neighState(n.State)
+		fmt.Printf("%-18s %-20s %-12s %-10s\n",
+			n.HardwareAddr, n.IP, ifName, state)
+	}
+	return nil
+}
+
+// handleShowIPv6 dispatches show ipv6 sub-commands.
+func (c *CLI) handleShowIPv6(args []string) error {
+	if len(args) == 0 {
+		fmt.Println("show ipv6:")
+		fmt.Println("  neighbors        Show IPv6 neighbor cache")
+		return nil
+	}
+	switch args[0] {
+	case "neighbors":
+		return c.showIPv6Neighbors()
+	default:
+		return fmt.Errorf("unknown show ipv6 target: %s", args[0])
+	}
+}
+
+// showIPv6Neighbors shows the kernel IPv6 neighbor cache (like Junos "show ipv6 neighbors").
+func (c *CLI) showIPv6Neighbors() error {
+	neighbors, err := netlink.NeighList(0, netlink.FAMILY_V6)
+	if err != nil {
+		return fmt.Errorf("listing IPv6 neighbors: %w", err)
+	}
+
+	fmt.Printf("%-18s %-40s %-12s %-10s\n", "MAC Address", "IPv6 Address", "Interface", "State")
+	for _, n := range neighbors {
+		if n.IP == nil {
+			continue
+		}
+		// Skip link-local multicast and unresolved entries without MACs
+		if n.HardwareAddr == nil {
+			continue
+		}
+		ifName := ""
+		if link, err := netlink.LinkByIndex(n.LinkIndex); err == nil {
+			ifName = link.Attrs().Name
+		}
+		state := neighState(n.State)
+		fmt.Printf("%-18s %-40s %-12s %-10s\n",
+			n.HardwareAddr, n.IP, ifName, state)
+	}
+	return nil
+}
+
+// neighState converts a kernel neighbor state to a human-readable string.
+func neighState(state int) string {
+	switch state {
+	case netlink.NUD_REACHABLE:
+		return "reachable"
+	case netlink.NUD_STALE:
+		return "stale"
+	case netlink.NUD_DELAY:
+		return "delay"
+	case netlink.NUD_PROBE:
+		return "probe"
+	case netlink.NUD_FAILED:
+		return "failed"
+	case netlink.NUD_PERMANENT:
+		return "permanent"
+	case netlink.NUD_INCOMPLETE:
+		return "incomplete"
+	case netlink.NUD_NOARP:
+		return "noarp"
+	default:
+		return "unknown"
 	}
 }
 

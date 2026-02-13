@@ -1551,12 +1551,39 @@ func compileStaticRoutes(staticNode *Node, existing []*StaticRoute) []*StaticRou
 		destIdx[sr.Destination] = i
 	}
 
-	for _, routeInst := range namedInstances(staticNode.FindChildren("route")) {
+	instances := namedInstances(staticNode.FindChildren("route"))
+	for _, routeInst := range instances {
 		route := &StaticRoute{
 			Destination: routeInst.name,
 			Preference:  5, // default
 		}
 
+		// Handle inline keys: "route ::/0 next-hop 2001:db8::1" has all in Keys
+		if len(routeInst.node.Children) == 0 && len(routeInst.node.Keys) > 2 {
+			for i := 2; i < len(routeInst.node.Keys); i++ {
+				switch routeInst.node.Keys[i] {
+				case "next-hop":
+					if i+1 < len(routeInst.node.Keys) {
+						i++
+						route.NextHops = append(route.NextHops, NextHopEntry{Address: routeInst.node.Keys[i]})
+					}
+				case "next-table":
+					// next-table is used for policy-based routing — store as discard with preference
+					i++ // skip the table name
+				case "discard":
+					route.Discard = true
+				case "preference":
+					if i+1 < len(routeInst.node.Keys) {
+						i++
+						if n, err := strconv.Atoi(routeInst.node.Keys[i]); err == nil {
+							route.Preference = n
+						}
+					}
+				}
+			}
+		}
+
+		// Handle children (hierarchical syntax)
 		for _, prop := range routeInst.node.Children {
 			switch prop.Name() {
 			case "next-hop":
