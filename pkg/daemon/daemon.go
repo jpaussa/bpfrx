@@ -358,7 +358,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// Start interactive CLI or block in daemon mode
 	var runErr error
 	if isInteractive() {
-		shell := cli.New(d.store, d.dp, eventBuf, er, d.routing, d.frr, d.ipsec, d.dhcp)
+		shell := cli.New(d.store, d.dp, eventBuf, er, d.routing, d.frr, d.ipsec, d.dhcp, d.dhcpRelay)
 		shell.SetVersion(d.opts.Version)
 		shell.SetRPMResultsFn(func() []*rpm.ProbeResult {
 			if d.rpm != nil {

@@ -20,6 +20,7 @@ import (
 	"github.com/psaab/bpfrx/pkg/configstore"
 	"github.com/psaab/bpfrx/pkg/dataplane"
 	"github.com/psaab/bpfrx/pkg/dhcp"
+	"github.com/psaab/bpfrx/pkg/dhcprelay"
 	"github.com/psaab/bpfrx/pkg/dhcpserver"
 	"github.com/psaab/bpfrx/pkg/frr"
 	"github.com/psaab/bpfrx/pkg/ipsec"
@@ -41,6 +42,7 @@ type CLI struct {
 	frr         *frr.Manager
 	ipsec       *ipsec.Manager
 	dhcp         *dhcp.Manager
+	dhcpRelay    *dhcprelay.Manager
 	rpmResultsFn func() []*rpm.ProbeResult
 	hostname     string
 	username     string
@@ -48,7 +50,7 @@ type CLI struct {
 }
 
 // New creates a new CLI.
-func New(store *configstore.Store, dp *dataplane.Manager, eventBuf *logging.EventBuffer, eventReader *logging.EventReader, rm *routing.Manager, fm *frr.Manager, im *ipsec.Manager, dm *dhcp.Manager) *CLI {
+func New(store *configstore.Store, dp *dataplane.Manager, eventBuf *logging.EventBuffer, eventReader *logging.EventReader, rm *routing.Manager, fm *frr.Manager, im *ipsec.Manager, dm *dhcp.Manager, dr *dhcprelay.Manager) *CLI {
 	hostname, _ := os.Hostname()
 	if hostname == "" {
 		hostname = "bpfrx"
@@ -67,6 +69,7 @@ func New(store *configstore.Store, dp *dataplane.Manager, eventBuf *logging.Even
 		frr:         fm,
 		ipsec:       im,
 		dhcp:        dm,
+		dhcpRelay:   dr,
 		hostname:    hostname,
 		username:    username,
 	}
@@ -4254,6 +4257,18 @@ func (c *CLI) showDHCPRelay() error {
 			fmt.Printf("  %s:\n", name)
 			fmt.Printf("    Interfaces: %s\n", strings.Join(g.Interfaces, ", "))
 			fmt.Printf("    Active server group: %s\n", g.ActiveServerGroup)
+		}
+	}
+
+	// Runtime statistics
+	if c.dhcpRelay != nil {
+		stats := c.dhcpRelay.Stats()
+		if len(stats) > 0 {
+			fmt.Println("\nRelay statistics:")
+			fmt.Printf("  %-16s %-20s %s\n", "Interface", "Requests relayed", "Replies forwarded")
+			for _, s := range stats {
+				fmt.Printf("  %-16s %-20d %d\n", s.Interface, s.RequestsRelayed, s.RepliesForwarded)
+			}
 		}
 	}
 	return nil

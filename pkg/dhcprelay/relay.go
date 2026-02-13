@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"sync/atomic"
 
 	"github.com/insomniacslk/dhcp/dhcpv4"
 
@@ -28,11 +29,20 @@ const option82 = dhcpv4.OptionRelayAgentInformation
 // suboption1CircuitID is the circuit-id sub-option within Option 82.
 const suboption1CircuitID byte = 1
 
+// RelayStats holds per-interface relay statistics.
+type RelayStats struct {
+	Interface        string
+	RequestsRelayed  uint64
+	RepliesForwarded uint64
+}
+
 // interfaceRelay represents a relay goroutine bound to one interface.
 type interfaceRelay struct {
-	ifaceName string
-	cancel    context.CancelFunc
-	done      chan struct{}
+	ifaceName        string
+	cancel           context.CancelFunc
+	done             chan struct{}
+	requestsRelayed  atomic.Uint64
+	repliesForwarded atomic.Uint64
 }
 
 // Manager manages per-interface DHCP relay goroutines.
@@ -104,10 +114,10 @@ func (m *Manager) Apply(ctx context.Context, cfg *config.DHCPRelayConfig) {
 			}
 			m.relays[ifaceName] = ir
 
-			go func(ifName string, servers []*net.UDPAddr) {
-				defer close(ir.done)
-				runRelay(rctx, ifName, servers)
-			}(ifaceName, serverAddrs)
+			go func(relay *interfaceRelay, servers []*net.UDPAddr) {
+				defer close(relay.done)
+				runRelay(rctx, relay, servers)
+			}(ir, serverAddrs)
 
 			slog.Info("dhcp-relay: started",
 				"interface", ifaceName,
@@ -115,6 +125,21 @@ func (m *Manager) Apply(ctx context.Context, cfg *config.DHCPRelayConfig) {
 				"servers", sg.Servers)
 		}
 	}
+}
+
+// Stats returns per-interface relay statistics.
+func (m *Manager) Stats() []RelayStats {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	stats := make([]RelayStats, 0, len(m.relays))
+	for _, ir := range m.relays {
+		stats = append(stats, RelayStats{
+			Interface:        ir.ifaceName,
+			RequestsRelayed:  ir.requestsRelayed.Load(),
+			RepliesForwarded: ir.repliesForwarded.Load(),
+		})
+	}
+	return stats
 }
 
 // Stop stops all running relay goroutines and waits for them to finish.
@@ -136,7 +161,8 @@ func (m *Manager) Stop() {
 // runRelay is the main loop for a single interface relay. It listens on
 // UDP port 67 bound to the interface for client broadcasts, relays them to
 // the configured servers, and forwards server responses back to clients.
-func runRelay(ctx context.Context, ifaceName string, servers []*net.UDPAddr) {
+func runRelay(ctx context.Context, ir *interfaceRelay, servers []*net.UDPAddr) {
+	ifaceName := ir.ifaceName
 	iface, err := net.InterfaceByName(ifaceName)
 	if err != nil {
 		slog.Error("dhcp-relay: interface lookup failed",
@@ -190,7 +216,7 @@ func runRelay(ctx context.Context, ifaceName string, servers []*net.UDPAddr) {
 
 	// Start server response listener in a separate goroutine.
 	go func() {
-		handleServerResponses(ctx, serverConn, conn, ifaceName)
+		handleServerResponses(ctx, serverConn, conn, ir)
 	}()
 
 	buf := make([]byte, 1500)
@@ -257,12 +283,14 @@ func runRelay(ctx context.Context, ifaceName string, servers []*net.UDPAddr) {
 					"server", srv, "err", err)
 			}
 		}
+		ir.requestsRelayed.Add(1)
 	}
 }
 
 // handleServerResponses reads DHCP replies from servers on the serverConn
 // and forwards them back to clients on the client-facing conn.
-func handleServerResponses(ctx context.Context, serverConn, clientConn *net.UDPConn, ifaceName string) {
+func handleServerResponses(ctx context.Context, serverConn, clientConn *net.UDPConn, ir *interfaceRelay) {
+	ifaceName := ir.ifaceName
 	buf := make([]byte, 1500)
 	for {
 		select {
@@ -325,6 +353,8 @@ func handleServerResponses(ctx context.Context, serverConn, clientConn *net.UDPC
 			slog.Warn("dhcp-relay: send to client failed",
 				"interface", ifaceName,
 				"dst", dst, "err", err)
+		} else {
+			ir.repliesForwarded.Add(1)
 		}
 	}
 }
