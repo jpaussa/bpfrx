@@ -270,7 +270,15 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 		}},
 	}}},
 	"applications": {children: map[string]*schemaNode{
-		"application":     {args: 1, valueHint: ValueHintAppName, children: nil},
+		"application": {args: 1, valueHint: ValueHintAppName, children: map[string]*schemaNode{
+			"protocol":           {args: 1, children: nil},
+			"destination-port":   {args: 1, children: nil},
+			"source-port":        {args: 1, children: nil},
+			"inactivity-timeout": {args: 1, children: nil},
+			"alg":                {args: 1, children: nil},
+			"description":        {args: 1, children: nil},
+			"term":               {args: 1, children: nil},
+		}},
 		"application-set": {args: 1, valueHint: ValueHintAppSetName, children: nil},
 	}},
 	"routing-options": {children: map[string]*schemaNode{

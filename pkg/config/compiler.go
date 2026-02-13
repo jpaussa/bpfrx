@@ -1211,8 +1211,10 @@ func compileApplications(node *Node, apps *ApplicationsConfig) error {
 		if len(child.Keys) < 2 {
 			continue
 		}
-		app := &Application{Name: child.Keys[1]}
+		appName := child.Keys[1]
+		app := &Application{Name: appName}
 
+		var terms []*Application
 		for _, prop := range child.Children {
 			switch prop.Name() {
 			case "protocol":
@@ -1223,10 +1225,56 @@ func compileApplications(node *Node, apps *ApplicationsConfig) error {
 				if len(prop.Keys) >= 2 {
 					app.DestinationPort = prop.Keys[1]
 				}
+			case "source-port":
+				if len(prop.Keys) >= 2 {
+					app.SourcePort = prop.Keys[1]
+				}
+			case "inactivity-timeout":
+				if len(prop.Keys) >= 2 {
+					if v, err := strconv.Atoi(prop.Keys[1]); err == nil {
+						app.InactivityTimeout = v
+					}
+				}
+			case "alg":
+				if len(prop.Keys) >= 2 {
+					app.ALG = prop.Keys[1]
+				}
+			case "description":
+				if len(prop.Keys) >= 2 {
+					app.Description = prop.Keys[1]
+				}
+			case "term":
+				// Inline term: "term <name> [alg <a>] protocol <p> [source-port <sp>]
+				//               [destination-port <dp>] [inactivity-timeout <t>];"
+				if len(prop.Keys) < 2 {
+					continue
+				}
+				// Hierarchical: all values in prop.Keys (inline statement)
+				// Flat set: values split across prop.Keys and prop.Children
+				allKeys := prop.Keys[1:]
+				for _, c := range prop.Children {
+					allKeys = append(allKeys, c.Keys...)
+				}
+				termApp := parseApplicationTerm(appName, allKeys)
+				if termApp != nil {
+					terms = append(terms, termApp)
+				}
 			}
 		}
 
-		apps.Applications[app.Name] = app
+		if len(terms) > 0 {
+			// Multi-term application: each term becomes a separate Application,
+			// and the parent becomes an implicit ApplicationSet.
+			implicitSet := &ApplicationSet{Name: appName}
+			for _, t := range terms {
+				t.Description = app.Description
+				apps.Applications[t.Name] = t
+				implicitSet.Applications = append(implicitSet.Applications, t.Name)
+			}
+			apps.ApplicationSets[appName] = implicitSet
+		} else {
+			apps.Applications[appName] = app
+		}
 	}
 
 	for _, child := range node.FindChildren("application-set") {
@@ -1245,6 +1293,51 @@ func compileApplications(node *Node, apps *ApplicationsConfig) error {
 	}
 
 	return nil
+}
+
+// parseApplicationTerm parses an inline term like:
+// "term-name [alg ssh] protocol tcp [source-port 22] [destination-port 22] [inactivity-timeout 86400]"
+// and returns a named Application.
+func parseApplicationTerm(parentName string, keys []string) *Application {
+	if len(keys) == 0 {
+		return nil
+	}
+	termName := keys[0]
+	app := &Application{
+		Name: parentName + "-" + termName,
+	}
+	for i := 1; i < len(keys); i++ {
+		switch keys[i] {
+		case "protocol":
+			if i+1 < len(keys) {
+				i++
+				app.Protocol = keys[i]
+			}
+		case "destination-port":
+			if i+1 < len(keys) {
+				i++
+				app.DestinationPort = keys[i]
+			}
+		case "source-port":
+			if i+1 < len(keys) {
+				i++
+				app.SourcePort = keys[i]
+			}
+		case "inactivity-timeout":
+			if i+1 < len(keys) {
+				i++
+				if v, err := strconv.Atoi(keys[i]); err == nil {
+					app.InactivityTimeout = v
+				}
+			}
+		case "alg":
+			if i+1 < len(keys) {
+				i++
+				app.ALG = keys[i]
+			}
+		}
+	}
+	return app
 }
 
 func compileRoutingOptions(node *Node, ro *RoutingOptionsConfig) error {
