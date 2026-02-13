@@ -1686,6 +1686,7 @@ var operationalTree = map[string]*completionNode{
 		"firewall":        {desc: "Show firewall filters"},
 		"dhcp-relay":      {desc: "Show DHCP relay status"},
 		"system": {desc: "Show system information", children: map[string]*completionNode{
+			"alarms":    {desc: "Show system alarms"},
 			"rollback":  {desc: "Show rollback history"},
 			"uptime":    {desc: "Show system uptime"},
 			"memory":    {desc: "Show memory usage"},
@@ -2566,6 +2567,23 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 				float64(used)/float64(1<<30),
 				float64(free)/float64(1<<30),
 				pct)
+		}
+
+	case "alarms":
+		// Compile current config to check for warnings
+		cfg := s.store.ActiveConfig()
+		if cfg != nil {
+			warnings := config.ValidateConfig(cfg)
+			if len(warnings) == 0 {
+				buf.WriteString("No alarms currently active\n")
+			} else {
+				fmt.Fprintf(&buf, "%d active alarm(s):\n", len(warnings))
+				for _, w := range warnings {
+					fmt.Fprintf(&buf, "  WARNING: %s\n", w)
+				}
+			}
+		} else {
+			buf.WriteString("No active configuration loaded\n")
 		}
 
 	default:

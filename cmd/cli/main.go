@@ -1130,6 +1130,7 @@ func (c *ctl) handleShowProtocols(args []string) error {
 func (c *ctl) handleShowSystem(args []string) error {
 	if len(args) == 0 {
 		fmt.Println("show system:")
+		fmt.Println("  alarms           Show system alarms")
 		fmt.Println("  rollback         Show rollback history")
 		fmt.Println("  storage          Show filesystem usage")
 		fmt.Println("  uptime           Show system uptime")
@@ -1186,6 +1187,9 @@ func (c *ctl) handleShowSystem(args []string) error {
 
 	case "processes":
 		return c.showSystemInfo("processes")
+
+	case "alarms":
+		return c.showText("alarms")
 
 	case "license":
 		fmt.Println("License: open-source (no license required)")

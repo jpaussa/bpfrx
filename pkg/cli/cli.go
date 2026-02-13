@@ -187,6 +187,7 @@ var operationalTree = map[string]*completionNode{
 		"dhcp-server": {desc: "Show DHCP server leases"},
 		"snmp":        {desc: "Show SNMP statistics"},
 		"system": {desc: "Show system information", children: map[string]*completionNode{
+			"alarms":    {desc: "Show system alarms"},
 			"rollback":  {desc: "Show rollback history"},
 			"storage":   {desc: "Show filesystem usage"},
 			"uptime":    {desc: "Show system uptime"},
@@ -3200,6 +3201,23 @@ func (c *CLI) handleShowSystem(args []string) error {
 
 	case "storage":
 		return c.showSystemStorage()
+
+	case "alarms":
+		cfg := c.store.ActiveConfig()
+		if cfg != nil {
+			warnings := config.ValidateConfig(cfg)
+			if len(warnings) == 0 {
+				fmt.Println("No alarms currently active")
+			} else {
+				fmt.Printf("%d active alarm(s):\n", len(warnings))
+				for _, w := range warnings {
+					fmt.Printf("  WARNING: %s\n", w)
+				}
+			}
+		} else {
+			fmt.Println("No active configuration loaded")
+		}
+		return nil
 
 	case "license":
 		fmt.Println("License: open-source (no license required)")
