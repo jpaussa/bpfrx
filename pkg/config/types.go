@@ -63,8 +63,14 @@ type SchedulerConfig struct {
 
 // SystemConfig holds system-level configuration.
 type SystemConfig struct {
-	DHCPServer DHCPServerConfig
-	SNMP       *SNMPConfig
+	HostName    string
+	TimeZone    string
+	NameServers []string // DNS server addresses
+	NTPServers  []string // NTP server addresses
+	NoRedirects bool     // disable ICMP redirects
+	DHCPServer  DHCPServerConfig
+	SNMP        *SNMPConfig
+	Login       *LoginConfig
 }
 
 // SNMPConfig holds SNMP agent configuration.
@@ -86,6 +92,19 @@ type SNMPCommunity struct {
 type SNMPTrapGroup struct {
 	Name    string
 	Targets []string // IP addresses
+}
+
+// LoginConfig holds user account definitions.
+type LoginConfig struct {
+	Users []*LoginUser
+}
+
+// LoginUser defines a system user account.
+type LoginUser struct {
+	Name     string
+	UID      int
+	Class    string // "super-user", "read-only", etc.
+	SSHKeys  []string // authorized SSH public keys
 }
 
 // ServicesConfig holds service configuration (flow-monitoring, RPM, etc.).

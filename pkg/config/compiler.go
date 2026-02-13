@@ -2357,6 +2357,69 @@ func compileFilterThen(node *Node, term *FirewallFilterTerm) {
 }
 
 func compileSystem(node *Node, sys *SystemConfig) error {
+	for _, child := range node.Children {
+		switch child.Name() {
+		case "host-name":
+			if len(child.Keys) >= 2 {
+				sys.HostName = child.Keys[1]
+			}
+		case "time-zone":
+			if len(child.Keys) >= 2 {
+				sys.TimeZone = child.Keys[1]
+			}
+		case "no-redirects":
+			sys.NoRedirects = true
+		case "name-server":
+			// Block: name-server { IP1; IP2; } or leaf: name-server IP
+			if len(child.Keys) >= 2 {
+				sys.NameServers = append(sys.NameServers, child.Keys[1])
+			}
+			for _, ns := range child.Children {
+				if len(ns.Keys) >= 1 {
+					sys.NameServers = append(sys.NameServers, ns.Keys[0])
+				}
+			}
+		case "ntp":
+			for _, ntpChild := range child.FindChildren("server") {
+				if len(ntpChild.Keys) >= 2 {
+					sys.NTPServers = append(sys.NTPServers, ntpChild.Keys[1])
+				}
+			}
+		case "login":
+			sys.Login = &LoginConfig{}
+			for _, userNode := range child.FindChildren("user") {
+				if len(userNode.Keys) < 2 {
+					continue
+				}
+				user := &LoginUser{Name: userNode.Keys[1]}
+				for _, prop := range userNode.Children {
+					switch prop.Name() {
+					case "uid":
+						if len(prop.Keys) >= 2 {
+							if v, err := strconv.Atoi(prop.Keys[1]); err == nil {
+								user.UID = v
+							}
+						}
+					case "class":
+						if len(prop.Keys) >= 2 {
+							user.Class = prop.Keys[1]
+						}
+					case "authentication":
+						for _, authChild := range prop.Children {
+							switch authChild.Name() {
+							case "ssh-ed25519", "ssh-rsa", "ssh-dsa":
+								if len(authChild.Keys) >= 2 {
+									user.SSHKeys = append(user.SSHKeys, authChild.Keys[1])
+								}
+							}
+						}
+					}
+				}
+				sys.Login.Users = append(sys.Login.Users, user)
+			}
+		}
+	}
+
 	svcNode := node.FindChild("services")
 	if svcNode != nil {
 		dhcpNode := svcNode.FindChild("dhcp-local-server")

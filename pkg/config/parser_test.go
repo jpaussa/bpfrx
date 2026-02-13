@@ -2149,6 +2149,78 @@ func TestRPMConfig(t *testing.T) {
 	}
 }
 
+func TestSystemConfig(t *testing.T) {
+	input := `system {
+    host-name bpfrx-fw;
+    time-zone America/Los_Angeles;
+    no-redirects;
+    name-server {
+        2606:4700:4700::1111;
+        2606:4700:4700::1001;
+    }
+    ntp {
+        server 2001:559:8585:ffff::4;
+        server 192.168.99.4;
+    }
+    login {
+        user admin {
+            uid 2000;
+            class super-user;
+            authentication {
+                ssh-ed25519 "ssh-ed25519 AAAA...";
+            }
+        }
+        user readonly {
+            uid 2001;
+            class read-only;
+        }
+    }
+}`
+	parser := NewParser(input)
+	tree, errs := parser.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	if cfg.System.HostName != "bpfrx-fw" {
+		t.Errorf("hostname = %q", cfg.System.HostName)
+	}
+	if cfg.System.TimeZone != "America/Los_Angeles" {
+		t.Errorf("timezone = %q", cfg.System.TimeZone)
+	}
+	if !cfg.System.NoRedirects {
+		t.Error("no-redirects not set")
+	}
+	if len(cfg.System.NameServers) != 2 {
+		t.Errorf("expected 2 name-servers, got %d", len(cfg.System.NameServers))
+	}
+	if len(cfg.System.NTPServers) != 2 {
+		t.Errorf("expected 2 NTP servers, got %d", len(cfg.System.NTPServers))
+	}
+	if cfg.System.Login == nil {
+		t.Fatal("login config missing")
+	}
+	if len(cfg.System.Login.Users) != 2 {
+		t.Fatalf("expected 2 users, got %d", len(cfg.System.Login.Users))
+	}
+	if cfg.System.Login.Users[0].Name != "admin" {
+		t.Errorf("user[0] name = %q", cfg.System.Login.Users[0].Name)
+	}
+	if cfg.System.Login.Users[0].UID != 2000 {
+		t.Errorf("user[0] uid = %d", cfg.System.Login.Users[0].UID)
+	}
+	if cfg.System.Login.Users[0].Class != "super-user" {
+		t.Errorf("user[0] class = %q", cfg.System.Login.Users[0].Class)
+	}
+	if len(cfg.System.Login.Users[0].SSHKeys) != 1 {
+		t.Errorf("expected 1 SSH key for admin, got %d", len(cfg.System.Login.Users[0].SSHKeys))
+	}
+}
+
 func TestDHCPServerConfig(t *testing.T) {
 	// Test hierarchical syntax
 	input := `system {
