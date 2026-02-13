@@ -326,9 +326,10 @@ type SamplingInstance struct {
 
 // SamplingFamily holds per-AF sampling output configuration.
 type SamplingFamily struct {
-	FlowServers   []*FlowServer
-	SourceAddress string
-	InlineJflow   bool
+	FlowServers              []*FlowServer
+	SourceAddress            string
+	InlineJflow              bool
+	InlineJflowSourceAddress string // inline-jflow { source-address; }
 }
 
 // FlowServer defines a flow export collector destination.
@@ -556,11 +557,12 @@ type PolicyLog struct {
 
 // NATConfig holds NAT configuration.
 type NATConfig struct {
-	Source      []*NATRuleSet
-	SourcePools map[string]*NATPool    // named source NAT pools
-	Destination *DestinationNATConfig
-	Static      []*StaticNATRuleSet
-	NAT64       []*NAT64RuleSet
+	Source            []*NATRuleSet
+	SourcePools       map[string]*NATPool    // named source NAT pools
+	AddressPersistent bool                   // source { address-persistent; }
+	Destination       *DestinationNATConfig
+	Static            []*StaticNATRuleSet
+	NAT64             []*NAT64RuleSet
 }
 
 // NAT64RuleSet defines NAT64 translation rules.
@@ -811,10 +813,17 @@ type Application struct {
 
 // RoutingOptionsConfig holds static routing configuration.
 type RoutingOptionsConfig struct {
-	StaticRoutes        []*StaticRoute
-	Inet6StaticRoutes   []*StaticRoute // rib inet6.0 static routes
-	ForwardingTableExport string       // forwarding-table { export <policy>; }
-	AutonomousSystem    uint32         // autonomous-system <number>
+	StaticRoutes          []*StaticRoute
+	Inet6StaticRoutes     []*StaticRoute // rib inet6.0 static routes
+	ForwardingTableExport string         // forwarding-table { export <policy>; }
+	AutonomousSystem      uint32         // autonomous-system <number>
+	RibGroups             map[string]*RibGroup
+}
+
+// RibGroup defines a RIB group for route sharing between routing instances.
+type RibGroup struct {
+	Name       string
+	ImportRibs []string // import-rib [ rib1 rib2 ... ]
 }
 
 // NextHopEntry defines a single next-hop for a static route.
@@ -1020,13 +1029,15 @@ type IPsecVPN struct {
 
 // RoutingInstanceConfig represents a VRF-based routing instance.
 type RoutingInstanceConfig struct {
-	Name         string
-	InstanceType string              // "virtual-router" or "vrf"
-	Interfaces   []string            // interfaces belonging to this instance
-	StaticRoutes []*StaticRoute      // per-instance static routes
-	OSPF         *OSPFConfig         // per-instance OSPF (optional)
-	BGP          *BGPConfig          // per-instance BGP (optional)
-	RIP          *RIPConfig          // per-instance RIP (optional)
-	ISIS         *ISISConfig         // per-instance IS-IS (optional)
-	TableID      int                 // Linux kernel routing table number (auto-assigned)
+	Name                    string
+	InstanceType            string              // "virtual-router" or "vrf"
+	Interfaces              []string            // interfaces belonging to this instance
+	StaticRoutes            []*StaticRoute      // per-instance static routes
+	OSPF                    *OSPFConfig         // per-instance OSPF (optional)
+	BGP                     *BGPConfig          // per-instance BGP (optional)
+	RIP                     *RIPConfig          // per-instance RIP (optional)
+	ISIS                    *ISISConfig         // per-instance IS-IS (optional)
+	TableID                 int                 // Linux kernel routing table number (auto-assigned)
+	InterfaceRoutesRibGroup string              // interface-routes { rib-group inet <name>; }
+	InterfaceRoutesRibGroupV6 string            // interface-routes { rib-group inet6 <name>; }
 }

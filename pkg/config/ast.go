@@ -452,6 +452,17 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 		"forwarding-table": {children: map[string]*schemaNode{
 			"export": {args: 1, children: nil},
 		}},
+		"rib-groups": {children: map[string]*schemaNode{
+			"*": {children: map[string]*schemaNode{
+				"import-rib": {children: nil},
+			}},
+		}},
+		"interface-routes": {children: map[string]*schemaNode{
+			"rib-group": {children: map[string]*schemaNode{
+				"inet":  {args: 1, children: nil},
+				"inet6": {args: 1, children: nil},
+			}},
+		}},
 	}},
 	"snmp": {children: map[string]*schemaNode{
 		"community": {args: 1, children: map[string]*schemaNode{
@@ -742,6 +753,12 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 		"routing-options": {children: map[string]*schemaNode{
 			"static": {children: map[string]*schemaNode{
 				"route": {args: 1, children: nil},
+			}},
+			"interface-routes": {children: map[string]*schemaNode{
+				"rib-group": {children: map[string]*schemaNode{
+					"inet":  {args: 1, children: nil},
+					"inet6": {args: 1, children: nil},
+				}},
 			}},
 		}},
 		"protocols": {children: map[string]*schemaNode{

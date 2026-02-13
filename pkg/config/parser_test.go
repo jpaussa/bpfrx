@@ -6457,6 +6457,156 @@ func TestEventOptions(t *testing.T) {
 	}
 }
 
+func TestNATAddressPersistent(t *testing.T) {
+	input := `security {
+    nat {
+        source {
+            address-persistent;
+            pool my-pool {
+                address 10.0.0.1/32;
+            }
+        }
+    }
+}`
+	p := NewParser(input)
+	tree, errs := p.Parse()
+	if errs != nil {
+		t.Fatal(errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Security.NAT.AddressPersistent {
+		t.Error("AddressPersistent should be true")
+	}
+}
+
+func TestInlineJflowSourceAddress(t *testing.T) {
+	input := `forwarding-options {
+    sampling {
+        instance jflow-inst {
+            input {
+                rate 10000;
+            }
+            family inet {
+                output {
+                    flow-server 192.168.1.1 {
+                        port 4739;
+                        version9 {
+                            template {
+                                ipv4-template;
+                            }
+                        }
+                    }
+                    inline-jflow {
+                        source-address 192.168.99.1;
+                    }
+                }
+            }
+        }
+    }
+}`
+	p := NewParser(input)
+	tree, errs := p.Parse()
+	if errs != nil {
+		t.Fatal(errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ForwardingOptions.Sampling == nil {
+		t.Fatal("Sampling is nil")
+	}
+	inst, ok := cfg.ForwardingOptions.Sampling.Instances["jflow-inst"]
+	if !ok {
+		t.Fatal("instance jflow-inst not found")
+	}
+	if inst.FamilyInet == nil {
+		t.Fatal("FamilyInet is nil")
+	}
+	if !inst.FamilyInet.InlineJflow {
+		t.Error("InlineJflow should be true")
+	}
+	if inst.FamilyInet.InlineJflowSourceAddress != "192.168.99.1" {
+		t.Errorf("InlineJflowSourceAddress = %q, want 192.168.99.1", inst.FamilyInet.InlineJflowSourceAddress)
+	}
+	if len(inst.FamilyInet.FlowServers) == 0 {
+		t.Fatal("no flow servers")
+	}
+	if inst.FamilyInet.FlowServers[0].Version9Template != "ipv4-template" {
+		t.Errorf("Version9Template = %q, want ipv4-template", inst.FamilyInet.FlowServers[0].Version9Template)
+	}
+}
+
+func TestRibGroups(t *testing.T) {
+	input := `routing-options {
+    rib-groups {
+        Other-ISPS {
+            import-rib [ ATT.inet.0 inet.0 ];
+        }
+    }
+}`
+	p := NewParser(input)
+	tree, errs := p.Parse()
+	if errs != nil {
+		t.Fatal(errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RoutingOptions.RibGroups == nil {
+		t.Fatal("RibGroups is nil")
+	}
+	rg, ok := cfg.RoutingOptions.RibGroups["Other-ISPS"]
+	if !ok {
+		t.Fatal("rib-group Other-ISPS not found")
+	}
+	if len(rg.ImportRibs) != 2 {
+		t.Fatalf("ImportRibs = %d, want 2", len(rg.ImportRibs))
+	}
+	if rg.ImportRibs[0] != "ATT.inet.0" {
+		t.Errorf("ImportRibs[0] = %q, want ATT.inet.0", rg.ImportRibs[0])
+	}
+}
+
+func TestRoutingInstanceInterfaceRoutesRibGroup(t *testing.T) {
+	input := `routing-instances {
+    ATT {
+        instance-type virtual-router;
+        routing-options {
+            interface-routes {
+                rib-group {
+                    inet Other-ISPS;
+                    inet6 Other-ISP6;
+                }
+            }
+        }
+    }
+}`
+	p := NewParser(input)
+	tree, errs := p.Parse()
+	if errs != nil {
+		t.Fatal(errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.RoutingInstances) != 1 {
+		t.Fatalf("RoutingInstances = %d, want 1", len(cfg.RoutingInstances))
+	}
+	ri := cfg.RoutingInstances[0]
+	if ri.InterfaceRoutesRibGroup != "Other-ISPS" {
+		t.Errorf("InterfaceRoutesRibGroup = %q, want Other-ISPS", ri.InterfaceRoutesRibGroup)
+	}
+	if ri.InterfaceRoutesRibGroupV6 != "Other-ISP6" {
+		t.Errorf("InterfaceRoutesRibGroupV6 = %q, want Other-ISP6", ri.InterfaceRoutesRibGroupV6)
+	}
+}
+
 func TestFormatJSON(t *testing.T) {
 	input := `system {
     host-name fw1;

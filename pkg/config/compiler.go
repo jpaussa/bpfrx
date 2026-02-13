@@ -1120,6 +1120,11 @@ func parseZoneList(node *Node) []string {
 }
 
 func compileNATSource(node *Node, sec *SecurityConfig) error {
+	// Global flags
+	if node.FindChild("address-persistent") != nil {
+		sec.NAT.AddressPersistent = true
+	}
+
 	// Parse source NAT pools
 	for _, inst := range namedInstances(node.FindChildren("pool")) {
 		pool := &NATPool{Name: inst.name}
@@ -1783,6 +1788,49 @@ func compileRoutingOptions(node *Node, ro *RoutingOptionsConfig) error {
 	staticNode := node.FindChild("static")
 	if staticNode != nil {
 		ro.StaticRoutes = compileStaticRoutes(staticNode, ro.StaticRoutes)
+	}
+
+	// Parse rib-groups
+	if rgNode := node.FindChild("rib-groups"); rgNode != nil {
+		if ro.RibGroups == nil {
+			ro.RibGroups = make(map[string]*RibGroup)
+		}
+		for _, inst := range namedInstances(rgNode.FindChildren("")) {
+			rg := &RibGroup{Name: inst.name}
+			if irNode := inst.node.FindChild("import-rib"); irNode != nil {
+				// import-rib [ rib1 rib2 ... ] or import-rib rib1;
+				for i := 1; i < len(irNode.Keys); i++ {
+					if irNode.Keys[i] == "[" || irNode.Keys[i] == "]" {
+						continue
+					}
+					rg.ImportRibs = append(rg.ImportRibs, irNode.Keys[i])
+				}
+				for _, child := range irNode.Children {
+					rg.ImportRibs = append(rg.ImportRibs, child.Name())
+				}
+			}
+			ro.RibGroups[rg.Name] = rg
+		}
+		// Also handle direct children (non-named instances)
+		for _, child := range rgNode.Children {
+			name := child.Name()
+			if _, exists := ro.RibGroups[name]; exists {
+				continue
+			}
+			rg := &RibGroup{Name: name}
+			if irNode := child.FindChild("import-rib"); irNode != nil {
+				for i := 1; i < len(irNode.Keys); i++ {
+					if irNode.Keys[i] == "[" || irNode.Keys[i] == "]" {
+						continue
+					}
+					rg.ImportRibs = append(rg.ImportRibs, irNode.Keys[i])
+				}
+				for _, child := range irNode.Children {
+					rg.ImportRibs = append(rg.ImportRibs, child.Name())
+				}
+			}
+			ro.RibGroups[rg.Name] = rg
+		}
 	}
 
 	return nil
@@ -2621,6 +2669,28 @@ func compileRoutingInstances(node *Node, cfg *Config) error {
 					return fmt.Errorf("instance %s routing-options: %w", instanceName, err)
 				}
 				ri.StaticRoutes = ro.StaticRoutes
+				// Parse interface-routes rib-group
+				if irNode := prop.FindChild("interface-routes"); irNode != nil {
+					if rgNode := irNode.FindChild("rib-group"); rgNode != nil {
+						for _, rgChild := range rgNode.Children {
+							switch rgChild.Name() {
+							case "inet":
+								ri.InterfaceRoutesRibGroup = nodeVal(rgChild)
+							case "inet6":
+								ri.InterfaceRoutesRibGroupV6 = nodeVal(rgChild)
+							}
+						}
+						// Also handle inline: "rib-group inet NAME"
+						for i := 1; i < len(rgNode.Keys)-1; i++ {
+							switch rgNode.Keys[i] {
+							case "inet":
+								ri.InterfaceRoutesRibGroup = rgNode.Keys[i+1]
+							case "inet6":
+								ri.InterfaceRoutesRibGroupV6 = rgNode.Keys[i+1]
+							}
+						}
+					}
+				}
 			case "protocols":
 				var proto ProtocolsConfig
 				if err := compileProtocols(prop, &proto); err != nil {
@@ -3400,6 +3470,16 @@ func compileSamplingFamily(node *Node) *SamplingFamily {
 						}
 					case "version9-template":
 						fs.Version9Template = nodeVal(prop)
+					case "version9":
+						// Hierarchical: version9 { template { <name>; } }
+						if tmplNode := prop.FindChild("template"); tmplNode != nil {
+							// Template name is either nodeVal or first child's name
+							if v := nodeVal(tmplNode); v != "" {
+								fs.Version9Template = v
+							} else if len(tmplNode.Children) > 0 {
+								fs.Version9Template = tmplNode.Children[0].Name()
+							}
+						}
 					case "source-address":
 						sf.SourceAddress = nodeVal(prop)
 					}
@@ -3408,6 +3488,15 @@ func compileSamplingFamily(node *Node) *SamplingFamily {
 			}
 		case "inline-jflow":
 			sf.InlineJflow = true
+			if saNode := child.FindChild("source-address"); saNode != nil {
+				sf.InlineJflowSourceAddress = nodeVal(saNode)
+			}
+			// Also handle inline keys: "inline-jflow source-address X"
+			for i := 1; i < len(child.Keys)-1; i++ {
+				if child.Keys[i] == "source-address" {
+					sf.InlineJflowSourceAddress = child.Keys[i+1]
+				}
+			}
 		}
 	}
 
