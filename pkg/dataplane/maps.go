@@ -89,7 +89,7 @@ func (m *Manager) SetAddressMembership(resolvedID, setID uint32) error {
 }
 
 // SetApplication writes an application map entry.
-func (m *Manager) SetApplication(protocol uint8, dstPort uint16, appID uint32) error {
+func (m *Manager) SetApplication(protocol uint8, dstPort uint16, appID uint32, timeout uint16) error {
 	zm, ok := m.maps["applications"]
 	if !ok {
 		return fmt.Errorf("applications map not found")
@@ -98,7 +98,7 @@ func (m *Manager) SetApplication(protocol uint8, dstPort uint16, appID uint32) e
 		Protocol: protocol,
 		DstPort:  htons(dstPort),
 	}
-	val := AppValue{AppID: appID}
+	val := AppValue{AppID: appID, Timeout: timeout}
 	return zm.Update(key, val, ebpf.UpdateAny)
 }
 

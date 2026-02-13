@@ -897,8 +897,13 @@ func (m *Manager) compileApplications(cfg *config.Config, result *CompileResult)
 			continue
 		}
 
+		var appTimeout uint16
+		if app.InactivityTimeout > 0 && app.InactivityTimeout <= 65535 {
+			appTimeout = uint16(app.InactivityTimeout)
+		}
+
 		for _, port := range ports {
-			if err := m.SetApplication(proto, port, appID); err != nil {
+			if err := m.SetApplication(proto, port, appID, appTimeout); err != nil {
 				return fmt.Errorf("set application %s port %d: %w",
 					appName, port, err)
 			}
@@ -906,7 +911,7 @@ func (m *Manager) compileApplications(cfg *config.Config, result *CompileResult)
 		}
 
 		slog.Debug("application compiled", "name", appName, "id", appID,
-			"proto", proto, "ports", ports)
+			"proto", proto, "ports", ports, "timeout", appTimeout)
 		appID++
 	}
 

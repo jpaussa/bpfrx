@@ -35,7 +35,8 @@ type bpfrxTcForwardAppValue struct {
 	_       structs.HostLayout
 	AppId   uint32
 	AlgType uint8
-	Pad     [3]uint8
+	Pad     uint8
+	Timeout uint16
 }
 
 type bpfrxTcForwardBpfDevmapVal struct {
@@ -272,7 +273,8 @@ type bpfrxTcForwardPktMeta struct {
 	FwdSmac      [6]uint8
 	RoutingTable uint32
 	DscpRewrite  uint8
-	PadMeta      [3]uint8
+	PadMeta      uint8
+	AppTimeout   uint16
 }
 
 type bpfrxTcForwardPolicyRule struct {

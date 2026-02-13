@@ -408,7 +408,10 @@ struct pkt_meta {
 
 	/* DSCP rewrite (set by firewall filter, 0xFF = no rewrite) */
 	__u8  dscp_rewrite;
-	__u8  pad_meta[3];
+	__u8  pad_meta;
+
+	/* Per-application inactivity timeout override (seconds, 0 = use default) */
+	__u16 app_timeout;
 };
 
 /* ============================================================

@@ -239,8 +239,9 @@ struct app_key {
 
 struct app_value {
 	__u32 app_id;
-	__u8  alg_type; /* 0=none */
-	__u8  pad[3];
+	__u8  alg_type;  /* 0=none */
+	__u8  pad;
+	__u16 timeout;   /* inactivity timeout override (seconds), 0=default */
 };
 
 struct {

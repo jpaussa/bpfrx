@@ -334,7 +334,8 @@ type AppKey struct {
 type AppValue struct {
 	AppID   uint32
 	ALGType uint8
-	Pad     [3]byte
+	Pad     uint8
+	Timeout uint16 // inactivity timeout override (seconds), 0=default
 }
 
 // NAT pool types.

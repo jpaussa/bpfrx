@@ -101,6 +101,8 @@ create_session(struct pkt_meta *meta, __u32 policy_id, __u8 log,
 		initial_state = SESS_STATE_ESTABLISHED;
 
 	__u32 timeout = ct_get_timeout(meta->protocol, initial_state);
+	if (meta->app_timeout > 0)
+		timeout = (__u32)meta->app_timeout;
 
 	/* Use per-CPU scratch map to avoid stack overflow */
 	__u32 idx0 = 0;
@@ -201,6 +203,8 @@ create_session_v6(struct pkt_meta *meta, __u32 policy_id, __u8 log,
 		initial_state = SESS_STATE_ESTABLISHED;
 
 	__u32 timeout = ct_get_timeout(meta->protocol, initial_state);
+	if (meta->app_timeout > 0)
+		timeout = (__u32)meta->app_timeout;
 
 	/* Use per-CPU scratch map for fwd_val (index 0) */
 	__u32 idx0 = 0;
@@ -928,8 +932,11 @@ int xdp_policy_prog(struct xdp_md *ctx)
 		.dst_port = meta->dst_port,
 	};
 	struct app_value *av = bpf_map_lookup_elem(&applications, &ak);
-	if (av)
+	if (av) {
 		pkt_app_id = av->app_id;
+		if (av->timeout > 0)
+			meta->app_timeout = av->timeout;
+	}
 
 	/* Iterate policy rules */
 	__u32 base_idx = ps->policy_set_id * MAX_RULES_PER_POLICY;
