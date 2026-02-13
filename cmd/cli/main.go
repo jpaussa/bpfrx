@@ -584,10 +584,13 @@ func (c *ctl) handleShowSecurity(args []string) error {
 		if len(args) >= 2 && args[1] == "traceoptions" {
 			return c.showText("flow-traceoptions")
 		}
+		if len(args) >= 2 && args[1] == "statistics" {
+			return c.showText("flow-statistics")
+		}
 		if len(args) == 1 {
 			return c.showText("flow-timeouts")
 		}
-		return fmt.Errorf("usage: show security flow session")
+		return fmt.Errorf("usage: show security flow {session|statistics|traceoptions}")
 	case "nat":
 		return c.handleShowNAT(args[1:])
 	case "log":
@@ -1104,7 +1107,43 @@ func (c *ctl) showStatistics() error {
 	fmt.Printf("  %-25s %d\n", "Policy denies:", resp.PolicyDenies)
 	fmt.Printf("  %-25s %d\n", "NAT alloc failures:", resp.NatAllocFailures)
 	fmt.Printf("  %-25s %d\n", "Host-inbound denies:", resp.HostInboundDenies)
+	fmt.Printf("  %-25s %d\n", "Host-inbound allowed:", resp.HostInboundAllowed)
 	fmt.Printf("  %-25s %d\n", "TC egress packets:", resp.TcEgressPackets)
+	fmt.Printf("  %-25s %d\n", "NAT64 translations:", resp.Nat64Translations)
+	return nil
+}
+
+func (c *ctl) showFlowStatistics() error {
+	resp, err := c.client.GetGlobalStats(context.Background(), &pb.GetGlobalStatsRequest{})
+	if err != nil {
+		return fmt.Errorf("%v", err)
+	}
+
+	fmt.Println("Flow statistics:")
+	fmt.Printf("  %-30s %d\n", "Current sessions:", resp.SessionsCreated-resp.SessionsClosed)
+	fmt.Printf("  %-30s %d\n", "Sessions created:", resp.SessionsCreated)
+	fmt.Printf("  %-30s %d\n", "Sessions closed:", resp.SessionsClosed)
+	fmt.Println()
+	fmt.Printf("  %-30s %d\n", "Packets received:", resp.RxPackets)
+	fmt.Printf("  %-30s %d\n", "Packets transmitted:", resp.TxPackets)
+	fmt.Printf("  %-30s %d\n", "Packets dropped:", resp.Drops)
+	fmt.Printf("  %-30s %d\n", "TC egress packets:", resp.TcEgressPackets)
+	fmt.Println()
+	fmt.Printf("  %-30s %d\n", "Policy deny:", resp.PolicyDenies)
+	fmt.Printf("  %-30s %d\n", "NAT allocation failures:", resp.NatAllocFailures)
+	fmt.Printf("  %-30s %d\n", "NAT64 translations:", resp.Nat64Translations)
+	fmt.Println()
+	fmt.Printf("  %-30s %d\n", "Host-inbound allowed:", resp.HostInboundAllowed)
+	fmt.Printf("  %-30s %d\n", "Host-inbound denied:", resp.HostInboundDenies)
+
+	if resp.ScreenDrops > 0 {
+		fmt.Println()
+		fmt.Printf("  %-30s %d\n", "Screen drops (total):", resp.ScreenDrops)
+		for name, count := range resp.ScreenDropDetails {
+			fmt.Printf("    %-28s %d\n", name+":", count)
+		}
+	}
+
 	return nil
 }
 
