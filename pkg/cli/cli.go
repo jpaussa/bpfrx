@@ -24,6 +24,7 @@ import (
 	"github.com/psaab/bpfrx/pkg/dhcp"
 	"github.com/psaab/bpfrx/pkg/dhcprelay"
 	"github.com/psaab/bpfrx/pkg/dhcpserver"
+	"github.com/psaab/bpfrx/pkg/feeds"
 	"github.com/psaab/bpfrx/pkg/frr"
 	"github.com/psaab/bpfrx/pkg/ipsec"
 	"github.com/psaab/bpfrx/pkg/logging"
@@ -46,6 +47,7 @@ type CLI struct {
 	dhcp         *dhcp.Manager
 	dhcpRelay    *dhcprelay.Manager
 	rpmResultsFn func() []*rpm.ProbeResult
+	feedsFn      func() map[string]feeds.FeedInfo
 	hostname     string
 	username     string
 	version      string
@@ -80,6 +82,11 @@ func New(store *configstore.Store, dp *dataplane.Manager, eventBuf *logging.Even
 // SetRPMResultsFn sets a callback for retrieving live RPM probe results.
 func (c *CLI) SetRPMResultsFn(fn func() []*rpm.ProbeResult) {
 	c.rpmResultsFn = fn
+}
+
+// SetFeedsFn sets a callback for retrieving live dynamic address feed status.
+func (c *CLI) SetFeedsFn(fn func() map[string]feeds.FeedInfo) {
+	c.feedsFn = fn
 }
 
 // SetVersion sets the software version string for show version.
@@ -4557,12 +4564,19 @@ func (c *CLI) showInterfaces(args []string) error {
 		}
 
 		linkType := "Ethernet"
-		speedStr := ""
+		var linkDetails []string
 		if speed := readLinkSpeed(physName); speed > 0 {
-			speedStr = fmt.Sprintf(", Speed: %s", formatSpeed(speed))
+			linkDetails = append(linkDetails, "Speed: "+formatSpeed(speed))
+		}
+		if duplex := readLinkDuplex(physName); duplex != "" {
+			linkDetails = append(linkDetails, "Link-mode: "+formatDuplex(duplex))
+		}
+		extra := ""
+		if len(linkDetails) > 0 {
+			extra = ", " + strings.Join(linkDetails, ", ")
 		}
 
-		fmt.Printf("  Link-level type: %s, MTU: %d%s\n", linkType, mtu, speedStr)
+		fmt.Printf("  Link-level type: %s, MTU: %d%s\n", linkType, mtu, extra)
 
 		if len(hwAddr) > 0 {
 			fmt.Printf("  Current address: %s, Hardware address: %s\n", hwAddr, hwAddr)
@@ -4909,12 +4923,17 @@ func (c *CLI) showInterfacesExtensive() error {
 		if attrs.EncapType != "" {
 			linkType = attrs.EncapType
 		}
-		speedStr := ""
+		var linkExtras []string
 		if speed := readLinkSpeed(attrs.Name); speed > 0 {
-			speedStr = fmt.Sprintf(", Speed: %s", formatSpeed(speed))
+			linkExtras = append(linkExtras, "Speed: "+formatSpeed(speed))
 		}
-		fmt.Printf("  Link-level type: %s, MTU: %d%s, Link-mode: Full-duplex\n",
-			linkType, attrs.MTU, speedStr)
+		duplexStr := "Full-duplex"
+		if duplex := readLinkDuplex(attrs.Name); duplex != "" {
+			duplexStr = formatDuplex(duplex)
+		}
+		linkExtras = append(linkExtras, "Link-mode: "+duplexStr)
+		fmt.Printf("  Link-level type: %s, MTU: %d, %s\n",
+			linkType, attrs.MTU, strings.Join(linkExtras, ", "))
 
 		// MAC
 		if len(attrs.HardwareAddr) > 0 {
@@ -5013,12 +5032,33 @@ func readLinkSpeed(ifaceName string) int {
 	return speed
 }
 
+// readLinkDuplex reads the link duplex from sysfs. Returns "" on error.
+func readLinkDuplex(ifaceName string) string {
+	data, err := os.ReadFile("/sys/class/net/" + ifaceName + "/duplex")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
 // formatSpeed formats a link speed in Mbps to a human-readable string.
 func formatSpeed(mbps int) string {
 	if mbps >= 1000 {
 		return fmt.Sprintf("%dGbps", mbps/1000)
 	}
 	return fmt.Sprintf("%dMbps", mbps)
+}
+
+// formatDuplex formats a sysfs duplex string to display form.
+func formatDuplex(duplex string) string {
+	switch strings.ToLower(duplex) {
+	case "full":
+		return "Full-duplex"
+	case "half":
+		return "Half-duplex"
+	default:
+		return duplex
+	}
 }
 
 func (c *CLI) handleShowSystem(args []string) error {
@@ -5282,10 +5322,11 @@ func (c *CLI) showSystemNTP() error {
 		fmt.Printf("  %s\n", server)
 	}
 
-	// Try to get chrony/ntpd status via chronyc or ntpq
-	if out, err := exec.Command("chronyc", "-n", "sources").CombinedOutput(); err == nil {
-		fmt.Printf("\nChrony sources:\n%s\n", string(out))
-	} else if out, err := exec.Command("ntpq", "-p").CombinedOutput(); err == nil {
+	// Try chronyc tracking for detailed sync status
+	if out, err := exec.Command("chronyc", "tracking").CombinedOutput(); err == nil {
+		fmt.Println()
+		printChronyTracking(string(out))
+	} else if out, err := exec.Command("ntpq", "-pn").CombinedOutput(); err == nil {
 		fmt.Printf("\nNTP peers:\n%s\n", string(out))
 	} else if out, err := exec.Command("timedatectl", "show", "--property=NTPSynchronized", "--value").CombinedOutput(); err == nil {
 		synced := strings.TrimSpace(string(out))
@@ -5293,6 +5334,53 @@ func (c *CLI) showSystemNTP() error {
 	}
 
 	return nil
+}
+
+// printChronyTracking parses chronyc tracking output and prints key fields.
+func printChronyTracking(output string) {
+	fields := map[string]string{}
+	for _, line := range strings.Split(output, "\n") {
+		if idx := strings.Index(line, " : "); idx > 0 {
+			key := strings.TrimSpace(line[:idx])
+			val := strings.TrimSpace(line[idx+3:])
+			fields[key] = val
+		}
+	}
+
+	fmt.Println("NTP sync status:")
+	if v, ok := fields["Reference ID"]; ok {
+		fmt.Printf("  Reference: %s\n", v)
+	}
+	if v, ok := fields["Stratum"]; ok {
+		fmt.Printf("  Stratum: %s\n", v)
+	}
+	if v, ok := fields["Ref time (UTC)"]; ok {
+		fmt.Printf("  Reference time: %s\n", v)
+	}
+	if v, ok := fields["System time"]; ok {
+		fmt.Printf("  System time offset: %s\n", v)
+	}
+	if v, ok := fields["Last offset"]; ok {
+		fmt.Printf("  Last offset: %s\n", v)
+	}
+	if v, ok := fields["RMS offset"]; ok {
+		fmt.Printf("  RMS offset: %s\n", v)
+	}
+	if v, ok := fields["Frequency"]; ok {
+		fmt.Printf("  Frequency: %s\n", v)
+	}
+	if v, ok := fields["Root delay"]; ok {
+		fmt.Printf("  Root delay: %s\n", v)
+	}
+	if v, ok := fields["Root dispersion"]; ok {
+		fmt.Printf("  Root dispersion: %s\n", v)
+	}
+	if v, ok := fields["Update interval"]; ok {
+		fmt.Printf("  Poll interval: %s\n", v)
+	}
+	if v, ok := fields["Leap status"]; ok {
+		fmt.Printf("  Leap status: %s\n", v)
+	}
 }
 
 // showSystemServices displays configured system services.
@@ -6102,6 +6190,12 @@ func (c *CLI) showDynamicAddress() error {
 		return nil
 	}
 
+	// Get runtime feed status if available.
+	var runtimeFeeds map[string]feeds.FeedInfo
+	if c.feedsFn != nil {
+		runtimeFeeds = c.feedsFn()
+	}
+
 	fmt.Println("Dynamic Address Feed Servers:")
 	for name, fs := range cfg.Security.DynamicAddress.FeedServers {
 		updateInt := fs.UpdateInterval
@@ -6121,6 +6215,16 @@ func (c *CLI) showDynamicAddress() error {
 		}
 		fmt.Printf("    Update interval: %d seconds\n", updateInt)
 		fmt.Printf("    Hold interval:   %d seconds\n", holdInt)
+
+		if fi, ok := runtimeFeeds[name]; ok {
+			fmt.Printf("    Prefixes: %d\n", fi.Prefixes)
+			if !fi.LastFetch.IsZero() {
+				age := time.Since(fi.LastFetch).Truncate(time.Second)
+				fmt.Printf("    Last fetch: %s (%s ago)\n", fi.LastFetch.Format("2006-01-02 15:04:05"), age)
+			} else {
+				fmt.Printf("    Last fetch: never\n")
+			}
+		}
 	}
 
 	return nil
@@ -6257,6 +6361,10 @@ func (c *CLI) showRPMProbeResults() error {
 				fmt.Printf(", RTT: %s", r.LastRTT)
 			}
 			fmt.Println()
+			if r.MinRTT > 0 {
+				fmt.Printf("    RTT: min %s, max %s, avg %s, jitter %s\n",
+					r.MinRTT, r.MaxRTT, r.AvgRTT, r.Jitter)
+			}
 			fmt.Printf("    Sent: %d, Received: %d", r.TotalSent, r.TotalRecv)
 			if r.TotalSent > 0 {
 				loss := float64(r.TotalSent-r.TotalRecv) / float64(r.TotalSent) * 100
@@ -7047,6 +7155,47 @@ func (c *CLI) showARP() error {
 		return fmt.Errorf("listing ARP entries: %w", err)
 	}
 
+	// Count entries by state and interface
+	var total int
+	stateCounts := make(map[string]int)
+	ifaceCounts := make(map[string]int)
+	for _, n := range neighbors {
+		if n.IP == nil || n.HardwareAddr == nil {
+			continue
+		}
+		total++
+		stateCounts[neighState(n.State)]++
+		if link, err := netlink.LinkByIndex(n.LinkIndex); err == nil {
+			ifaceCounts[link.Attrs().Name]++
+		}
+	}
+
+	// Summary
+	fmt.Printf("Total entries: %d", total)
+	if total > 0 {
+		var parts []string
+		for _, s := range []string{"reachable", "stale", "permanent", "delay", "probe", "failed", "incomplete"} {
+			if cnt := stateCounts[s]; cnt > 0 {
+				parts = append(parts, fmt.Sprintf("%s: %d", s, cnt))
+			}
+		}
+		if len(parts) > 0 {
+			fmt.Printf(" (%s)", strings.Join(parts, ", "))
+		}
+	}
+	fmt.Println()
+	if len(ifaceCounts) > 1 {
+		var ifNames []string
+		for name := range ifaceCounts {
+			ifNames = append(ifNames, name)
+		}
+		sort.Strings(ifNames)
+		for _, name := range ifNames {
+			fmt.Printf("  %-12s %d entries\n", name, ifaceCounts[name])
+		}
+	}
+	fmt.Println()
+
 	fmt.Printf("%-18s %-20s %-12s %-10s\n", "MAC Address", "Address", "Interface", "State")
 	for _, n := range neighbors {
 		if n.IP == nil || n.HardwareAddr == nil {
@@ -7083,6 +7232,47 @@ func (c *CLI) showIPv6Neighbors() error {
 	if err != nil {
 		return fmt.Errorf("listing IPv6 neighbors: %w", err)
 	}
+
+	// Count entries by state and interface
+	var total int
+	stateCounts := make(map[string]int)
+	ifaceCounts := make(map[string]int)
+	for _, n := range neighbors {
+		if n.IP == nil || n.HardwareAddr == nil {
+			continue
+		}
+		total++
+		stateCounts[neighState(n.State)]++
+		if link, err := netlink.LinkByIndex(n.LinkIndex); err == nil {
+			ifaceCounts[link.Attrs().Name]++
+		}
+	}
+
+	// Summary
+	fmt.Printf("Total entries: %d", total)
+	if total > 0 {
+		var parts []string
+		for _, s := range []string{"reachable", "stale", "permanent", "delay", "probe", "failed", "incomplete"} {
+			if cnt := stateCounts[s]; cnt > 0 {
+				parts = append(parts, fmt.Sprintf("%s: %d", s, cnt))
+			}
+		}
+		if len(parts) > 0 {
+			fmt.Printf(" (%s)", strings.Join(parts, ", "))
+		}
+	}
+	fmt.Println()
+	if len(ifaceCounts) > 1 {
+		var ifNames []string
+		for name := range ifaceCounts {
+			ifNames = append(ifNames, name)
+		}
+		sort.Strings(ifNames)
+		for _, name := range ifNames {
+			fmt.Printf("  %-12s %d entries\n", name, ifaceCounts[name])
+		}
+	}
+	fmt.Println()
 
 	fmt.Printf("%-18s %-40s %-12s %-10s\n", "MAC Address", "IPv6 Address", "Interface", "State")
 	for _, n := range neighbors {
@@ -7402,23 +7592,29 @@ func (c *CLI) showPolicyOptions() error {
 			}
 			fmt.Println()
 			for _, t := range ps.Terms {
-				fmt.Printf("    term %s:", t.Name)
+				fmt.Printf("    term %s:\n", t.Name)
 				if t.FromProtocol != "" {
-					fmt.Printf(" from protocol %s", t.FromProtocol)
+					fmt.Printf("      from protocol %s\n", t.FromProtocol)
 				}
 				if t.PrefixList != "" {
-					fmt.Printf(" prefix-list %s", t.PrefixList)
+					fmt.Printf("      from prefix-list %s\n", t.PrefixList)
 				}
-				if len(t.RouteFilters) > 0 {
-					fmt.Printf(" %d route-filter(s)", len(t.RouteFilters))
+				for _, rf := range t.RouteFilters {
+					match := rf.MatchType
+					if rf.MatchType == "upto" && rf.UptoLen > 0 {
+						match = fmt.Sprintf("upto /%d", rf.UptoLen)
+					}
+					fmt.Printf("      from route-filter %s %s\n", rf.Prefix, match)
 				}
 				if t.Action != "" {
-					fmt.Printf(" then %s", t.Action)
+					fmt.Printf("      then %s\n", t.Action)
+				}
+				if t.NextHop != "" {
+					fmt.Printf("      then next-hop %s\n", t.NextHop)
 				}
 				if t.LoadBalance != "" {
-					fmt.Printf(" load-balance %s", t.LoadBalance)
+					fmt.Printf("      then load-balance %s\n", t.LoadBalance)
 				}
-				fmt.Println()
 			}
 		}
 	}

@@ -383,6 +383,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 				}
 				return nil
 			},
+			FeedsFn: func() map[string]feeds.FeedInfo {
+				if d.feeds != nil {
+					return d.feeds.AllFeeds()
+				}
+				return nil
+			},
 			ApplyFn: d.applyConfig,
 			Version: d.opts.Version,
 		})
@@ -404,6 +410,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 		shell.SetRPMResultsFn(func() []*rpm.ProbeResult {
 			if d.rpm != nil {
 				return d.rpm.Results()
+			}
+			return nil
+		})
+		shell.SetFeedsFn(func() map[string]feeds.FeedInfo {
+			if d.feeds != nil {
+				return d.feeds.AllFeeds()
 			}
 			return nil
 		})

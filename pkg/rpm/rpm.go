@@ -21,8 +21,12 @@ type ProbeResult struct {
 	ProbeType    string
 	Target       string
 	LastRTT      time.Duration
-	LastStatus   string // "pass" or "fail"
-	SuccFail     int    // consecutive failures
+	MinRTT       time.Duration
+	MaxRTT       time.Duration
+	AvgRTT       time.Duration
+	Jitter       time.Duration // running absolute deviation from average
+	LastStatus   string        // "pass" or "fail"
+	SuccFail     int           // consecutive failures
 	TotalSent    int64
 	TotalRecv    int64
 	LastProbeAt  time.Time
@@ -216,6 +220,30 @@ func (m *Manager) runSingleTest(ctx context.Context, probeName string, test *con
 		} else {
 			successes++
 			r.TotalRecv++
+			// Track min/max/avg RTT and jitter
+			if r.MinRTT == 0 || rtt < r.MinRTT {
+				r.MinRTT = rtt
+			}
+			if rtt > r.MaxRTT {
+				r.MaxRTT = rtt
+			}
+			prevAvg := r.AvgRTT
+			if r.TotalRecv == 1 {
+				r.AvgRTT = rtt
+			} else {
+				// Exponential moving average (alpha = 1/8 like TCP RTT)
+				r.AvgRTT = prevAvg + (rtt-prevAvg)/8
+			}
+			// Jitter: smoothed absolute deviation (RFC 3550 style)
+			diff := rtt - prevAvg
+			if diff < 0 {
+				diff = -diff
+			}
+			if r.TotalRecv == 1 {
+				r.Jitter = 0
+			} else {
+				r.Jitter = r.Jitter + (diff-r.Jitter)/16
+			}
 			r.LastRTT = rtt
 			r.SuccFail = 0
 			r.LastStatus = "pass"

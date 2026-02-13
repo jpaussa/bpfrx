@@ -29,6 +29,7 @@ import (
 	"github.com/psaab/bpfrx/pkg/dataplane"
 	"github.com/psaab/bpfrx/pkg/dhcp"
 	"github.com/psaab/bpfrx/pkg/dhcpserver"
+	"github.com/psaab/bpfrx/pkg/feeds"
 	"github.com/psaab/bpfrx/pkg/frr"
 	pb "github.com/psaab/bpfrx/pkg/grpcapi/bpfrxv1"
 	"github.com/psaab/bpfrx/pkg/ipsec"
@@ -49,8 +50,9 @@ type Config struct {
 	IPsec    *ipsec.Manager
 	DHCP         *dhcp.Manager
 	DHCPServer   *dhcpserver.Manager
-	RPMResultsFn func() []*rpm.ProbeResult // returns live RPM results
-	ApplyFn      func(*config.Config)      // daemon's applyConfig callback
+	RPMResultsFn func() []*rpm.ProbeResult      // returns live RPM results
+	FeedsFn      func() map[string]feeds.FeedInfo // returns live feed status
+	ApplyFn      func(*config.Config)             // daemon's applyConfig callback
 	Version      string                    // software version string
 }
 
@@ -67,6 +69,7 @@ type Server struct {
 	dhcp         *dhcp.Manager
 	dhcpServer   *dhcpserver.Manager
 	rpmResultsFn func() []*rpm.ProbeResult
+	feedsFn      func() map[string]feeds.FeedInfo
 	applyFn      func(*config.Config)
 	startTime    time.Time
 	addr         string
@@ -86,6 +89,7 @@ func NewServer(addr string, cfg Config) *Server {
 		dhcp:         cfg.DHCP,
 		dhcpServer:   cfg.DHCPServer,
 		rpmResultsFn: cfg.RPMResultsFn,
+		feedsFn:      cfg.FeedsFn,
 		applyFn:      cfg.ApplyFn,
 		startTime:    time.Now(),
 		addr:         addr,
@@ -3219,6 +3223,10 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 		if cfg == nil || len(cfg.Security.DynamicAddress.FeedServers) == 0 {
 			buf.WriteString("No dynamic address feeds configured\n")
 		} else {
+			var runtimeFeeds map[string]feeds.FeedInfo
+			if s.feedsFn != nil {
+				runtimeFeeds = s.feedsFn()
+			}
 			for name, feed := range cfg.Security.DynamicAddress.FeedServers {
 				fmt.Fprintf(&buf, "Feed server: %s\n", name)
 				fmt.Fprintf(&buf, "  URL: %s\n", feed.URL)
@@ -3230,6 +3238,15 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 				}
 				if feed.HoldInterval > 0 {
 					fmt.Fprintf(&buf, "  Hold interval: %ds\n", feed.HoldInterval)
+				}
+				if fi, ok := runtimeFeeds[name]; ok {
+					fmt.Fprintf(&buf, "  Prefixes: %d\n", fi.Prefixes)
+					if !fi.LastFetch.IsZero() {
+						age := time.Since(fi.LastFetch).Truncate(time.Second)
+						fmt.Fprintf(&buf, "  Last fetch: %s (%s ago)\n", fi.LastFetch.Format("2006-01-02 15:04:05"), age)
+					} else {
+						fmt.Fprintf(&buf, "  Last fetch: never\n")
+					}
 				}
 				buf.WriteString("\n")
 			}
@@ -3511,6 +3528,10 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 						fmt.Fprintf(&buf, ", RTT: %s", r.LastRTT)
 					}
 					buf.WriteString("\n")
+					if r.MinRTT > 0 {
+						fmt.Fprintf(&buf, "    RTT: min %s, max %s, avg %s, jitter %s\n",
+							r.MinRTT, r.MaxRTT, r.AvgRTT, r.Jitter)
+					}
 					fmt.Fprintf(&buf, "    Sent: %d, Received: %d", r.TotalSent, r.TotalRecv)
 					if r.TotalSent > 0 {
 						loss := float64(r.TotalSent-r.TotalRecv) / float64(r.TotalSent) * 100
@@ -3859,7 +3880,26 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 			if zone, ok := ifZoneMap[attrs.Name]; ok {
 				fmt.Fprintf(&buf, "  Security zone: %s\n", zone)
 			}
-			fmt.Fprintf(&buf, "  Link-level type: %s, MTU: %d\n", attrs.EncapType, attrs.MTU)
+			// Speed/duplex from sysfs
+			var linkExtras []string
+			if data, err := os.ReadFile("/sys/class/net/" + attrs.Name + "/speed"); err == nil {
+				if spd, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && spd > 0 {
+					if spd >= 1000 {
+						linkExtras = append(linkExtras, fmt.Sprintf("Speed: %dGbps", spd/1000))
+					} else {
+						linkExtras = append(linkExtras, fmt.Sprintf("Speed: %dMbps", spd))
+					}
+				}
+			}
+			duplexStr := "Full-duplex"
+			if data, err := os.ReadFile("/sys/class/net/" + attrs.Name + "/duplex"); err == nil {
+				d := strings.TrimSpace(string(data))
+				if d == "half" {
+					duplexStr = "Half-duplex"
+				}
+			}
+			linkExtras = append(linkExtras, "Link-mode: "+duplexStr)
+			fmt.Fprintf(&buf, "  Link-level type: %s, MTU: %d, %s\n", attrs.EncapType, attrs.MTU, strings.Join(linkExtras, ", "))
 			if len(attrs.HardwareAddr) > 0 {
 				fmt.Fprintf(&buf, "  Current address: %s\n", attrs.HardwareAddr)
 			}
@@ -4094,9 +4134,9 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 		for _, server := range cfg.System.NTPServers {
 			fmt.Fprintf(&buf, "  %s\n", server)
 		}
-		if out, err := exec.Command("chronyc", "-n", "sources").CombinedOutput(); err == nil {
-			fmt.Fprintf(&buf, "\nChrony sources:\n%s\n", string(out))
-		} else if out, err := exec.Command("ntpq", "-p").CombinedOutput(); err == nil {
+		if out, err := exec.Command("chronyc", "tracking").CombinedOutput(); err == nil {
+			writeChronyTracking(&buf, string(out))
+		} else if out, err := exec.Command("ntpq", "-pn").CombinedOutput(); err == nil {
 			fmt.Fprintf(&buf, "\nNTP peers:\n%s\n", string(out))
 		} else if out, err := exec.Command("timedatectl", "show", "--property=NTPSynchronized", "--value").CombinedOutput(); err == nil {
 			fmt.Fprintf(&buf, "\nNTP synchronized: %s\n", strings.TrimSpace(string(out)))
@@ -4165,20 +4205,29 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 					}
 					buf.WriteString("\n")
 					for _, t := range ps.Terms {
-						fmt.Fprintf(&buf, "    term %s:", t.Name)
+						fmt.Fprintf(&buf, "    term %s:\n", t.Name)
 						if t.FromProtocol != "" {
-							fmt.Fprintf(&buf, " from %s", t.FromProtocol)
+							fmt.Fprintf(&buf, "      from protocol %s\n", t.FromProtocol)
 						}
 						if t.PrefixList != "" {
-							fmt.Fprintf(&buf, " prefix-list %s", t.PrefixList)
+							fmt.Fprintf(&buf, "      from prefix-list %s\n", t.PrefixList)
+						}
+						for _, rf := range t.RouteFilters {
+							match := rf.MatchType
+							if rf.MatchType == "upto" && rf.UptoLen > 0 {
+								match = fmt.Sprintf("upto /%d", rf.UptoLen)
+							}
+							fmt.Fprintf(&buf, "      from route-filter %s %s\n", rf.Prefix, match)
 						}
 						if t.Action != "" {
-							fmt.Fprintf(&buf, " then %s", t.Action)
+							fmt.Fprintf(&buf, "      then %s\n", t.Action)
+						}
+						if t.NextHop != "" {
+							fmt.Fprintf(&buf, "      then next-hop %s\n", t.NextHop)
 						}
 						if t.LoadBalance != "" {
-							fmt.Fprintf(&buf, " load-balance %s", t.LoadBalance)
+							fmt.Fprintf(&buf, "      then load-balance %s\n", t.LoadBalance)
 						}
-						buf.WriteString("\n")
 					}
 				}
 			}
@@ -4794,6 +4843,37 @@ func boolStatus(b bool) string {
 	return "disabled"
 }
 
+// writeChronyTracking parses chronyc tracking output and writes key fields.
+func writeChronyTracking(buf *strings.Builder, output string) {
+	fields := map[string]string{}
+	for _, line := range strings.Split(output, "\n") {
+		if idx := strings.Index(line, " : "); idx > 0 {
+			key := strings.TrimSpace(line[:idx])
+			val := strings.TrimSpace(line[idx+3:])
+			fields[key] = val
+		}
+	}
+
+	fmt.Fprintln(buf, "\nNTP sync status:")
+	for _, pair := range [][2]string{
+		{"Reference ID", "Reference"},
+		{"Stratum", "Stratum"},
+		{"Ref time (UTC)", "Reference time"},
+		{"System time", "System time offset"},
+		{"Last offset", "Last offset"},
+		{"RMS offset", "RMS offset"},
+		{"Frequency", "Frequency"},
+		{"Root delay", "Root delay"},
+		{"Root dispersion", "Root dispersion"},
+		{"Update interval", "Poll interval"},
+		{"Leap status", "Leap status"},
+	} {
+		if v, ok := fields[pair[0]]; ok {
+			fmt.Fprintf(buf, "  %s: %s\n", pair[1], v)
+		}
+	}
+}
+
 // --- GetSystemInfo RPC ---
 
 func (s *Server) GetSystemInfo(_ context.Context, req *pb.GetSystemInfoRequest) (*pb.GetSystemInfoResponse, error) {
@@ -4880,6 +4960,7 @@ func (s *Server) GetSystemInfo(_ context.Context, req *pb.GetSystemInfoRequest) 
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "listing ARP entries: %v", err)
 		}
+		writeNeighSummary(&buf, neighbors, neighStateStr)
 		fmt.Fprintf(&buf, "%-18s %-20s %-12s %-10s\n", "MAC Address", "Address", "Interface", "State")
 		for _, n := range neighbors {
 			if n.IP == nil || n.HardwareAddr == nil {
@@ -4898,6 +4979,7 @@ func (s *Server) GetSystemInfo(_ context.Context, req *pb.GetSystemInfoRequest) 
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "listing IPv6 neighbors: %v", err)
 		}
+		writeNeighSummary(&buf, neighbors, neighStateStr)
 		fmt.Fprintf(&buf, "%-18s %-40s %-12s %-10s\n", "MAC Address", "IPv6 Address", "Interface", "State")
 		for _, n := range neighbors {
 			if n.IP == nil || n.HardwareAddr == nil {
@@ -4966,6 +5048,47 @@ func neighStateStr(state int) string {
 	default:
 		return "unknown"
 	}
+}
+
+// writeNeighSummary writes a neighbor table summary (total + per-state + per-interface counts).
+func writeNeighSummary(buf *strings.Builder, neighbors []netlink.Neigh, stateFn func(int) string) {
+	var total int
+	stateCounts := make(map[string]int)
+	ifaceCounts := make(map[string]int)
+	for _, n := range neighbors {
+		if n.IP == nil || n.HardwareAddr == nil {
+			continue
+		}
+		total++
+		stateCounts[stateFn(n.State)]++
+		if link, err := netlink.LinkByIndex(n.LinkIndex); err == nil {
+			ifaceCounts[link.Attrs().Name]++
+		}
+	}
+	fmt.Fprintf(buf, "Total entries: %d", total)
+	if total > 0 {
+		var parts []string
+		for _, s := range []string{"reachable", "stale", "permanent", "delay", "probe", "failed", "incomplete"} {
+			if cnt := stateCounts[s]; cnt > 0 {
+				parts = append(parts, fmt.Sprintf("%s: %d", s, cnt))
+			}
+		}
+		if len(parts) > 0 {
+			fmt.Fprintf(buf, " (%s)", strings.Join(parts, ", "))
+		}
+	}
+	fmt.Fprintln(buf)
+	if len(ifaceCounts) > 1 {
+		var ifNames []string
+		for name := range ifaceCounts {
+			ifNames = append(ifNames, name)
+		}
+		sort.Strings(ifNames)
+		for _, name := range ifNames {
+			fmt.Fprintf(buf, "  %-12s %d entries\n", name, ifaceCounts[name])
+		}
+	}
+	fmt.Fprintln(buf)
 }
 
 // --- SystemAction RPC ---
