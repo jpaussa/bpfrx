@@ -3251,12 +3251,32 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 			fmt.Fprintln(&buf, "No active configuration")
 			break
 		}
+		// Parse optional zone filter from req.Filter: "from-zone X to-zone Y"
+		var filterFrom, filterTo string
+		if req.Filter != "" {
+			parts := strings.Fields(req.Filter)
+			for i := 0; i+1 < len(parts); i++ {
+				switch parts[i] {
+				case "from-zone":
+					filterFrom = parts[i+1]
+					i++
+				case "to-zone":
+					filterTo = parts[i+1]
+					i++
+				}
+			}
+		}
 		fmt.Fprintf(&buf, "%-12s %-12s %-24s %-8s %12s %16s\n",
 			"From zone", "To zone", "Policy", "Action", "Packets", "Bytes")
 		fmt.Fprintln(&buf, strings.Repeat("-", 88))
 		policySetID := uint32(0)
 		var totalPkts, totalBytes uint64
 		for _, zpp := range cfg.Security.Policies {
+			if (filterFrom != "" && zpp.FromZone != filterFrom) ||
+				(filterTo != "" && zpp.ToZone != filterTo) {
+				policySetID++
+				continue
+			}
 			for i, pol := range zpp.Policies {
 				action := "permit"
 				switch pol.Action {
@@ -4250,6 +4270,15 @@ func (s *Server) SystemAction(_ context.Context, req *pb.SystemActionRequest) (*
 			}
 		}
 		return &pb.SystemActionResponse{Message: "System zeroized. Configuration erased. Reboot to complete factory reset."}, nil
+
+	case "clear-policy-counters":
+		if s.dp == nil || !s.dp.IsLoaded() {
+			return nil, status.Error(codes.Unavailable, "dataplane not loaded")
+		}
+		if err := s.dp.ClearPolicyCounters(); err != nil {
+			return nil, status.Errorf(codes.Internal, "%v", err)
+		}
+		return &pb.SystemActionResponse{Message: "policy hit counters cleared"}, nil
 
 	case "clear-persistent-nat":
 		if s.dp == nil || s.dp.PersistentNAT == nil {

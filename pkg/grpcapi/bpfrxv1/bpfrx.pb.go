@@ -5837,8 +5837,11 @@ func (x *CompleteResponse) GetCandidates() []string {
 }
 
 type ShowTextRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Topic         string                 `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"` // "schedulers", "snmp", "dhcp-relay", "firewall", "alg",
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Topic string                 `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"` // "schedulers", "snmp", "dhcp-relay", "firewall", "alg",
+	// "dynamic-address", "address-book", "applications",
+	// "flow-timeouts", "flow-monitoring", "nat-static"
+	Filter        string `protobuf:"bytes,2,opt,name=filter,proto3" json:"filter,omitempty"` // optional filter string (topic-specific, e.g. zone pair)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5876,6 +5879,13 @@ func (*ShowTextRequest) Descriptor() ([]byte, []int) {
 func (x *ShowTextRequest) GetTopic() string {
 	if x != nil {
 		return x.Topic
+	}
+	return ""
+}
+
+func (x *ShowTextRequest) GetFilter() string {
+	if x != nil {
+		return x.Filter
 	}
 	return ""
 }
@@ -6497,9 +6507,10 @@ const file_bpfrx_proto_rawDesc = "" +
 	"\x10CompleteResponse\x12\x1e\n" +
 	"\n" +
 	"candidates\x18\x01 \x03(\tR\n" +
-	"candidates\"'\n" +
+	"candidates\"?\n" +
 	"\x0fShowTextRequest\x12\x14\n" +
-	"\x05topic\x18\x01 \x01(\tR\x05topic\"*\n" +
+	"\x05topic\x18\x01 \x01(\tR\x05topic\x12\x16\n" +
+	"\x06filter\x18\x02 \x01(\tR\x06filter\"*\n" +
 	"\x10ShowTextResponse\x12\x16\n" +
 	"\x06output\x18\x01 \x01(\tR\x06output\"*\n" +
 	"\x14GetSystemInfoRequest\x12\x12\n" +

@@ -572,7 +572,15 @@ func (c *ctl) handleShowSecurity(args []string) error {
 			return c.showPoliciesBrief()
 		}
 		if len(args) >= 2 && args[1] == "hit-count" {
-			return c.showText("policies-hit-count")
+			// Parse optional from-zone/to-zone filters
+			var filterParts []string
+			for i := 2; i+1 < len(args); i++ {
+				if args[i] == "from-zone" || args[i] == "to-zone" {
+					filterParts = append(filterParts, args[i], args[i+1])
+					i++
+				}
+			}
+			return c.showTextFiltered("policies-hit-count", strings.Join(filterParts, " "))
 		}
 		return c.showPolicies()
 	case "screen":
@@ -1562,6 +1570,7 @@ func (c *ctl) handleClearSecurity(args []string) error {
 	if len(args) < 1 {
 		fmt.Println("clear security:")
 		fmt.Println("  flow session                         Clear all sessions")
+		fmt.Println("  policies hit-count                   Clear policy hit counters")
 		fmt.Println("  counters                             Clear all counters")
 		fmt.Println("  nat source persistent-nat-table      Clear persistent NAT bindings")
 		return nil
@@ -1622,6 +1631,19 @@ func (c *ctl) handleClearSecurity(args []string) error {
 		fmt.Printf("%d IPv4 and %d IPv6 session entries cleared\n", resp.Ipv4Cleared, resp.Ipv6Cleared)
 		return nil
 
+	case "policies":
+		if len(args) >= 2 && args[1] == "hit-count" {
+			resp, err := c.client.SystemAction(context.Background(), &pb.SystemActionRequest{
+				Action: "clear-policy-counters",
+			})
+			if err != nil {
+				return fmt.Errorf("%v", err)
+			}
+			fmt.Println(resp.Message)
+			return nil
+		}
+		return fmt.Errorf("usage: clear security policies hit-count")
+
 	case "counters":
 		_, err := c.client.ClearCounters(context.Background(), &pb.ClearCountersRequest{})
 		if err != nil {
@@ -1633,6 +1655,7 @@ func (c *ctl) handleClearSecurity(args []string) error {
 	default:
 		fmt.Println("clear security:")
 		fmt.Println("  flow session                         Clear all sessions")
+		fmt.Println("  policies hit-count                   Clear policy hit counters")
 		fmt.Println("  counters                             Clear all counters")
 		fmt.Println("  nat source persistent-nat-table      Clear persistent NAT bindings")
 		return nil
@@ -1662,7 +1685,14 @@ func (c *ctl) handleClearDHCP(args []string) error {
 // --- Generic show helpers ---
 
 func (c *ctl) showText(topic string) error {
-	resp, err := c.client.ShowText(context.Background(), &pb.ShowTextRequest{Topic: topic})
+	return c.showTextFiltered(topic, "")
+}
+
+func (c *ctl) showTextFiltered(topic, filter string) error {
+	resp, err := c.client.ShowText(context.Background(), &pb.ShowTextRequest{
+		Topic:  topic,
+		Filter: filter,
+	})
 	if err != nil {
 		return fmt.Errorf("%v", err)
 	}
