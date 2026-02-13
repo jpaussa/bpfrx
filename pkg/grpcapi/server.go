@@ -2847,18 +2847,42 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 		} else {
 			if len(cfg.Applications.Applications) > 0 {
 				buf.WriteString("Applications:\n")
-				for name, app := range cfg.Applications.Applications {
-					fmt.Fprintf(&buf, "  %-20s proto=%-6s", name, app.Protocol)
+				names := make([]string, 0, len(cfg.Applications.Applications))
+				for name := range cfg.Applications.Applications {
+					names = append(names, name)
+				}
+				sort.Strings(names)
+				for _, name := range names {
+					app := cfg.Applications.Applications[name]
+					fmt.Fprintf(&buf, "  %-24s proto=%-6s", name, app.Protocol)
 					if app.DestinationPort != "" {
 						fmt.Fprintf(&buf, " dst-port=%s", app.DestinationPort)
+					}
+					if app.SourcePort != "" {
+						fmt.Fprintf(&buf, " src-port=%s", app.SourcePort)
+					}
+					if app.InactivityTimeout > 0 {
+						fmt.Fprintf(&buf, " timeout=%ds", app.InactivityTimeout)
+					}
+					if app.ALG != "" {
+						fmt.Fprintf(&buf, " alg=%s", app.ALG)
+					}
+					if app.Description != "" {
+						fmt.Fprintf(&buf, " (%s)", app.Description)
 					}
 					buf.WriteString("\n")
 				}
 			}
 			if len(cfg.Applications.ApplicationSets) > 0 {
 				buf.WriteString("Application sets:\n")
-				for name, as := range cfg.Applications.ApplicationSets {
-					fmt.Fprintf(&buf, "  %-20s members: %s\n", name, strings.Join(as.Applications, ", "))
+				names := make([]string, 0, len(cfg.Applications.ApplicationSets))
+				for name := range cfg.Applications.ApplicationSets {
+					names = append(names, name)
+				}
+				sort.Strings(names)
+				for _, name := range names {
+					as := cfg.Applications.ApplicationSets[name]
+					fmt.Fprintf(&buf, "  %-24s members: %s\n", name, strings.Join(as.Applications, ", "))
 				}
 			}
 		}
