@@ -2452,6 +2452,71 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 			}
 		}
 
+	case "chassis":
+		// CPU info
+		cpuData, _ := os.ReadFile("/proc/cpuinfo")
+		cpuModel := ""
+		cpuCount := 0
+		for _, line := range strings.Split(string(cpuData), "\n") {
+			if strings.HasPrefix(line, "model name") {
+				parts := strings.SplitN(line, ":", 2)
+				if len(parts) == 2 {
+					cpuModel = strings.TrimSpace(parts[1])
+				}
+				cpuCount++
+			}
+		}
+		if cpuModel != "" {
+			fmt.Fprintf(&buf, "CPU: %s (%d cores)\n", cpuModel, cpuCount)
+		}
+		// Memory
+		memData, _ := os.ReadFile("/proc/meminfo")
+		for _, line := range strings.Split(string(memData), "\n") {
+			if strings.HasPrefix(line, "MemTotal:") {
+				parts := strings.Fields(line)
+				if len(parts) >= 2 {
+					if kb, err := strconv.ParseUint(parts[1], 10, 64); err == nil {
+						fmt.Fprintf(&buf, "Memory: %.1f GB total\n", float64(kb)/(1024*1024))
+					}
+				}
+				break
+			}
+		}
+		// Kernel
+		var uts unix.Utsname
+		if err := unix.Uname(&uts); err == nil {
+			release := strings.TrimRight(string(uts.Release[:]), "\x00")
+			machine := strings.TrimRight(string(uts.Machine[:]), "\x00")
+			fmt.Fprintf(&buf, "Kernel: %s (%s)\n", release, machine)
+		}
+
+	case "storage":
+		var stat unix.Statfs_t
+		mounts := []struct{ path, name string }{
+			{"/", "Root (/)"},
+			{"/var", "/var"},
+			{"/tmp", "/tmp"},
+		}
+		fmt.Fprintf(&buf, "%-20s %12s %12s %12s %6s\n", "Filesystem", "Size", "Used", "Avail", "Use%")
+		for _, m := range mounts {
+			if err := unix.Statfs(m.path, &stat); err != nil {
+				continue
+			}
+			total := stat.Blocks * uint64(stat.Bsize)
+			free := stat.Bavail * uint64(stat.Bsize)
+			used := total - (stat.Bfree * uint64(stat.Bsize))
+			pct := float64(0)
+			if total > 0 {
+				pct = float64(used) / float64(total) * 100
+			}
+			fmt.Fprintf(&buf, "%-20s %11.1fG %11.1fG %11.1fG %5.0f%%\n",
+				m.name,
+				float64(total)/float64(1<<30),
+				float64(used)/float64(1<<30),
+				float64(free)/float64(1<<30),
+				pct)
+		}
+
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "unknown topic: %s", req.Topic)
 	}
@@ -2557,6 +2622,27 @@ func (s *Server) SystemAction(_ context.Context, req *pb.SystemActionRequest) (*
 			exec.Command("systemctl", "halt").Run()
 		}()
 		return &pb.SystemActionResponse{Message: "System halting NOW!"}, nil
+
+	case "zeroize":
+		slog.Warn("system zeroize requested via gRPC")
+		// Remove configs
+		configDir := "/etc/bpfrx"
+		files, _ := os.ReadDir(configDir)
+		for _, f := range files {
+			if strings.HasSuffix(f.Name(), ".conf") || strings.HasPrefix(f.Name(), "rollback") {
+				os.Remove(configDir + "/" + f.Name())
+			}
+		}
+		// Remove BPF pins
+		os.RemoveAll("/sys/fs/bpf/bpfrx")
+		// Remove managed networkd files
+		ndFiles, _ := os.ReadDir("/etc/systemd/network")
+		for _, f := range ndFiles {
+			if strings.HasPrefix(f.Name(), "10-bpfrx-") {
+				os.Remove("/etc/systemd/network/" + f.Name())
+			}
+		}
+		return &pb.SystemActionResponse{Message: "System zeroized. Configuration erased. Reboot to complete factory reset."}, nil
 
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "unknown action: %s", req.Action)

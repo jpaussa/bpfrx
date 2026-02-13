@@ -361,6 +361,7 @@ func (c *ctl) dispatchConfig(line string) error {
 func (c *ctl) handleShow(args []string) error {
 	if len(args) == 0 {
 		fmt.Println("show: specify what to show")
+		fmt.Println("  chassis          Show hardware information")
 		fmt.Println("  configuration    Show active configuration")
 		fmt.Println("  dhcp             Show DHCP information")
 		fmt.Println("  dhcp-relay       Show DHCP relay status")
@@ -378,6 +379,9 @@ func (c *ctl) handleShow(args []string) error {
 	}
 
 	switch args[0] {
+	case "chassis":
+		return c.showSystemInfo("chassis")
+
 	case "configuration":
 		format := pb.ConfigFormat_HIERARCHICAL
 		rest := strings.Join(args[1:], " ")
@@ -1116,6 +1120,7 @@ func (c *ctl) handleShowSystem(args []string) error {
 	if len(args) == 0 {
 		fmt.Println("show system:")
 		fmt.Println("  rollback         Show rollback history")
+		fmt.Println("  storage          Show filesystem usage")
 		fmt.Println("  uptime           Show system uptime")
 		fmt.Println("  memory           Show memory usage")
 		fmt.Println("  license          Show system license")
@@ -1163,6 +1168,9 @@ func (c *ctl) handleShowSystem(args []string) error {
 
 	case "memory":
 		return c.showSystemInfo("memory")
+
+	case "storage":
+		return c.showSystemInfo("storage")
 
 	case "license":
 		fmt.Println("License: open-source (no license required)")
@@ -1370,6 +1378,7 @@ func (c *ctl) handleRequest(args []string) error {
 		fmt.Println("request:")
 		fmt.Println("  system reboot    Reboot the system")
 		fmt.Println("  system halt      Halt the system")
+		fmt.Println("  system zeroize   Factory reset (erase all config)")
 		return nil
 	}
 	if args[0] != "system" {
@@ -1379,6 +1388,7 @@ func (c *ctl) handleRequest(args []string) error {
 		fmt.Println("request system:")
 		fmt.Println("  reboot    Reboot the system")
 		fmt.Println("  halt      Halt the system")
+		fmt.Println("  zeroize   Factory reset (erase all config)")
 		return nil
 	}
 
@@ -1394,6 +1404,24 @@ func (c *ctl) handleRequest(args []string) error {
 		}
 		resp, err := c.client.SystemAction(context.Background(), &pb.SystemActionRequest{
 			Action: args[1],
+		})
+		if err != nil {
+			return fmt.Errorf("%v", err)
+		}
+		fmt.Println(resp.Message)
+		return nil
+	case "zeroize":
+		fmt.Println("WARNING: This will erase all configuration and return to factory defaults.")
+		fmt.Print("Zeroize the system? [yes,no] (no) ")
+		c.rl.SetPrompt("")
+		line, err := c.rl.Readline()
+		c.rl.SetPrompt(c.operationalPrompt())
+		if err != nil || strings.TrimSpace(strings.ToLower(line)) != "yes" {
+			fmt.Println("Zeroize cancelled")
+			return nil
+		}
+		resp, err := c.client.SystemAction(context.Background(), &pb.SystemActionRequest{
+			Action: "zeroize",
 		})
 		if err != nil {
 			return fmt.Errorf("%v", err)

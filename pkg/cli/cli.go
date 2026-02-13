@@ -86,6 +86,9 @@ type completionNode struct {
 var operationalTree = map[string]*completionNode{
 	"configure": {desc: "Enter configuration mode"},
 	"show": {desc: "Show information", children: map[string]*completionNode{
+		"chassis": {desc: "Show hardware information", children: map[string]*completionNode{
+			"hardware": {desc: "Show hardware details"},
+		}},
 		"configuration": {desc: "Show active configuration"},
 		"dhcp": {desc: "Show DHCP information", children: map[string]*completionNode{
 			"leases":            {desc: "Show DHCP leases"},
@@ -177,6 +180,7 @@ var operationalTree = map[string]*completionNode{
 		"snmp":        {desc: "Show SNMP statistics"},
 		"system": {desc: "Show system information", children: map[string]*completionNode{
 			"rollback":  {desc: "Show rollback history"},
+			"storage":   {desc: "Show filesystem usage"},
 			"uptime":    {desc: "Show system uptime"},
 			"memory":    {desc: "Show memory usage"},
 			"processes": {desc: "Show running processes"},
@@ -201,8 +205,9 @@ var operationalTree = map[string]*completionNode{
 	}},
 	"request": {desc: "Perform system operations", children: map[string]*completionNode{
 		"system": {desc: "System operations", children: map[string]*completionNode{
-			"reboot": {desc: "Reboot the system"},
-			"halt":   {desc: "Halt the system"},
+			"reboot":  {desc: "Reboot the system"},
+			"halt":    {desc: "Halt the system"},
+			"zeroize": {desc: "Factory reset (erase all config)"},
 		}},
 	}},
 	"ping":       {desc: "Ping remote host"},
@@ -737,6 +742,7 @@ func (c *CLI) dispatchConfig(line string) error {
 func (c *CLI) handleShow(args []string) error {
 	if len(args) == 0 {
 		fmt.Println("show: specify what to show")
+		fmt.Println("  chassis          Show hardware information")
 		fmt.Println("  configuration    Show active configuration")
 		fmt.Println("  dhcp             Show DHCP information")
 		fmt.Println("  dhcp-relay       Show DHCP relay status")
@@ -754,6 +760,9 @@ func (c *CLI) handleShow(args []string) error {
 	}
 
 	switch args[0] {
+	case "chassis":
+		return c.showChassis(args[1:])
+
 	case "configuration":
 		rest := strings.Join(args[1:], " ")
 		if strings.Contains(rest, "| display set") {
@@ -3121,6 +3130,7 @@ func (c *CLI) handleShowSystem(args []string) error {
 	if len(args) == 0 {
 		fmt.Println("show system:")
 		fmt.Println("  rollback         Show rollback history")
+		fmt.Println("  storage          Show filesystem usage")
 		fmt.Println("  uptime           Show system uptime")
 		fmt.Println("  memory           Show memory usage")
 		fmt.Println("  processes        Show running processes")
@@ -3172,6 +3182,9 @@ func (c *CLI) handleShowSystem(args []string) error {
 
 	case "processes":
 		return c.showSystemProcesses()
+
+	case "storage":
+		return c.showSystemStorage()
 
 	case "license":
 		fmt.Println("License: open-source (no license required)")
@@ -4451,12 +4464,132 @@ func (c *CLI) showSystemProcesses() error {
 	return cmd.Run()
 }
 
+// showSystemStorage shows filesystem usage (like Junos "show system storage").
+func (c *CLI) showSystemStorage() error {
+	var stat unix.Statfs_t
+	mounts := []struct {
+		path string
+		name string
+	}{
+		{"/", "Root (/)"},
+		{"/var", "/var"},
+		{"/tmp", "/tmp"},
+	}
+
+	fmt.Printf("%-20s %12s %12s %12s %6s\n", "Filesystem", "Size", "Used", "Avail", "Use%")
+	for _, m := range mounts {
+		if err := unix.Statfs(m.path, &stat); err != nil {
+			continue
+		}
+		total := stat.Blocks * uint64(stat.Bsize)
+		free := stat.Bavail * uint64(stat.Bsize)
+		used := total - (stat.Bfree * uint64(stat.Bsize))
+		pct := float64(0)
+		if total > 0 {
+			pct = float64(used) / float64(total) * 100
+		}
+		fmt.Printf("%-20s %12s %12s %12s %5.0f%%\n",
+			m.name, fmtBytes(total), fmtBytes(used), fmtBytes(free), pct)
+	}
+	return nil
+}
+
+// fmtBytes formats bytes as human-readable (K/M/G).
+func fmtBytes(b uint64) string {
+	switch {
+	case b >= 1<<30:
+		return fmt.Sprintf("%.1fG", float64(b)/float64(1<<30))
+	case b >= 1<<20:
+		return fmt.Sprintf("%.1fM", float64(b)/float64(1<<20))
+	case b >= 1<<10:
+		return fmt.Sprintf("%.1fK", float64(b)/float64(1<<10))
+	default:
+		return fmt.Sprintf("%dB", b)
+	}
+}
+
+// showChassis shows hardware information (like Junos "show chassis hardware").
+func (c *CLI) showChassis(args []string) error {
+	if len(args) > 0 && args[0] == "hardware" {
+		return c.showChassisHardware()
+	}
+	fmt.Println("show chassis:")
+	fmt.Println("  hardware         Show hardware information")
+	return nil
+}
+
+// showChassisHardware shows CPU, memory, and NIC information.
+func (c *CLI) showChassisHardware() error {
+	// CPU info
+	cpuData, err := os.ReadFile("/proc/cpuinfo")
+	if err == nil {
+		cpuModel := ""
+		cpuCount := 0
+		for _, line := range strings.Split(string(cpuData), "\n") {
+			if strings.HasPrefix(line, "model name") {
+				parts := strings.SplitN(line, ":", 2)
+				if len(parts) == 2 {
+					cpuModel = strings.TrimSpace(parts[1])
+				}
+				cpuCount++
+			}
+		}
+		if cpuModel != "" {
+			fmt.Printf("CPU: %s (%d cores)\n", cpuModel, cpuCount)
+		}
+	}
+
+	// Memory
+	memData, err := os.ReadFile("/proc/meminfo")
+	if err == nil {
+		for _, line := range strings.Split(string(memData), "\n") {
+			if strings.HasPrefix(line, "MemTotal:") {
+				parts := strings.Fields(line)
+				if len(parts) >= 2 {
+					if kb, err := strconv.ParseUint(parts[1], 10, 64); err == nil {
+						fmt.Printf("Memory: %s total\n", fmtBytes(kb*1024))
+					}
+				}
+				break
+			}
+		}
+	}
+
+	// Kernel version
+	var uts unix.Utsname
+	if err := unix.Uname(&uts); err == nil {
+		release := strings.TrimRight(string(uts.Release[:]), "\x00")
+		machine := strings.TrimRight(string(uts.Machine[:]), "\x00")
+		fmt.Printf("Kernel: %s (%s)\n", release, machine)
+	}
+
+	// Network interfaces
+	fmt.Println("\nNetwork interfaces:")
+	links, err := netlink.LinkList()
+	if err == nil {
+		for _, link := range links {
+			attrs := link.Attrs()
+			if attrs.Name == "lo" {
+				continue
+			}
+			state := "down"
+			if attrs.OperState == netlink.OperUp {
+				state = "up"
+			}
+			driver := link.Type()
+			fmt.Printf("  %-16s %-8s %-10s %s\n", attrs.Name, state, driver, attrs.HardwareAddr)
+		}
+	}
+	return nil
+}
+
 // handleRequest dispatches request sub-commands (like Junos operational mode).
 func (c *CLI) handleRequest(args []string) error {
 	if len(args) == 0 {
 		fmt.Println("request:")
 		fmt.Println("  system reboot    Reboot the system")
 		fmt.Println("  system halt      Halt the system")
+		fmt.Println("  system zeroize   Factory reset (erase all config)")
 		return nil
 	}
 
@@ -4473,6 +4606,7 @@ func (c *CLI) handleRequestSystem(args []string) error {
 		fmt.Println("request system:")
 		fmt.Println("  reboot    Reboot the system")
 		fmt.Println("  halt      Halt the system")
+		fmt.Println("  zeroize   Factory reset (erase all configuration)")
 		return nil
 	}
 
@@ -4502,6 +4636,44 @@ func (c *CLI) handleRequestSystem(args []string) error {
 		fmt.Println("System halting NOW!")
 		cmd := exec.Command("systemctl", "halt")
 		return cmd.Run()
+
+	case "zeroize":
+		fmt.Println("WARNING: This will erase all configuration and return to factory defaults.")
+		fmt.Print("Zeroize the system? [yes,no] (no) ")
+		c.rl.SetPrompt("")
+		line, err := c.rl.Readline()
+		c.rl.SetPrompt(c.operationalPrompt())
+		if err != nil || strings.TrimSpace(strings.ToLower(line)) != "yes" {
+			fmt.Println("Zeroize cancelled")
+			return nil
+		}
+
+		// Remove active and candidate configs, rollback history
+		configDir := "/etc/bpfrx"
+		files, _ := os.ReadDir(configDir)
+		for _, f := range files {
+			if strings.HasSuffix(f.Name(), ".conf") || strings.HasPrefix(f.Name(), "rollback") {
+				os.Remove(configDir + "/" + f.Name())
+			}
+		}
+
+		// Remove BPF pins
+		os.RemoveAll("/sys/fs/bpf/bpfrx")
+
+		// Remove managed networkd files
+		ndFiles, _ := os.ReadDir("/etc/systemd/network")
+		for _, f := range ndFiles {
+			if strings.HasPrefix(f.Name(), "10-bpfrx-") {
+				os.Remove("/etc/systemd/network/" + f.Name())
+			}
+		}
+
+		// Remove FRR managed section
+		exec.Command("systemctl", "stop", "bpfrxd").Run()
+
+		fmt.Println("System zeroized. Configuration erased.")
+		fmt.Println("Reboot to complete factory reset.")
+		return nil
 
 	default:
 		return fmt.Errorf("unknown request system command: %s", args[0])
