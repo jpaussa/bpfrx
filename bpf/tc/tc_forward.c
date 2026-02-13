@@ -22,6 +22,50 @@ int tc_forward_prog(struct __sk_buff *skb)
 	if (evaluate_firewall_filter_output(meta, skb->ifindex) < 0)
 		return TC_ACT_SHOT;
 
+	/* Apply DSCP rewrite from output filter.
+	 * Use bpf_skb_load/store_bytes to avoid variable-offset packet
+	 * access (meta->l3_offset) which the verifier can't track. */
+	if (meta->dscp_rewrite != 0xFF) {
+		if (meta->addr_family == AF_INET) {
+			__u8 old_tos;
+			if (bpf_skb_load_bytes(skb,
+			    meta->l3_offset + offsetof(struct iphdr, tos),
+			    &old_tos, 1) == 0) {
+				__u8 new_tos = (meta->dscp_rewrite << 2) |
+					       (old_tos & 0x03);
+				if (old_tos != new_tos) {
+					bpf_l3_csum_replace(skb,
+						meta->l3_offset +
+						offsetof(struct iphdr, check),
+						bpf_htons((__u16)old_tos),
+						bpf_htons((__u16)new_tos), 2);
+					bpf_skb_store_bytes(skb,
+						meta->l3_offset +
+						offsetof(struct iphdr, tos),
+						&new_tos, 1, 0);
+				}
+			}
+		} else {
+			/* IPv6: traffic class spans bytes 0-1 */
+			__u8 hdr2[2];
+			if (bpf_skb_load_bytes(skb, meta->l3_offset,
+			    hdr2, 2) == 0) {
+				__u8 old_tc = ((hdr2[0] & 0x0F) << 4) |
+					      ((hdr2[1] & 0xF0) >> 4);
+				__u8 new_tc = (meta->dscp_rewrite << 2) |
+					      (old_tc & 0x03);
+				if (old_tc != new_tc) {
+					hdr2[0] = (hdr2[0] & 0xF0) |
+						  ((new_tc >> 4) & 0x0F);
+					hdr2[1] = (new_tc << 4) |
+						  (hdr2[1] & 0x0F);
+					bpf_skb_store_bytes(skb,
+						meta->l3_offset, hdr2, 2, 0);
+				}
+			}
+		}
+	}
+
 	if (meta->egress_zone > 0)
 		inc_zone_egress((__u32)meta->egress_zone, meta->pkt_len);
 

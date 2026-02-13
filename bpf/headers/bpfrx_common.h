@@ -488,6 +488,8 @@ struct nat_pool_config {
 	__u16 num_ips_v6;     /* number of v6 IPs in this pool */
 	__u16 port_low;       /* default 1024 */
 	__u16 port_high;      /* default 65535 */
+	__u8  addr_persistent; /* same src IP always maps to same pool IP */
+	__u8  pad[3];
 };
 
 struct nat_pool_ip_v6 {

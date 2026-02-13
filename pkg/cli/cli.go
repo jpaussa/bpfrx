@@ -2297,6 +2297,10 @@ func (c *CLI) showNATSource(cfg *config.Config, args []string) error {
 	}
 
 	// Default: show all pools, rules, and summary
+	if cfg != nil && cfg.Security.NAT.AddressPersistent {
+		fmt.Println("Address-persistent: enabled")
+		fmt.Println()
+	}
 	// Show configured source NAT pools
 	if cfg != nil && len(cfg.Security.NAT.SourcePools) > 0 {
 		fmt.Println("Source NAT pools:")
@@ -4655,6 +4659,9 @@ func (c *CLI) showFirewallFilters() error {
 				}
 				if term.LossPriority != "" {
 					fmt.Printf("    then loss-priority %s\n", term.LossPriority)
+				}
+				if term.DSCPRewrite != "" {
+					fmt.Printf("    then dscp %s\n", term.DSCPRewrite)
 				}
 				if term.Log {
 					fmt.Printf("    then log\n")

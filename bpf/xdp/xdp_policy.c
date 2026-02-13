@@ -280,10 +280,11 @@ create_session_v6(struct pkt_meta *meta, __u32 policy_id, __u8 log,
 
 /*
  * Allocate a NAT IP and port from a pool (IPv4).
+ * src_ip: original source IP for address-persistent mode.
  * Returns 0 on success, -1 on failure.
  */
 static __noinline int
-nat_pool_alloc_v4(__u8 pool_id, __be32 *out_ip, __be16 *out_port)
+nat_pool_alloc_v4(__u8 pool_id, __be32 src_ip, __be32 *out_ip, __be16 *out_port)
 {
 	__u32 pid = pool_id;
 	struct nat_pool_config *cfg = bpf_map_lookup_elem(&nat_pool_configs, &pid);
@@ -303,7 +304,12 @@ nat_pool_alloc_v4(__u8 pool_id, __be32 *out_ip, __be16 *out_port)
 	if (port_range == 0)
 		port_range = 1;
 	__u16 port = cfg->port_low + (__u16)(val % port_range);
-	__u32 ip_idx = (__u32)((val / port_range) % cfg->num_ips);
+
+	__u32 ip_idx;
+	if (cfg->addr_persistent)
+		ip_idx = ((__u32)src_ip) % cfg->num_ips;
+	else
+		ip_idx = (__u32)((val / port_range) % cfg->num_ips);
 
 	__u32 map_idx = pid * MAX_NAT_POOL_IPS_PER_POOL + ip_idx;
 	if (map_idx >= MAX_NAT_POOLS * MAX_NAT_POOL_IPS_PER_POOL)
@@ -319,10 +325,11 @@ nat_pool_alloc_v4(__u8 pool_id, __be32 *out_ip, __be16 *out_port)
 
 /*
  * Allocate a NAT IP and port from a pool (IPv6).
+ * src_ip: original source IP for address-persistent mode.
  * Returns 0 on success, -1 on failure.
  */
 static __noinline int
-nat_pool_alloc_v6(__u8 pool_id, __u8 *out_ip, __be16 *out_port)
+nat_pool_alloc_v6(__u8 pool_id, __u8 *src_ip, __u8 *out_ip, __be16 *out_port)
 {
 	__u32 pid = pool_id;
 	struct nat_pool_config *cfg = bpf_map_lookup_elem(&nat_pool_configs, &pid);
@@ -340,7 +347,15 @@ nat_pool_alloc_v6(__u8 pool_id, __u8 *out_ip, __be16 *out_port)
 	if (port_range == 0)
 		port_range = 1;
 	__u16 port = cfg->port_low + (__u16)(val % port_range);
-	__u32 ip_idx = (__u32)((val / port_range) % cfg->num_ips_v6);
+
+	__u32 ip_idx;
+	if (cfg->addr_persistent) {
+		/* Hash last 4 bytes of IPv6 source for sticky mapping */
+		__u32 *s32 = (__u32 *)src_ip;
+		ip_idx = (s32[0] ^ s32[1] ^ s32[2] ^ s32[3]) % cfg->num_ips_v6;
+	} else {
+		ip_idx = (__u32)((val / port_range) % cfg->num_ips_v6);
+	}
 
 	__u32 map_idx = pid * MAX_NAT_POOL_IPS_PER_POOL + ip_idx;
 	if (map_idx >= MAX_NAT_POOLS * MAX_NAT_POOL_IPS_PER_POOL)
@@ -1036,7 +1051,7 @@ int xdp_policy_prog(struct xdp_md *ctx)
 
 						#pragma unroll
 						for (int retry = 0; retry < 3; retry++) {
-							if (nat_pool_alloc_v4(sv->mode, &alloc_ip, &alloc_port) < 0)
+							if (nat_pool_alloc_v4(sv->mode, meta->src_ip.v4, &alloc_ip, &alloc_port) < 0)
 								break;
 
 							struct dnat_key dk = {
@@ -1139,7 +1154,7 @@ int xdp_policy_prog(struct xdp_md *ctx)
 					if (n64) {
 						__be32 alloc_v4_ip = 0;
 						__be16 alloc_v4_port = 0;
-						if (nat_pool_alloc_v4(pool_id, &alloc_v4_ip, &alloc_v4_port) == 0) {
+						if (nat_pool_alloc_v4(pool_id, meta->src_ip.v4, &alloc_v4_ip, &alloc_v4_port) == 0) {
 							sess_nat_flags = SESS_FLAG_NAT64 | SESS_FLAG_SNAT;
 							sess_nat_src_port = alloc_v4_port;
 							/* Store allocated v4 SNAT addr in meta->src_ip
@@ -1239,7 +1254,7 @@ int xdp_policy_prog(struct xdp_md *ctx)
 
 						#pragma unroll
 						for (int retry = 0; retry < 3; retry++) {
-							if (nat_pool_alloc_v6(sv6->mode, meta->nat_src_ip.v6, &alloc_port) < 0)
+							if (nat_pool_alloc_v6(sv6->mode, meta->src_ip.v6, meta->nat_src_ip.v6, &alloc_port) < 0)
 								break;
 
 							struct dnat_key_v6 dk6 = {

@@ -339,10 +339,12 @@ type AppValue struct {
 
 // NAT pool types.
 type NATPoolConfig struct {
-	NumIPs   uint16
-	NumIPsV6 uint16
-	PortLow  uint16
-	PortHigh uint16
+	NumIPs         uint16
+	NumIPsV6       uint16
+	PortLow        uint16
+	PortHigh       uint16
+	AddrPersistent uint8
+	Pad            [3]uint8
 }
 
 type NATPoolIPV6 struct {

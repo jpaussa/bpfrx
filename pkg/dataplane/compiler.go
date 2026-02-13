@@ -1357,6 +1357,10 @@ func (m *Manager) compileNAT(cfg *config.Config, result *CompileResult) error {
 				}
 			}
 
+			if natCfg.AddressPersistent {
+				poolCfg.AddrPersistent = 1
+			}
+
 			if err := m.SetNATPoolConfig(uint32(curPoolID), poolCfg); err != nil {
 				return fmt.Errorf("set pool config %d: %w", curPoolID, err)
 			}
@@ -2243,7 +2247,8 @@ func (m *Manager) compileFirewallFilters(cfg *config.Config, result *CompileResu
 func expandFilterTerm(term *config.FirewallFilterTerm, family uint8, riTableIDs map[string]uint32, prefixLists map[string]*config.PrefixList) []FilterRule {
 	// Base rule with common fields
 	base := FilterRule{
-		Family: family,
+		Family:      family,
+		DSCPRewrite: 0xFF, // no DSCP rewrite by default
 	}
 
 	// Set action
@@ -2274,6 +2279,15 @@ func expandFilterTerm(term *config.FirewallFilterTerm, family uint8, riTableIDs 
 			base.DSCP = val
 		} else if v, err := strconv.Atoi(term.DSCP); err == nil {
 			base.DSCP = uint8(v)
+		}
+	}
+
+	// DSCP rewrite action (then dscp <value>)
+	if term.DSCPRewrite != "" {
+		if val, ok := DSCPValues[strings.ToLower(term.DSCPRewrite)]; ok {
+			base.DSCPRewrite = val
+		} else if v, err := strconv.Atoi(term.DSCPRewrite); err == nil {
+			base.DSCPRewrite = uint8(v)
 		}
 	}
 
