@@ -604,6 +604,8 @@ struct filter_rule {
 	__u8   family;          /* AF_INET or AF_INET6 */
 	__be16 dst_port;        /* network byte order, 0=any */
 	__be16 src_port;        /* network byte order, 0=any */
+	__be16 dst_port_hi;     /* range upper bound, 0=exact match */
+	__be16 src_port_hi;     /* range upper bound, 0=exact match */
 	__u8   dscp_rewrite;    /* DSCP rewrite value (0xFF = no rewrite) */
 	__u8   log_flag;        /* 1 = emit ring buffer event on match */
 	__u8   src_addr[16];    /* v4: first 4 bytes, v6: all 16 */

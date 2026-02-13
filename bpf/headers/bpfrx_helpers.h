@@ -901,15 +901,29 @@ evaluate_firewall_filter(struct pkt_meta *meta)
 		    rule->protocol != meta->protocol)
 			match = 0;
 
-		/* Check destination port */
-		if (match && (flags & FILTER_MATCH_DST_PORT) &&
-		    rule->dst_port != meta->dst_port)
-			match = 0;
+		/* Check destination port (exact or range) */
+		if (match && (flags & FILTER_MATCH_DST_PORT)) {
+			if (rule->dst_port_hi) {
+				__u16 p = bpf_ntohs(meta->dst_port);
+				if (p < bpf_ntohs(rule->dst_port) ||
+				    p > bpf_ntohs(rule->dst_port_hi))
+					match = 0;
+			} else if (rule->dst_port != meta->dst_port) {
+				match = 0;
+			}
+		}
 
-		/* Check source port */
-		if (match && (flags & FILTER_MATCH_SRC_PORT) &&
-		    rule->src_port != meta->src_port)
-			match = 0;
+		/* Check source port (exact or range) */
+		if (match && (flags & FILTER_MATCH_SRC_PORT)) {
+			if (rule->src_port_hi) {
+				__u16 p = bpf_ntohs(meta->src_port);
+				if (p < bpf_ntohs(rule->src_port) ||
+				    p > bpf_ntohs(rule->src_port_hi))
+					match = 0;
+			} else if (rule->src_port != meta->src_port) {
+				match = 0;
+			}
+		}
 
 		/* Check ICMP type */
 		if (match && (flags & FILTER_MATCH_ICMP_TYPE) &&
@@ -1047,12 +1061,26 @@ evaluate_firewall_filter_output(struct pkt_meta *meta, __u32 egress_ifindex)
 		if (match && (flags & FILTER_MATCH_PROTOCOL) &&
 		    rule->protocol != meta->protocol)
 			match = 0;
-		if (match && (flags & FILTER_MATCH_DST_PORT) &&
-		    rule->dst_port != meta->dst_port)
-			match = 0;
-		if (match && (flags & FILTER_MATCH_SRC_PORT) &&
-		    rule->src_port != meta->src_port)
-			match = 0;
+		if (match && (flags & FILTER_MATCH_DST_PORT)) {
+			if (rule->dst_port_hi) {
+				__u16 p = bpf_ntohs(meta->dst_port);
+				if (p < bpf_ntohs(rule->dst_port) ||
+				    p > bpf_ntohs(rule->dst_port_hi))
+					match = 0;
+			} else if (rule->dst_port != meta->dst_port) {
+				match = 0;
+			}
+		}
+		if (match && (flags & FILTER_MATCH_SRC_PORT)) {
+			if (rule->src_port_hi) {
+				__u16 p = bpf_ntohs(meta->src_port);
+				if (p < bpf_ntohs(rule->src_port) ||
+				    p > bpf_ntohs(rule->src_port_hi))
+					match = 0;
+			} else if (rule->src_port != meta->src_port) {
+				match = 0;
+			}
+		}
 		if (match && (flags & FILTER_MATCH_ICMP_TYPE) &&
 		    rule->icmp_type != meta->icmp_type)
 			match = 0;

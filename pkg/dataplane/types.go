@@ -607,6 +607,8 @@ type FilterRule struct {
 	Family       uint8
 	DstPort      uint16 // network byte order
 	SrcPort      uint16 // network byte order
+	DstPortHi    uint16 // range upper bound (network byte order), 0=exact match
+	SrcPortHi    uint16 // range upper bound (network byte order), 0=exact match
 	DSCPRewrite  uint8  // DSCP rewrite value (0xFF = no rewrite)
 	LogFlag      uint8  // 1 = emit ring buffer event on match
 	SrcAddr      [16]byte

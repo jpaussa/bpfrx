@@ -13,32 +13,32 @@ import (
 	"github.com/cilium/ebpf"
 )
 
-type bpfrxTcScreenEgressAddrMembershipKey struct {
+type bpfrxXdpNatAddrMembershipKey struct {
 	_         structs.HostLayout
 	Ip        uint32
 	AddressId uint32
 }
 
-type bpfrxTcScreenEgressAddrValue struct {
+type bpfrxXdpNatAddrValue struct {
 	_         structs.HostLayout
 	AddressId uint32
 }
 
-type bpfrxTcScreenEgressAppKey struct {
+type bpfrxXdpNatAppKey struct {
 	_        structs.HostLayout
 	Protocol uint8
 	Pad      uint8
 	DstPort  uint16
 }
 
-type bpfrxTcScreenEgressAppValue struct {
+type bpfrxXdpNatAppValue struct {
 	_       structs.HostLayout
 	AppId   uint32
 	AlgType uint8
 	Pad     [3]uint8
 }
 
-type bpfrxTcScreenEgressBpfDevmapVal struct {
+type bpfrxXdpNatBpfDevmapVal struct {
 	_       structs.HostLayout
 	Ifindex uint32
 	BpfProg struct {
@@ -47,19 +47,19 @@ type bpfrxTcScreenEgressBpfDevmapVal struct {
 	}
 }
 
-type bpfrxTcScreenEgressCounterValue struct {
+type bpfrxXdpNatCounterValue struct {
 	_       structs.HostLayout
 	Packets uint64
 	Bytes   uint64
 }
 
-type bpfrxTcScreenEgressCpumapVal struct {
+type bpfrxXdpNatCpumapVal struct {
 	_         structs.HostLayout
 	Qsize     uint32
 	BpfProgFd uint32
 }
 
-type bpfrxTcScreenEgressDnatKey struct {
+type bpfrxXdpNatDnatKey struct {
 	_        structs.HostLayout
 	Protocol uint8
 	Pad      [3]uint8
@@ -68,7 +68,7 @@ type bpfrxTcScreenEgressDnatKey struct {
 	Pad2     uint16
 }
 
-type bpfrxTcScreenEgressDnatKeyV6 struct {
+type bpfrxXdpNatDnatKeyV6 struct {
 	_        structs.HostLayout
 	Protocol uint8
 	Pad      [3]uint8
@@ -77,7 +77,7 @@ type bpfrxTcScreenEgressDnatKeyV6 struct {
 	Pad2     uint16
 }
 
-type bpfrxTcScreenEgressDnatValue struct {
+type bpfrxXdpNatDnatValue struct {
 	_          structs.HostLayout
 	NewDstIp   uint32
 	NewDstPort uint16
@@ -85,7 +85,7 @@ type bpfrxTcScreenEgressDnatValue struct {
 	Pad        uint8
 }
 
-type bpfrxTcScreenEgressDnatValueV6 struct {
+type bpfrxXdpNatDnatValueV6 struct {
 	_          structs.HostLayout
 	NewDstIp   [16]uint8
 	NewDstPort uint16
@@ -93,13 +93,13 @@ type bpfrxTcScreenEgressDnatValueV6 struct {
 	Pad        uint8
 }
 
-type bpfrxTcScreenEgressFilterConfig struct {
+type bpfrxXdpNatFilterConfig struct {
 	_         structs.HostLayout
 	NumRules  uint32
 	RuleStart uint32
 }
 
-type bpfrxTcScreenEgressFilterRule struct {
+type bpfrxXdpNatFilterRule struct {
 	_            structs.HostLayout
 	MatchFlags   uint16
 	Dscp         uint8
@@ -122,7 +122,7 @@ type bpfrxTcScreenEgressFilterRule struct {
 	RoutingTable uint32
 }
 
-type bpfrxTcScreenEgressFloodState struct {
+type bpfrxXdpNatFloodState struct {
 	_           structs.HostLayout
 	SynCount    uint64
 	IcmpCount   uint64
@@ -130,7 +130,7 @@ type bpfrxTcScreenEgressFloodState struct {
 	WindowStart uint64
 }
 
-type bpfrxTcScreenEgressFlowConfig struct {
+type bpfrxXdpNatFlowConfig struct {
 	_                 structs.HostLayout
 	TcpMssIpsec       uint16
 	TcpMssGre         uint16
@@ -140,7 +140,7 @@ type bpfrxTcScreenEgressFlowConfig struct {
 	AlgFlags          uint8
 }
 
-type bpfrxTcScreenEgressIfaceCounterValue struct {
+type bpfrxXdpNatIfaceCounterValue struct {
 	_         structs.HostLayout
 	RxPackets uint64
 	RxBytes   uint64
@@ -148,7 +148,7 @@ type bpfrxTcScreenEgressIfaceCounterValue struct {
 	TxBytes   uint64
 }
 
-type bpfrxTcScreenEgressIfaceFilterKey struct {
+type bpfrxXdpNatIfaceFilterKey struct {
 	_         structs.HostLayout
 	Ifindex   uint32
 	VlanId    uint16
@@ -156,45 +156,45 @@ type bpfrxTcScreenEgressIfaceFilterKey struct {
 	Direction uint8
 }
 
-type bpfrxTcScreenEgressIfaceZoneKey struct {
+type bpfrxXdpNatIfaceZoneKey struct {
 	_       structs.HostLayout
 	Ifindex uint32
 	VlanId  uint16
 	Pad     uint16
 }
 
-type bpfrxTcScreenEgressIfaceZoneValue struct {
+type bpfrxXdpNatIfaceZoneValue struct {
 	_            structs.HostLayout
 	ZoneId       uint16
 	Pad          uint16
 	RoutingTable uint32
 }
 
-type bpfrxTcScreenEgressLpmKeyV4 struct {
+type bpfrxXdpNatLpmKeyV4 struct {
 	_         structs.HostLayout
 	Prefixlen uint32
 	Addr      uint32
 }
 
-type bpfrxTcScreenEgressLpmKeyV6 struct {
+type bpfrxXdpNatLpmKeyV6 struct {
 	_         structs.HostLayout
 	Prefixlen uint32
 	Addr      [16]uint8
 }
 
-type bpfrxTcScreenEgressNat64Config struct {
+type bpfrxXdpNatNat64Config struct {
 	_          structs.HostLayout
 	Prefix     [3]uint32
 	SnatPoolId uint8
 	Pad        [3]uint8
 }
 
-type bpfrxTcScreenEgressNat64PrefixKey struct {
+type bpfrxXdpNatNat64PrefixKey struct {
 	_      structs.HostLayout
 	Prefix [3]uint32
 }
 
-type bpfrxTcScreenEgressNat64StateKey struct {
+type bpfrxXdpNatNat64StateKey struct {
 	_        structs.HostLayout
 	SrcIp    uint32
 	DstIp    uint32
@@ -204,7 +204,7 @@ type bpfrxTcScreenEgressNat64StateKey struct {
 	Pad      [3]uint8
 }
 
-type bpfrxTcScreenEgressNat64StateValue struct {
+type bpfrxXdpNatNat64StateValue struct {
 	_           structs.HostLayout
 	OrigSrcV6   [16]uint8
 	OrigDstV6   [16]uint8
@@ -213,7 +213,7 @@ type bpfrxTcScreenEgressNat64StateValue struct {
 	Nat64Idx    uint32
 }
 
-type bpfrxTcScreenEgressPktMeta struct {
+type bpfrxXdpNatPktMeta struct {
 	_     structs.HostLayout
 	SrcIp struct {
 		_  structs.HostLayout
@@ -275,7 +275,7 @@ type bpfrxTcScreenEgressPktMeta struct {
 	PadMeta      [3]uint8
 }
 
-type bpfrxTcScreenEgressPolicyRule struct {
+type bpfrxXdpNatPolicyRule struct {
 	_           structs.HostLayout
 	RuleId      uint32
 	PolicySetId uint32
@@ -294,14 +294,14 @@ type bpfrxTcScreenEgressPolicyRule struct {
 	CounterId   uint32
 }
 
-type bpfrxTcScreenEgressPolicySet struct {
+type bpfrxXdpNatPolicySet struct {
 	_             structs.HostLayout
 	PolicySetId   uint32
 	NumRules      uint16
 	DefaultAction uint16
 }
 
-type bpfrxTcScreenEgressScreenConfig struct {
+type bpfrxXdpNatScreenConfig struct {
 	_               structs.HostLayout
 	Flags           uint32
 	SynFloodThresh  uint32
@@ -309,7 +309,7 @@ type bpfrxTcScreenEgressScreenConfig struct {
 	UdpFloodThresh  uint32
 }
 
-type bpfrxTcScreenEgressSessionKey struct {
+type bpfrxXdpNatSessionKey struct {
 	_        structs.HostLayout
 	SrcIp    uint32
 	DstIp    uint32
@@ -319,7 +319,7 @@ type bpfrxTcScreenEgressSessionKey struct {
 	Pad      [3]uint8
 }
 
-type bpfrxTcScreenEgressSessionKeyV6 struct {
+type bpfrxXdpNatSessionKeyV6 struct {
 	_        structs.HostLayout
 	SrcIp    [16]uint8
 	DstIp    [16]uint8
@@ -329,7 +329,7 @@ type bpfrxTcScreenEgressSessionKeyV6 struct {
 	Pad      [3]uint8
 }
 
-type bpfrxTcScreenEgressSessionValue struct {
+type bpfrxXdpNatSessionValue struct {
 	_           structs.HostLayout
 	State       uint8
 	Flags       uint8
@@ -350,7 +350,7 @@ type bpfrxTcScreenEgressSessionValue struct {
 	FwdBytes    uint64
 	RevPackets  uint64
 	RevBytes    uint64
-	ReverseKey  bpfrxTcScreenEgressSessionKey
+	ReverseKey  bpfrxXdpNatSessionKey
 	AlgType     uint8
 	LogFlags    uint8
 	Pad         [2]uint8
@@ -361,7 +361,7 @@ type bpfrxTcScreenEgressSessionValue struct {
 	FibGen      uint16
 }
 
-type bpfrxTcScreenEgressSessionValueV6 struct {
+type bpfrxXdpNatSessionValueV6 struct {
 	_           structs.HostLayout
 	State       uint8
 	Flags       uint8
@@ -382,7 +382,7 @@ type bpfrxTcScreenEgressSessionValueV6 struct {
 	FwdBytes    uint64
 	RevPackets  uint64
 	RevBytes    uint64
-	ReverseKey  bpfrxTcScreenEgressSessionKeyV6
+	ReverseKey  bpfrxXdpNatSessionKeyV6
 	AlgType     uint8
 	LogFlags    uint8
 	Pad         [2]uint8
@@ -393,7 +393,7 @@ type bpfrxTcScreenEgressSessionValueV6 struct {
 	FibGen      uint16
 }
 
-type bpfrxTcScreenEgressSnatKey struct {
+type bpfrxXdpNatSnatKey struct {
 	_        structs.HostLayout
 	FromZone uint16
 	ToZone   uint16
@@ -401,7 +401,7 @@ type bpfrxTcScreenEgressSnatKey struct {
 	Pad      uint16
 }
 
-type bpfrxTcScreenEgressSnatValue struct {
+type bpfrxXdpNatSnatValue struct {
 	_         structs.HostLayout
 	SnatIp    uint32
 	SrcAddrId uint32
@@ -411,7 +411,7 @@ type bpfrxTcScreenEgressSnatValue struct {
 	CounterId uint16
 }
 
-type bpfrxTcScreenEgressSnatValueV6 struct {
+type bpfrxXdpNatSnatValueV6 struct {
 	_         structs.HostLayout
 	SnatIp    [16]uint8
 	SrcAddrId uint32
@@ -421,33 +421,33 @@ type bpfrxTcScreenEgressSnatValueV6 struct {
 	CounterId uint16
 }
 
-type bpfrxTcScreenEgressStaticNatKeyV4 struct {
+type bpfrxXdpNatStaticNatKeyV4 struct {
 	_         structs.HostLayout
 	Ip        uint32
 	Direction uint8
 	Pad       [3]uint8
 }
 
-type bpfrxTcScreenEgressStaticNatKeyV6 struct {
+type bpfrxXdpNatStaticNatKeyV6 struct {
 	_         structs.HostLayout
 	Ip        [16]uint8
 	Direction uint8
 	Pad       [3]uint8
 }
 
-type bpfrxTcScreenEgressStaticNatValueV6 struct {
+type bpfrxXdpNatStaticNatValueV6 struct {
 	_  structs.HostLayout
 	Ip [16]uint8
 }
 
-type bpfrxTcScreenEgressVlanIfaceInfo struct {
+type bpfrxXdpNatVlanIfaceInfo struct {
 	_             structs.HostLayout
 	ParentIfindex uint32
 	VlanId        uint16
 	Pad           uint16
 }
 
-type bpfrxTcScreenEgressZoneConfig struct {
+type bpfrxXdpNatZoneConfig struct {
 	_                structs.HostLayout
 	ZoneId           uint16
 	ScreenProfileId  uint16
@@ -456,34 +456,34 @@ type bpfrxTcScreenEgressZoneConfig struct {
 	Pad              [3]uint8
 }
 
-type bpfrxTcScreenEgressZonePairKey struct {
+type bpfrxXdpNatZonePairKey struct {
 	_        structs.HostLayout
 	FromZone uint16
 	ToZone   uint16
 }
 
-// loadBpfrxTcScreenEgress returns the embedded CollectionSpec for bpfrxTcScreenEgress.
-func loadBpfrxTcScreenEgress() (*ebpf.CollectionSpec, error) {
-	reader := bytes.NewReader(_BpfrxTcScreenEgressBytes)
+// loadBpfrxXdpNat returns the embedded CollectionSpec for bpfrxXdpNat.
+func loadBpfrxXdpNat() (*ebpf.CollectionSpec, error) {
+	reader := bytes.NewReader(_BpfrxXdpNatBytes)
 	spec, err := ebpf.LoadCollectionSpecFromReader(reader)
 	if err != nil {
-		return nil, fmt.Errorf("can't load bpfrxTcScreenEgress: %w", err)
+		return nil, fmt.Errorf("can't load bpfrxXdpNat: %w", err)
 	}
 
 	return spec, err
 }
 
-// loadBpfrxTcScreenEgressObjects loads bpfrxTcScreenEgress and converts it into a struct.
+// loadBpfrxXdpNatObjects loads bpfrxXdpNat and converts it into a struct.
 //
 // The following types are suitable as obj argument:
 //
-//	*bpfrxTcScreenEgressObjects
-//	*bpfrxTcScreenEgressPrograms
-//	*bpfrxTcScreenEgressMaps
+//	*bpfrxXdpNatObjects
+//	*bpfrxXdpNatPrograms
+//	*bpfrxXdpNatMaps
 //
 // See ebpf.CollectionSpec.LoadAndAssign documentation for details.
-func loadBpfrxTcScreenEgressObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
-	spec, err := loadBpfrxTcScreenEgress()
+func loadBpfrxXdpNatObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
+	spec, err := loadBpfrxXdpNat()
 	if err != nil {
 		return err
 	}
@@ -491,26 +491,26 @@ func loadBpfrxTcScreenEgressObjects(obj interface{}, opts *ebpf.CollectionOption
 	return spec.LoadAndAssign(obj, opts)
 }
 
-// bpfrxTcScreenEgressSpecs contains maps and programs before they are loaded into the kernel.
+// bpfrxXdpNatSpecs contains maps and programs before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
-type bpfrxTcScreenEgressSpecs struct {
-	bpfrxTcScreenEgressProgramSpecs
-	bpfrxTcScreenEgressMapSpecs
-	bpfrxTcScreenEgressVariableSpecs
+type bpfrxXdpNatSpecs struct {
+	bpfrxXdpNatProgramSpecs
+	bpfrxXdpNatMapSpecs
+	bpfrxXdpNatVariableSpecs
 }
 
-// bpfrxTcScreenEgressProgramSpecs contains programs before they are loaded into the kernel.
+// bpfrxXdpNatProgramSpecs contains programs before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
-type bpfrxTcScreenEgressProgramSpecs struct {
-	TcScreenEgressProg *ebpf.ProgramSpec `ebpf:"tc_screen_egress_prog"`
+type bpfrxXdpNatProgramSpecs struct {
+	XdpNatProg *ebpf.ProgramSpec `ebpf:"xdp_nat_prog"`
 }
 
-// bpfrxTcScreenEgressMapSpecs contains maps before they are loaded into the kernel.
+// bpfrxXdpNatMapSpecs contains maps before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
-type bpfrxTcScreenEgressMapSpecs struct {
+type bpfrxXdpNatMapSpecs struct {
 	AddressBookV4     *ebpf.MapSpec `ebpf:"address_book_v4"`
 	AddressBookV6     *ebpf.MapSpec `ebpf:"address_book_v6"`
 	AddressMembership *ebpf.MapSpec `ebpf:"address_membership"`
@@ -558,32 +558,32 @@ type bpfrxTcScreenEgressMapSpecs struct {
 	ZonePairPolicies  *ebpf.MapSpec `ebpf:"zone_pair_policies"`
 }
 
-// bpfrxTcScreenEgressVariableSpecs contains global variables before they are loaded into the kernel.
+// bpfrxXdpNatVariableSpecs contains global variables before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
-type bpfrxTcScreenEgressVariableSpecs struct {
+type bpfrxXdpNatVariableSpecs struct {
 }
 
-// bpfrxTcScreenEgressObjects contains all objects after they have been loaded into the kernel.
+// bpfrxXdpNatObjects contains all objects after they have been loaded into the kernel.
 //
-// It can be passed to loadBpfrxTcScreenEgressObjects or ebpf.CollectionSpec.LoadAndAssign.
-type bpfrxTcScreenEgressObjects struct {
-	bpfrxTcScreenEgressPrograms
-	bpfrxTcScreenEgressMaps
-	bpfrxTcScreenEgressVariables
+// It can be passed to loadBpfrxXdpNatObjects or ebpf.CollectionSpec.LoadAndAssign.
+type bpfrxXdpNatObjects struct {
+	bpfrxXdpNatPrograms
+	bpfrxXdpNatMaps
+	bpfrxXdpNatVariables
 }
 
-func (o *bpfrxTcScreenEgressObjects) Close() error {
-	return _BpfrxTcScreenEgressClose(
-		&o.bpfrxTcScreenEgressPrograms,
-		&o.bpfrxTcScreenEgressMaps,
+func (o *bpfrxXdpNatObjects) Close() error {
+	return _BpfrxXdpNatClose(
+		&o.bpfrxXdpNatPrograms,
+		&o.bpfrxXdpNatMaps,
 	)
 }
 
-// bpfrxTcScreenEgressMaps contains all maps after they have been loaded into the kernel.
+// bpfrxXdpNatMaps contains all maps after they have been loaded into the kernel.
 //
-// It can be passed to loadBpfrxTcScreenEgressObjects or ebpf.CollectionSpec.LoadAndAssign.
-type bpfrxTcScreenEgressMaps struct {
+// It can be passed to loadBpfrxXdpNatObjects or ebpf.CollectionSpec.LoadAndAssign.
+type bpfrxXdpNatMaps struct {
 	AddressBookV4     *ebpf.Map `ebpf:"address_book_v4"`
 	AddressBookV6     *ebpf.Map `ebpf:"address_book_v6"`
 	AddressMembership *ebpf.Map `ebpf:"address_membership"`
@@ -631,8 +631,8 @@ type bpfrxTcScreenEgressMaps struct {
 	ZonePairPolicies  *ebpf.Map `ebpf:"zone_pair_policies"`
 }
 
-func (m *bpfrxTcScreenEgressMaps) Close() error {
-	return _BpfrxTcScreenEgressClose(
+func (m *bpfrxXdpNatMaps) Close() error {
+	return _BpfrxXdpNatClose(
 		m.AddressBookV4,
 		m.AddressBookV6,
 		m.AddressMembership,
@@ -681,26 +681,26 @@ func (m *bpfrxTcScreenEgressMaps) Close() error {
 	)
 }
 
-// bpfrxTcScreenEgressVariables contains all global variables after they have been loaded into the kernel.
+// bpfrxXdpNatVariables contains all global variables after they have been loaded into the kernel.
 //
-// It can be passed to loadBpfrxTcScreenEgressObjects or ebpf.CollectionSpec.LoadAndAssign.
-type bpfrxTcScreenEgressVariables struct {
+// It can be passed to loadBpfrxXdpNatObjects or ebpf.CollectionSpec.LoadAndAssign.
+type bpfrxXdpNatVariables struct {
 }
 
-// bpfrxTcScreenEgressPrograms contains all programs after they have been loaded into the kernel.
+// bpfrxXdpNatPrograms contains all programs after they have been loaded into the kernel.
 //
-// It can be passed to loadBpfrxTcScreenEgressObjects or ebpf.CollectionSpec.LoadAndAssign.
-type bpfrxTcScreenEgressPrograms struct {
-	TcScreenEgressProg *ebpf.Program `ebpf:"tc_screen_egress_prog"`
+// It can be passed to loadBpfrxXdpNatObjects or ebpf.CollectionSpec.LoadAndAssign.
+type bpfrxXdpNatPrograms struct {
+	XdpNatProg *ebpf.Program `ebpf:"xdp_nat_prog"`
 }
 
-func (p *bpfrxTcScreenEgressPrograms) Close() error {
-	return _BpfrxTcScreenEgressClose(
-		p.TcScreenEgressProg,
+func (p *bpfrxXdpNatPrograms) Close() error {
+	return _BpfrxXdpNatClose(
+		p.XdpNatProg,
 	)
 }
 
-func _BpfrxTcScreenEgressClose(closers ...io.Closer) error {
+func _BpfrxXdpNatClose(closers ...io.Closer) error {
 	for _, closer := range closers {
 		if err := closer.Close(); err != nil {
 			return err
@@ -711,5 +711,5 @@ func _BpfrxTcScreenEgressClose(closers ...io.Closer) error {
 
 // Do not access this directly.
 //
-//go:embed bpfrxtcscreenegress_x86_bpfel.o
-var _BpfrxTcScreenEgressBytes []byte
+//go:embed bpfrxxdpnat_x86_bpfel.o
+var _BpfrxXdpNatBytes []byte

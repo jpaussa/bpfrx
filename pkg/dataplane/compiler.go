@@ -2493,11 +2493,19 @@ func expandFilterTerm(term *config.FirewallFilterTerm, family uint8, riTableIDs 
 					}
 					if dp != "" {
 						rule.MatchFlags |= FilterMatchDstPort
-						rule.DstPort = htons(resolvePortName(dp))
+						lo, hi := resolvePortRange(dp)
+						rule.DstPort = htons(lo)
+						if hi > lo {
+							rule.DstPortHi = htons(hi)
+						}
 					}
 					if sp != "" {
 						rule.MatchFlags |= FilterMatchSrcPort
-						rule.SrcPort = htons(resolvePortName(sp))
+						lo, hi := resolvePortRange(sp)
+						rule.SrcPort = htons(lo)
+						if hi > lo {
+							rule.SrcPortHi = htons(hi)
+						}
 					}
 					rules = append(rules, rule)
 				}
@@ -2547,6 +2555,19 @@ func setFilterAddr(addr, mask *[16]byte, cidr string, family uint8) {
 }
 
 // resolvePortName maps well-known port names to numbers.
+// resolvePortRange parses a port specification that may be a name, number,
+// or range ("1000-2000"). Returns low and high port numbers. If not a range,
+// hi equals lo.
+func resolvePortRange(s string) (lo, hi uint16) {
+	if idx := strings.IndexByte(s, '-'); idx > 0 && idx < len(s)-1 {
+		lo = resolvePortName(s[:idx])
+		hi = resolvePortName(s[idx+1:])
+		return lo, hi
+	}
+	p := resolvePortName(s)
+	return p, p
+}
+
 func resolvePortName(name string) uint16 {
 	switch strings.ToLower(name) {
 	case "ssh":

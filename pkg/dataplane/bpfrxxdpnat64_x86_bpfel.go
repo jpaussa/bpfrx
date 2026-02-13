@@ -110,6 +110,8 @@ type bpfrxXdpNat64FilterRule struct {
 	Family       uint8
 	DstPort      uint16
 	SrcPort      uint16
+	DstPortHi    uint16
+	SrcPortHi    uint16
 	DscpRewrite  uint8
 	LogFlag      uint8
 	SrcAddr      [16]uint8
