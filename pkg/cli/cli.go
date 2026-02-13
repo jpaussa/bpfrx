@@ -106,6 +106,7 @@ var operationalTree = map[string]*completionNode{
 		}},
 		"flow-monitoring": {desc: "Show flow monitoring/NetFlow configuration"},
 		"route": {desc: "Show routing table [instance <name>]", children: map[string]*completionNode{
+			"summary": {desc: "Show route summary by protocol"},
 			"instance": {desc: "Show routes for a routing instance", dynamicFn: func(cfg *config.Config) []string {
 				if cfg == nil {
 					return nil
@@ -167,8 +168,9 @@ var operationalTree = map[string]*completionNode{
 			}
 			return names
 		}, children: map[string]*completionNode{
-			"terse":  {desc: "Show interface summary"},
-			"tunnel": {desc: "Show tunnel interfaces"},
+			"terse":     {desc: "Show interface summary"},
+			"extensive": {desc: "Show detailed interface statistics"},
+			"tunnel":    {desc: "Show tunnel interfaces"},
 		}},
 		"protocols": {desc: "Show protocol information", children: map[string]*completionNode{
 			"ospf": {desc: "Show OSPF information", children: map[string]*completionNode{
@@ -196,7 +198,9 @@ var operationalTree = map[string]*completionNode{
 		"system": {desc: "Show system information", children: map[string]*completionNode{
 			"alarms":      {desc: "Show system alarms"},
 			"connections": {desc: "Show system TCP connections"},
-			"rollback":    {desc: "Show rollback history"},
+			"rollback": {desc: "Show rollback history", children: map[string]*completionNode{
+				"compare": {desc: "Compare rollback with active config"},
+			}},
 			"storage":     {desc: "Show filesystem usage"},
 			"uptime":      {desc: "Show system uptime"},
 			"memory":      {desc: "Show memory usage"},
@@ -2483,6 +2487,9 @@ func (c *CLI) handleShowRoute(args []string) error {
 	if len(args) >= 2 && args[0] == "instance" {
 		return c.showRoutesForInstance(args[1])
 	}
+	if len(args) >= 1 && args[0] == "summary" {
+		return c.showRouteSummary()
+	}
 	return c.showRoutes()
 }
 
@@ -2544,6 +2551,48 @@ func (c *CLI) showRoutesForInstance(instanceName string) error {
 		fmt.Printf("  %-24s %-20s %-14s %-12s %d\n",
 			e.Destination, e.NextHop, e.Interface, e.Protocol, e.Preference)
 	}
+	return nil
+}
+
+func (c *CLI) showRouteSummary() error {
+	if c.routing == nil {
+		fmt.Println("Routing manager not available")
+		return nil
+	}
+
+	entries, err := c.routing.GetRoutes()
+	if err != nil {
+		return fmt.Errorf("get routes: %w", err)
+	}
+
+	// Count by protocol and address family
+	byProto := make(map[string]int)
+	var v4Count, v6Count int
+	for _, e := range entries {
+		byProto[e.Protocol]++
+		if strings.Contains(e.Destination, ":") {
+			v6Count++
+		} else {
+			v4Count++
+		}
+	}
+
+	fmt.Printf("Router ID: (not set)\n\n")
+	fmt.Printf("inet.0: %d destinations\n", v4Count)
+	fmt.Printf("inet6.0: %d destinations\n\n", v6Count)
+
+	fmt.Printf("Route summary by protocol:\n")
+	fmt.Printf("  %-14s %s\n", "Protocol", "Routes")
+	// Sort protocols for deterministic output
+	protos := make([]string, 0, len(byProto))
+	for p := range byProto {
+		protos = append(protos, p)
+	}
+	sort.Strings(protos)
+	for _, p := range protos {
+		fmt.Printf("  %-14s %d\n", p, byProto[p])
+	}
+	fmt.Printf("  %-14s %d\n", "Total", len(entries))
 	return nil
 }
 
@@ -2865,6 +2914,10 @@ func (c *CLI) showInterfaces(args []string) error {
 	// Handle "show interfaces terse" sub-command
 	if len(args) > 0 && args[0] == "terse" {
 		return c.showInterfacesTerse()
+	}
+	// Handle "show interfaces extensive" sub-command
+	if len(args) > 0 && args[0] == "extensive" {
+		return c.showInterfacesExtensive()
 	}
 
 	cfg := c.store.ActiveConfig()
@@ -3273,6 +3326,124 @@ func (c *CLI) showInterfacesTerse() error {
 	return nil
 }
 
+// showInterfacesExtensive shows detailed per-interface statistics including
+// all error counters, queue depths, and ethtool-style information.
+func (c *CLI) showInterfacesExtensive() error {
+	links, err := netlink.LinkList()
+	if err != nil {
+		return fmt.Errorf("listing interfaces: %w", err)
+	}
+
+	sort.Slice(links, func(i, j int) bool {
+		return links[i].Attrs().Name < links[j].Attrs().Name
+	})
+
+	for _, link := range links {
+		attrs := link.Attrs()
+		if attrs.Name == "lo" {
+			continue
+		}
+
+		// State
+		adminUp := attrs.Flags&net.FlagUp != 0
+		operUp := attrs.OperState == netlink.OperUp
+		adminStr := "Disabled"
+		if adminUp {
+			adminStr = "Enabled"
+		}
+		linkStr := "Down"
+		if operUp {
+			linkStr = "Up"
+		}
+		fmt.Printf("Physical interface: %s, %s, Physical link is %s\n", attrs.Name, adminStr, linkStr)
+
+		// Type + speed + MTU
+		linkType := "Ethernet"
+		if attrs.EncapType != "" {
+			linkType = attrs.EncapType
+		}
+		speedStr := ""
+		if speed := readLinkSpeed(attrs.Name); speed > 0 {
+			speedStr = fmt.Sprintf(", Speed: %s", formatSpeed(speed))
+		}
+		fmt.Printf("  Link-level type: %s, MTU: %d%s, Link-mode: Full-duplex\n",
+			linkType, attrs.MTU, speedStr)
+
+		// MAC
+		if len(attrs.HardwareAddr) > 0 {
+			fmt.Printf("  Current address: %s, Hardware address: %s\n",
+				attrs.HardwareAddr, attrs.HardwareAddr)
+		}
+
+		// Device flags
+		var flags []string
+		flags = append(flags, "Present")
+		if operUp {
+			flags = append(flags, "Running")
+		}
+		if !adminUp {
+			flags = append(flags, "Down")
+		}
+		fmt.Printf("  Device flags   : %s\n", strings.Join(flags, " "))
+		fmt.Printf("  Interface index: %d, SNMP ifIndex: %d\n", attrs.Index, attrs.Index)
+
+		if attrs.TxQLen > 0 {
+			fmt.Printf("  Link type      : %s, TxQueueLen: %d\n", attrs.EncapType, attrs.TxQLen)
+		}
+
+		// Detailed statistics
+		if s := attrs.Statistics; s != nil {
+			fmt.Println("  Traffic statistics:")
+			fmt.Printf("    Input:  %d bytes, %d packets\n", s.RxBytes, s.RxPackets)
+			fmt.Printf("    Output: %d bytes, %d packets\n", s.TxBytes, s.TxPackets)
+			fmt.Println("  Input errors:")
+			fmt.Printf("    Errors: %d, Drops: %d, Overruns: %d, Frame: %d\n",
+				s.RxErrors, s.RxDropped, s.RxOverErrors, s.RxFrameErrors)
+			fmt.Printf("    FIFO errors: %d, Missed: %d, Compressed: %d\n",
+				s.RxFifoErrors, s.RxMissedErrors, s.RxCompressed)
+			fmt.Println("  Output errors:")
+			fmt.Printf("    Errors: %d, Drops: %d, Carrier: %d, Collisions: %d\n",
+				s.TxErrors, s.TxDropped, s.TxCarrierErrors, s.Collisions)
+			fmt.Printf("    FIFO errors: %d, Heartbeat: %d, Compressed: %d\n",
+				s.TxFifoErrors, s.TxHeartbeatErrors, s.TxCompressed)
+			if s.Multicast > 0 {
+				fmt.Printf("    Multicast: %d\n", s.Multicast)
+			}
+		}
+
+		// Addresses
+		addrs, _ := netlink.AddrList(link, netlink.FAMILY_ALL)
+		if len(addrs) > 0 {
+			var v4, v6 []string
+			for _, a := range addrs {
+				if a.IP.To4() != nil {
+					v4 = append(v4, a.IPNet.String())
+				} else {
+					v6 = append(v6, a.IPNet.String())
+				}
+			}
+			if len(v4) > 0 {
+				fmt.Printf("  Protocol inet, MTU: %d\n", attrs.MTU)
+				for _, a := range v4 {
+					fmt.Printf("    Local: %s\n", a)
+				}
+			}
+			if len(v6) > 0 {
+				fmt.Printf("  Protocol inet6, MTU: %d\n", attrs.MTU)
+				for _, a := range v6 {
+					flags := "Is-Preferred Is-Primary"
+					if strings.HasPrefix(a, "fe80:") {
+						flags = "Is-Preferred"
+					}
+					fmt.Printf("    Local: %s, Flags: %s\n", a, flags)
+				}
+			}
+		}
+		fmt.Println()
+	}
+	return nil
+}
+
 // readLinkSpeed reads the link speed in Mbps from sysfs. Returns 0 on error.
 func readLinkSpeed(ifaceName string) int {
 	data, err := os.ReadFile("/sys/class/net/" + ifaceName + "/speed")
@@ -3311,6 +3482,27 @@ func (c *CLI) handleShowSystem(args []string) error {
 	switch args[0] {
 	case "rollback":
 		if len(args) >= 2 {
+			// "show system rollback compare N" — diff rollback N against active
+			if args[1] == "compare" {
+				if len(args) < 3 {
+					return fmt.Errorf("usage: show system rollback compare <N>")
+				}
+				n, err := strconv.Atoi(args[2])
+				if err != nil || n < 1 {
+					return fmt.Errorf("usage: show system rollback compare <N>")
+				}
+				diff, err := c.store.ShowCompareRollback(n)
+				if err != nil {
+					return err
+				}
+				if diff == "" {
+					fmt.Println("No differences found")
+				} else {
+					fmt.Print(diff)
+				}
+				return nil
+			}
+
 			// "show system rollback N" — show specific rollback content.
 			n, err := strconv.Atoi(args[1])
 			if err != nil || n < 1 {
@@ -3323,6 +3515,16 @@ func (c *CLI) handleShowSystem(args []string) error {
 					return err
 				}
 				fmt.Print(content)
+			} else if strings.Contains(rest, "compare") {
+				diff, err := c.store.ShowCompareRollback(n)
+				if err != nil {
+					return err
+				}
+				if diff == "" {
+					fmt.Println("No differences found")
+				} else {
+					fmt.Print(diff)
+				}
 			} else {
 				content, err := c.store.ShowRollback(n)
 				if err != nil {

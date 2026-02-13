@@ -2746,6 +2746,86 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 			buf.WriteString("No active configuration loaded\n")
 		}
 
+	case "route-summary":
+		if s.routing == nil {
+			fmt.Fprintln(&buf, "Routing manager not available")
+		} else {
+			entries, err := s.routing.GetRoutes()
+			if err != nil {
+				return nil, status.Errorf(codes.Internal, "get routes: %v", err)
+			}
+			byProto := make(map[string]int)
+			var v4Count, v6Count int
+			for _, e := range entries {
+				byProto[e.Protocol]++
+				if strings.Contains(e.Destination, ":") {
+					v6Count++
+				} else {
+					v4Count++
+				}
+			}
+			fmt.Fprintf(&buf, "inet.0: %d destinations\n", v4Count)
+			fmt.Fprintf(&buf, "inet6.0: %d destinations\n\n", v6Count)
+			fmt.Fprintf(&buf, "Route summary by protocol:\n")
+			fmt.Fprintf(&buf, "  %-14s %s\n", "Protocol", "Routes")
+			protos := make([]string, 0, len(byProto))
+			for p := range byProto {
+				protos = append(protos, p)
+			}
+			sort.Strings(protos)
+			for _, p := range protos {
+				fmt.Fprintf(&buf, "  %-14s %d\n", p, byProto[p])
+			}
+			fmt.Fprintf(&buf, "  %-14s %d\n", "Total", len(entries))
+		}
+
+	case "interfaces-extensive":
+		linksList, err := netlink.LinkList()
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "listing interfaces: %v", err)
+		}
+		sort.Slice(linksList, func(i, j int) bool {
+			return linksList[i].Attrs().Name < linksList[j].Attrs().Name
+		})
+		for _, link := range linksList {
+			attrs := link.Attrs()
+			if attrs.Name == "lo" {
+				continue
+			}
+			adminUp := attrs.Flags&net.FlagUp != 0
+			operUp := attrs.OperState == netlink.OperUp
+			adminStr := "Disabled"
+			if adminUp {
+				adminStr = "Enabled"
+			}
+			linkStr := "Down"
+			if operUp {
+				linkStr = "Up"
+			}
+			fmt.Fprintf(&buf, "Physical interface: %s, %s, Physical link is %s\n", attrs.Name, adminStr, linkStr)
+			fmt.Fprintf(&buf, "  Link-level type: %s, MTU: %d\n", attrs.EncapType, attrs.MTU)
+			if len(attrs.HardwareAddr) > 0 {
+				fmt.Fprintf(&buf, "  Current address: %s\n", attrs.HardwareAddr)
+			}
+			fmt.Fprintf(&buf, "  Interface index: %d\n", attrs.Index)
+			if st := attrs.Statistics; st != nil {
+				fmt.Fprintf(&buf, "  Traffic statistics:\n")
+				fmt.Fprintf(&buf, "    Input:  %d bytes, %d packets\n", st.RxBytes, st.RxPackets)
+				fmt.Fprintf(&buf, "    Output: %d bytes, %d packets\n", st.TxBytes, st.TxPackets)
+				fmt.Fprintf(&buf, "  Input errors:\n")
+				fmt.Fprintf(&buf, "    Errors: %d, Drops: %d, Overruns: %d, Frame: %d\n",
+					st.RxErrors, st.RxDropped, st.RxOverErrors, st.RxFrameErrors)
+				fmt.Fprintf(&buf, "  Output errors:\n")
+				fmt.Fprintf(&buf, "    Errors: %d, Drops: %d, Carrier: %d, Collisions: %d\n",
+					st.TxErrors, st.TxDropped, st.TxCarrierErrors, st.Collisions)
+			}
+			addrs, _ := netlink.AddrList(link, netlink.FAMILY_ALL)
+			for _, a := range addrs {
+				fmt.Fprintf(&buf, "  Address: %s\n", a.IPNet)
+			}
+			fmt.Fprintln(&buf)
+		}
+
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "unknown topic: %s", req.Topic)
 	}

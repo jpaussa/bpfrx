@@ -431,6 +431,9 @@ func (c *ctl) handleShow(args []string) error {
 		return nil
 
 	case "route":
+		if len(args) >= 2 && args[1] == "summary" {
+			return c.showText("route-summary")
+		}
 		return c.showRoutes()
 
 	case "security":
@@ -1053,6 +1056,9 @@ func (c *ctl) showIPsec(args []string) error {
 func (c *ctl) showInterfaces(args []string) error {
 	if len(args) > 0 && args[0] == "tunnel" {
 		return c.showText("tunnels")
+	}
+	if len(args) > 0 && args[0] == "extensive" {
+		return c.showText("interfaces-extensive")
 	}
 	req := &pb.ShowInterfacesDetailRequest{}
 	for _, a := range args {
