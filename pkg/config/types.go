@@ -446,6 +446,7 @@ type FeedServer struct {
 type SecurityConfig struct {
 	Zones              map[string]*ZoneConfig       // keyed by zone name
 	Policies           []*ZonePairPolicies          // ordered list of zone-pair policy sets
+	GlobalPolicies     []*Policy                    // global policies (apply to all zone pairs)
 	DefaultPolicy      PolicyAction                 // global fallback policy (permit-all or deny-all)
 	NAT                NATConfig
 	Screen             map[string]*ScreenProfile    // keyed by profile name

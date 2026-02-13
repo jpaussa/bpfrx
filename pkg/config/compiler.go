@@ -482,6 +482,14 @@ func compilePolicies(node *Node, sec *SecurityConfig) error {
 			}
 			continue
 		}
+		// "global { policy ... }" - global policies applied to all zone pairs
+		if child.Name() == "global" {
+			for _, polInst := range namedInstances(child.FindChildren("policy")) {
+				pol := compilePolicy(polInst)
+				sec.GlobalPolicies = append(sec.GlobalPolicies, pol)
+			}
+			continue
+		}
 		// "from-zone trust to-zone untrust { ... }"
 		if child.Name() == "from-zone" {
 			type zonePair struct {
@@ -513,77 +521,7 @@ func compilePolicies(node *Node, sec *SecurityConfig) error {
 				}
 
 				for _, polInst := range namedInstances(zp.policyNode.FindChildren("policy")) {
-					pol := &Policy{Name: polInst.name}
-
-					matchNode := polInst.node.FindChild("match")
-					if matchNode != nil {
-						for _, m := range matchNode.Children {
-							switch m.Name() {
-							case "source-address":
-								if len(m.Keys) >= 2 {
-									pol.Match.SourceAddresses = append(pol.Match.SourceAddresses, m.Keys[1:]...)
-								} else {
-									for _, c := range m.Children {
-										pol.Match.SourceAddresses = append(pol.Match.SourceAddresses, c.Name())
-									}
-								}
-							case "destination-address":
-								if len(m.Keys) >= 2 {
-									pol.Match.DestinationAddresses = append(pol.Match.DestinationAddresses, m.Keys[1:]...)
-								} else {
-									for _, c := range m.Children {
-										pol.Match.DestinationAddresses = append(pol.Match.DestinationAddresses, c.Name())
-									}
-								}
-							case "application":
-								if len(m.Keys) >= 2 {
-									pol.Match.Applications = append(pol.Match.Applications, m.Keys[1:]...)
-								} else {
-									for _, c := range m.Children {
-										pol.Match.Applications = append(pol.Match.Applications, c.Name())
-									}
-								}
-							}
-						}
-					}
-
-					thenNode := polInst.node.FindChild("then")
-					if thenNode != nil {
-						for _, t := range thenNode.Children {
-							switch t.Name() {
-							case "permit":
-								pol.Action = PolicyPermit
-							case "deny":
-								pol.Action = PolicyDeny
-							case "reject":
-								pol.Action = PolicyReject
-							case "log":
-								pol.Log = &PolicyLog{}
-								for _, logOpt := range t.Children {
-									switch logOpt.Name() {
-									case "session-init":
-										pol.Log.SessionInit = true
-									case "session-close":
-										pol.Log.SessionClose = true
-									}
-								}
-							case "count":
-								pol.Count = true
-							}
-						}
-					}
-
-					// description
-					if descNode := polInst.node.FindChild("description"); descNode != nil {
-						pol.Description = nodeVal(descNode)
-					}
-
-				// scheduler-name at the policy level
-					if snNode := polInst.node.FindChild("scheduler-name"); snNode != nil {
-						pol.SchedulerName = nodeVal(snNode)
-					}
-
-					zpp.Policies = append(zpp.Policies, pol)
+					zpp.Policies = append(zpp.Policies, compilePolicy(polInst))
 				}
 
 				sec.Policies = append(sec.Policies, zpp)
@@ -591,6 +529,81 @@ func compilePolicies(node *Node, sec *SecurityConfig) error {
 		}
 	}
 	return nil
+}
+
+// compilePolicy extracts a Policy from a named policy instance.
+func compilePolicy(polInst struct {
+	name string
+	node *Node
+}) *Policy {
+	pol := &Policy{Name: polInst.name}
+
+	matchNode := polInst.node.FindChild("match")
+	if matchNode != nil {
+		for _, m := range matchNode.Children {
+			switch m.Name() {
+			case "source-address":
+				if len(m.Keys) >= 2 {
+					pol.Match.SourceAddresses = append(pol.Match.SourceAddresses, m.Keys[1:]...)
+				} else {
+					for _, c := range m.Children {
+						pol.Match.SourceAddresses = append(pol.Match.SourceAddresses, c.Name())
+					}
+				}
+			case "destination-address":
+				if len(m.Keys) >= 2 {
+					pol.Match.DestinationAddresses = append(pol.Match.DestinationAddresses, m.Keys[1:]...)
+				} else {
+					for _, c := range m.Children {
+						pol.Match.DestinationAddresses = append(pol.Match.DestinationAddresses, c.Name())
+					}
+				}
+			case "application":
+				if len(m.Keys) >= 2 {
+					pol.Match.Applications = append(pol.Match.Applications, m.Keys[1:]...)
+				} else {
+					for _, c := range m.Children {
+						pol.Match.Applications = append(pol.Match.Applications, c.Name())
+					}
+				}
+			}
+		}
+	}
+
+	thenNode := polInst.node.FindChild("then")
+	if thenNode != nil {
+		for _, t := range thenNode.Children {
+			switch t.Name() {
+			case "permit":
+				pol.Action = PolicyPermit
+			case "deny":
+				pol.Action = PolicyDeny
+			case "reject":
+				pol.Action = PolicyReject
+			case "log":
+				pol.Log = &PolicyLog{}
+				for _, logOpt := range t.Children {
+					switch logOpt.Name() {
+					case "session-init":
+						pol.Log.SessionInit = true
+					case "session-close":
+						pol.Log.SessionClose = true
+					}
+				}
+			case "count":
+				pol.Count = true
+			}
+		}
+	}
+
+	if descNode := polInst.node.FindChild("description"); descNode != nil {
+		pol.Description = nodeVal(descNode)
+	}
+	if snNode := polInst.node.FindChild("scheduler-name"); snNode != nil {
+		pol.SchedulerName = nodeVal(snNode)
+	}
+
+	return pol
 }
 
 func compileScreen(node *Node, sec *SecurityConfig) error {

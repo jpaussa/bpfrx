@@ -4945,6 +4945,106 @@ func TestPolicySetSyntax(t *testing.T) {
 	}
 }
 
+func TestGlobalPolicies(t *testing.T) {
+	input := `
+security {
+    policies {
+        global {
+            policy icmpv6-allow {
+                match {
+                    source-address any-ipv6;
+                    destination-address any-ipv6;
+                    application junos-icmp6-all;
+                }
+                then {
+                    permit;
+                }
+            }
+            policy default-deny {
+                match {
+                    source-address any;
+                    destination-address any;
+                    application any;
+                }
+                then {
+                    deny;
+                    log {
+                        session-init;
+                    }
+                }
+            }
+        }
+    }
+}
+`
+	parser := NewParser(input)
+	tree, errs := parser.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("Parse: %v", errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+
+	if len(cfg.Security.GlobalPolicies) != 2 {
+		t.Fatalf("got %d global policies, want 2", len(cfg.Security.GlobalPolicies))
+	}
+
+	pol0 := cfg.Security.GlobalPolicies[0]
+	if pol0.Name != "icmpv6-allow" {
+		t.Errorf("policy 0 name = %q, want icmpv6-allow", pol0.Name)
+	}
+	if pol0.Action != PolicyPermit {
+		t.Errorf("policy 0 action = %d, want permit", pol0.Action)
+	}
+	if len(pol0.Match.Applications) != 1 || pol0.Match.Applications[0] != "junos-icmp6-all" {
+		t.Errorf("policy 0 apps = %v, want [junos-icmp6-all]", pol0.Match.Applications)
+	}
+
+	pol1 := cfg.Security.GlobalPolicies[1]
+	if pol1.Name != "default-deny" {
+		t.Errorf("policy 1 name = %q, want default-deny", pol1.Name)
+	}
+	if pol1.Action != PolicyDeny {
+		t.Errorf("policy 1 action = %d, want deny", pol1.Action)
+	}
+	if pol1.Log == nil || !pol1.Log.SessionInit {
+		t.Error("policy 1 log session-init should be true")
+	}
+}
+
+func TestGlobalPoliciesSetSyntax(t *testing.T) {
+	tree := &ConfigTree{}
+	for _, cmd := range []string{
+		"set security policies global policy allow-icmpv6 match source-address any-ipv6",
+		"set security policies global policy allow-icmpv6 match destination-address any-ipv6",
+		"set security policies global policy allow-icmpv6 match application junos-icmp6-all",
+		"set security policies global policy allow-icmpv6 then permit",
+	} {
+		if err := tree.SetPath(strings.Fields(cmd)[1:]); err != nil {
+			t.Fatalf("SetPath(%q): %v", cmd, err)
+		}
+	}
+
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+
+	if len(cfg.Security.GlobalPolicies) != 1 {
+		t.Fatalf("got %d global policies, want 1", len(cfg.Security.GlobalPolicies))
+	}
+
+	pol := cfg.Security.GlobalPolicies[0]
+	if pol.Name != "allow-icmpv6" {
+		t.Errorf("name = %q, want allow-icmpv6", pol.Name)
+	}
+	if pol.Action != PolicyPermit {
+		t.Errorf("action = %d, want permit", pol.Action)
+	}
+}
+
 func TestApplicationSetSyntax(t *testing.T) {
 	tree := &ConfigTree{}
 	for _, cmd := range []string{

@@ -1198,6 +1198,37 @@ func (c *CLI) handleShowSecurity(args []string) error {
 			policySetID++
 			fmt.Println()
 		}
+		// Global policies
+		if len(cfg.Security.GlobalPolicies) > 0 && fromZone == "" && toZone == "" {
+			fmt.Println("Global policies:")
+			for i, pol := range cfg.Security.GlobalPolicies {
+				action := "permit"
+				switch pol.Action {
+				case 1:
+					action = "deny"
+				case 2:
+					action = "reject"
+				}
+				ruleID := policySetID*dataplane.MaxRulesPerPolicy + uint32(i)
+				fmt.Printf("  Rule: %s (id: %d)\n", pol.Name, ruleID)
+				if pol.Description != "" {
+					fmt.Printf("    Description: %s\n", pol.Description)
+				}
+				fmt.Printf("    Match: src=%v dst=%v app=%v\n",
+					pol.Match.SourceAddresses,
+					pol.Match.DestinationAddresses,
+					pol.Match.Applications)
+				fmt.Printf("    Action: %s\n", action)
+				if c.dp != nil && c.dp.IsLoaded() {
+					counters, err := c.dp.ReadPolicyCounters(ruleID)
+					if err == nil {
+						fmt.Printf("    Hit count: %d packets, %d bytes\n",
+							counters.Packets, counters.Bytes)
+					}
+				}
+			}
+			fmt.Println()
+		}
 		return nil
 
 	case "flow":

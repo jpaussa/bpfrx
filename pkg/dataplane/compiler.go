@@ -1149,6 +1149,119 @@ func (m *Manager) compilePolicies(cfg *config.Config, result *CompileResult) err
 		policySetID++
 	}
 
+	// Global policies (apply to all zone pairs, evaluated as fallback).
+	// Uses special key {0, 0} which BPF checks when no zone-pair-specific match.
+	if len(cfg.Security.GlobalPolicies) > 0 {
+		type expandedRule struct {
+			pol   *config.Policy
+			appID uint32
+		}
+		var expanded []expandedRule
+
+		for _, pol := range cfg.Security.GlobalPolicies {
+			var appIDs []uint32
+			hasAny := false
+			for _, appName := range pol.Match.Applications {
+				if appName == "any" {
+					hasAny = true
+					break
+				}
+			}
+			if hasAny || len(pol.Match.Applications) == 0 {
+				appIDs = []uint32{0}
+			} else {
+				seen := make(map[uint32]bool)
+				for _, appName := range pol.Match.Applications {
+					if _, isSet := cfg.Applications.ApplicationSets[appName]; isSet {
+						exp, err := config.ExpandApplicationSet(appName, &cfg.Applications)
+						if err != nil {
+							return fmt.Errorf("global policy expand app-set %q: %w", appName, err)
+						}
+						for _, a := range exp {
+							if id, ok := result.AppIDs[a]; ok && !seen[id] {
+								seen[id] = true
+								appIDs = append(appIDs, id)
+							}
+						}
+					} else if id, ok := result.AppIDs[appName]; ok && !seen[id] {
+						seen[id] = true
+						appIDs = append(appIDs, id)
+					}
+				}
+				if len(appIDs) == 0 {
+					appIDs = []uint32{0}
+				}
+			}
+
+			for _, aid := range appIDs {
+				expanded = append(expanded, expandedRule{pol: pol, appID: aid})
+			}
+		}
+
+		ps := PolicySet{
+			PolicySetID:   policySetID,
+			NumRules:      uint16(len(expanded)),
+			DefaultAction: ActionDeny,
+		}
+		// Global policy key: from_zone=0, to_zone=0
+		if err := m.SetZonePairPolicy(0, 0, ps); err != nil {
+			return fmt.Errorf("set global policy: %w", err)
+		}
+		writtenPolicySets[ZonePairKey{FromZone: 0, ToZone: 0}] = true
+
+		for i, er := range expanded {
+			pol := er.pol
+			rule := PolicyRule{
+				RuleID:      uint32(policySetID*MaxRulesPerPolicy + uint32(i)),
+				PolicySetID: policySetID,
+				Sequence:    uint16(i),
+				AppID:       er.appID,
+				Active:      1,
+			}
+
+			switch pol.Action {
+			case config.PolicyPermit:
+				rule.Action = ActionPermit
+			case config.PolicyDeny:
+				rule.Action = ActionDeny
+			case config.PolicyReject:
+				rule.Action = ActionReject
+			}
+
+			if pol.Log != nil {
+				if pol.Log.SessionInit {
+					rule.Log |= LogFlagSessionInit
+				}
+				if pol.Log.SessionClose {
+					rule.Log |= LogFlagSessionClose
+				}
+			}
+
+			srcID, err := m.resolveAddrList(pol.Match.SourceAddresses, result)
+			if err != nil {
+				return fmt.Errorf("global policy %s source address: %w", pol.Name, err)
+			}
+			rule.SrcAddrID = srcID
+
+			dstID, err := m.resolveAddrList(pol.Match.DestinationAddresses, result)
+			if err != nil {
+				return fmt.Errorf("global policy %s destination address: %w", pol.Name, err)
+			}
+			rule.DstAddrID = dstID
+
+			if err := m.SetPolicyRule(policySetID, uint32(i), rule); err != nil {
+				return fmt.Errorf("set global policy rule %s[%d]: %w", pol.Name, i, err)
+			}
+
+			slog.Debug("global policy rule compiled",
+				"policy", pol.Name, "action", rule.Action,
+				"index", i, "app_id", er.appID)
+		}
+
+		result.PolicySets++
+		policySetID++
+	}
+
 	// Delete stale zone-pair policy entries no longer in the config.
 	m.DeleteStaleZonePairPolicies(writtenPolicySets)
 

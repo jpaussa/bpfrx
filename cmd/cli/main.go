@@ -450,6 +450,9 @@ func (c *ctl) handleShow(args []string) error {
 		if len(args) >= 2 && args[1] == "summary" {
 			return c.showText("route-summary")
 		}
+		if len(args) >= 3 && args[1] == "instance" {
+			return c.showTextFiltered("route-instance", args[2])
+		}
 		return c.showRoutes()
 
 	case "security":

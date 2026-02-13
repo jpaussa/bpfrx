@@ -160,6 +160,15 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 					}},
 				}},
 			}},
+			"global": {children: map[string]*schemaNode{
+				"policy": {args: 1, children: map[string]*schemaNode{
+					"description": {args: 1, children: nil},
+					"match":       {children: nil},
+					"then": {children: map[string]*schemaNode{
+						"log": {children: nil},
+					}},
+				}},
+			}},
 		}},
 		"screen": {children: map[string]*schemaNode{
 			"ids-option": {args: 1, valueHint: ValueHintScreenProfile, children: map[string]*schemaNode{

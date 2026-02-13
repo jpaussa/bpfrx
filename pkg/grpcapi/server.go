@@ -469,6 +469,48 @@ func (s *Server) GetPolicies(_ context.Context, _ *pb.GetPoliciesRequest) (*pb.G
 		}
 		resp.Policies = append(resp.Policies, pi)
 	}
+
+	// Global policies
+	if len(cfg.Security.GlobalPolicies) > 0 {
+		pi := &pb.PolicyInfo{
+			FromZone: "*",
+			ToZone:   "*",
+		}
+		for _, rule := range cfg.Security.GlobalPolicies {
+			pr := &pb.PolicyRule{
+				Name:         rule.Name,
+				Description:  rule.Description,
+				Action:       policyActionStr(rule.Action),
+				SrcAddresses: rule.Match.SourceAddresses,
+				DstAddresses: rule.Match.DestinationAddresses,
+				Applications: rule.Match.Applications,
+				Log:          rule.Log != nil,
+				Count:        rule.Count,
+			}
+			if pr.SrcAddresses == nil {
+				pr.SrcAddresses = []string{}
+			}
+			if pr.DstAddresses == nil {
+				pr.DstAddresses = []string{}
+			}
+			if pr.Applications == nil {
+				pr.Applications = []string{}
+			}
+			if s.dp != nil && s.dp.IsLoaded() {
+				if ctrs, err := s.dp.ReadPolicyCounters(policyID); err == nil {
+					pr.HitPackets = ctrs.Packets
+					pr.HitBytes = ctrs.Bytes
+				}
+			}
+			policyID++
+			pi.Rules = append(pi.Rules, pr)
+		}
+		if pi.Rules == nil {
+			pi.Rules = []*pb.PolicyRule{}
+		}
+		resp.Policies = append(resp.Policies, pi)
+	}
+
 	return resp, nil
 }
 
@@ -3849,6 +3891,46 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 				}
 				buf.WriteString("\n")
 			}
+		}
+
+	case "route-instance":
+		instanceName := req.Filter
+		if instanceName == "" {
+			buf.WriteString("Usage: show route instance <name>\n")
+			break
+		}
+		if cfg == nil {
+			buf.WriteString("No active configuration\n")
+			break
+		}
+		var tableID int
+		found := false
+		for _, ri := range cfg.RoutingInstances {
+			if ri.Name == instanceName {
+				tableID = ri.TableID
+				found = true
+				break
+			}
+		}
+		if !found {
+			fmt.Fprintf(&buf, "Routing instance %q not found\n", instanceName)
+			break
+		}
+		if s.routing != nil {
+			entries, err := s.routing.GetRoutesForTable(tableID)
+			if err != nil {
+				fmt.Fprintf(&buf, "Error: %v\n", err)
+				break
+			}
+			fmt.Fprintf(&buf, "Routing table for instance %s (table %d):\n", instanceName, tableID)
+			fmt.Fprintf(&buf, "  %-24s %-20s %-14s %-12s %s\n",
+				"Destination", "Next-hop", "Interface", "Proto", "Pref")
+			for _, e := range entries {
+				fmt.Fprintf(&buf, "  %-24s %-20s %-14s %-12s %d\n",
+					e.Destination, e.NextHop, e.Interface, e.Protocol, e.Preference)
+			}
+		} else {
+			buf.WriteString("Routing manager not available\n")
 		}
 
 	case "login":
