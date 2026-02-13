@@ -965,6 +965,9 @@ func (c *CLI) handleShow(args []string) error {
 	case "routing-options":
 		return c.showRoutingOptions()
 
+	case "routing-instances":
+		return c.showRoutingInstances()
+
 	case "forwarding-options":
 		return c.showForwardingOptions()
 
@@ -6034,6 +6037,32 @@ func (c *CLI) showRoutingOptions() error {
 
 	if !hasContent {
 		fmt.Println("No routing-options configured")
+	}
+	return nil
+}
+
+func (c *CLI) showRoutingInstances() error {
+	cfg := c.store.ActiveConfig()
+	if cfg == nil {
+		fmt.Println("No active configuration")
+		return nil
+	}
+	if len(cfg.RoutingInstances) == 0 {
+		fmt.Println("No routing instances configured")
+		return nil
+	}
+
+	fmt.Printf("%-20s %-16s %-6s %s\n", "Instance", "Type", "Table", "Interfaces")
+	for _, ri := range cfg.RoutingInstances {
+		tableID := "-"
+		if ri.TableID > 0 {
+			tableID = fmt.Sprintf("%d", ri.TableID)
+		}
+		ifaces := "-"
+		if len(ri.Interfaces) > 0 {
+			ifaces = strings.Join(ri.Interfaces, ", ")
+		}
+		fmt.Printf("%-20s %-16s %-6s %s\n", ri.Name, ri.InstanceType, tableID, ifaces)
 	}
 	return nil
 }

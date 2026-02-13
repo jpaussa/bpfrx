@@ -3066,6 +3066,20 @@ func compileSystem(node *Node, sys *SystemConfig) error {
 			if len(child.Keys) >= 2 {
 				sys.HostName = child.Keys[1]
 			}
+		case "domain-name":
+			if len(child.Keys) >= 2 {
+				sys.DomainName = child.Keys[1]
+			}
+		case "domain-search":
+			// Block: domain-search { dom1; dom2; } or leaf: domain-search dom
+			if len(child.Keys) >= 2 {
+				sys.DomainSearch = append(sys.DomainSearch, child.Keys[1])
+			}
+			for _, d := range child.Children {
+				if len(d.Keys) >= 1 {
+					sys.DomainSearch = append(sys.DomainSearch, d.Keys[0])
+				}
+			}
 		case "time-zone":
 			if len(child.Keys) >= 2 {
 				sys.TimeZone = child.Keys[1]

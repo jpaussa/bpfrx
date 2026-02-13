@@ -6890,3 +6890,58 @@ interfaces {
 	}
 }
 
+func TestDomainNameAndSearch(t *testing.T) {
+	// Hierarchical form
+	input := `system {
+    host-name fw1;
+    domain-name example.com;
+    domain-search {
+        corp.example.com;
+        dev.example.com;
+    }
+}`
+	p := NewParser(input)
+	tree, errs := p.Parse()
+	if errs != nil {
+		t.Fatal(errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.System.DomainName != "example.com" {
+		t.Errorf("DomainName = %q, want example.com", cfg.System.DomainName)
+	}
+	if len(cfg.System.DomainSearch) != 2 {
+		t.Fatalf("DomainSearch len = %d, want 2", len(cfg.System.DomainSearch))
+	}
+	if cfg.System.DomainSearch[0] != "corp.example.com" {
+		t.Errorf("DomainSearch[0] = %q, want corp.example.com", cfg.System.DomainSearch[0])
+	}
+	if cfg.System.DomainSearch[1] != "dev.example.com" {
+		t.Errorf("DomainSearch[1] = %q, want dev.example.com", cfg.System.DomainSearch[1])
+	}
+
+	// Flat set form
+	tree2 := &ConfigTree{}
+	for _, cmd := range []string{
+		"set system domain-name example.org",
+		"set system domain-search corp.example.org",
+		"set system domain-search dev.example.org",
+	} {
+		if err := tree2.SetPath(strings.Fields(cmd)[1:]); err != nil {
+			t.Fatalf("SetPath(%q): %v", cmd, err)
+		}
+	}
+	cfg2, err2 := CompileConfig(tree2)
+	if err2 != nil {
+		t.Fatal(err2)
+	}
+	if cfg2.System.DomainName != "example.org" {
+		t.Errorf("flat: DomainName = %q, want example.org", cfg2.System.DomainName)
+	}
+	if len(cfg2.System.DomainSearch) != 2 {
+		t.Fatalf("flat: DomainSearch len = %d, want 2", len(cfg2.System.DomainSearch))
+	}
+}
+

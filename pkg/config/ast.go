@@ -647,6 +647,8 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 	}},
 	"system": {children: map[string]*schemaNode{
 		"host-name":     {args: 1, children: nil},
+		"domain-name":   {args: 1, children: nil},
+		"domain-search": {args: 1, children: nil},
 		"time-zone":     {args: 1, children: nil},
 		"no-redirects":  {children: nil},
 		"name-server":   {children: nil},

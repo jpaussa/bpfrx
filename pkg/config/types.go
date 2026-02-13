@@ -110,6 +110,8 @@ type SchedulerConfig struct {
 // SystemConfig holds system-level configuration.
 type SystemConfig struct {
 	HostName           string
+	DomainName         string   // system domain-name (e.g. "example.com")
+	DomainSearch       []string // system domain-search (search domains)
 	TimeZone           string
 	NameServers        []string // DNS server addresses
 	NTPServers         []string // NTP server addresses
