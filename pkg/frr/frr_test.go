@@ -106,6 +106,18 @@ func TestGenerateStaticRoute_InterfaceOnly(t *testing.T) {
 	}
 }
 
+func TestGenerateStaticRoute_NextTable(t *testing.T) {
+	m := New()
+	sr := &config.StaticRoute{
+		Destination: "0.0.0.0/0",
+		NextTable:   "Comcast-GigabitPro",
+	}
+	got := m.generateStaticRoute(sr, "")
+	if got != "" {
+		t.Errorf("next-table route should produce empty FRR output, got %q", got)
+	}
+}
+
 func TestGenerateProtocols_OSPF(t *testing.T) {
 	m := New()
 	ospf := &config.OSPFConfig{

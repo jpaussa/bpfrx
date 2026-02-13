@@ -560,6 +560,14 @@ func (s *Server) routesHandler(w http.ResponseWriter, _ *http.Request) {
 
 	var result []RouteInfo
 	for _, r := range cfg.RoutingOptions.StaticRoutes {
+		if r.NextTable != "" {
+			result = append(result, RouteInfo{
+				Destination: r.Destination,
+				NextTable:   r.NextTable,
+				Preference:  r.Preference,
+			})
+			continue
+		}
 		if r.Discard || len(r.NextHops) == 0 {
 			result = append(result, RouteInfo{
 				Destination: r.Destination,

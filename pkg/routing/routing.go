@@ -526,3 +526,84 @@ func rtProtoName(p netlink.RouteProtocol) string {
 		return strconv.Itoa(pi)
 	}
 }
+
+// nextTableRulePriority is the base priority for next-table ip rules.
+// Lower values = higher priority. We use 100-199 range for next-table rules.
+const nextTableRulePriority = 100
+
+// ApplyNextTableRules creates Linux policy routing rules (ip rule) for
+// static routes with next-table directives. This implements inter-VRF
+// route leaking: "route X/Y next-table Instance.inet.0" means traffic
+// to X/Y should be looked up in Instance's routing table.
+func (m *Manager) ApplyNextTableRules(routes []*config.StaticRoute, instances []*config.RoutingInstanceConfig) error {
+	// Build instance name → table ID map
+	tableIDs := make(map[string]int)
+	for _, inst := range instances {
+		tableIDs[inst.Name] = inst.TableID
+	}
+
+	// Clean up old next-table rules (priority range 100-199)
+	if err := m.clearNextTableRules(); err != nil {
+		slog.Warn("failed to clear old next-table rules", "err", err)
+	}
+
+	prio := nextTableRulePriority
+	for _, sr := range routes {
+		if sr.NextTable == "" {
+			continue
+		}
+		tableID, ok := tableIDs[sr.NextTable]
+		if !ok {
+			slog.Warn("next-table references unknown routing instance",
+				"destination", sr.Destination, "instance", sr.NextTable)
+			continue
+		}
+
+		_, dst, err := net.ParseCIDR(sr.Destination)
+		if err != nil {
+			slog.Warn("invalid next-table destination", "destination", sr.Destination, "err", err)
+			continue
+		}
+
+		family := unix.AF_INET
+		if dst.IP.To4() == nil {
+			family = unix.AF_INET6
+		}
+
+		rule := netlink.NewRule()
+		rule.Dst = dst
+		rule.Table = tableID
+		rule.Priority = prio
+		rule.Family = family
+
+		if err := m.nlHandle.RuleAdd(rule); err != nil {
+			slog.Warn("failed to add next-table rule",
+				"destination", sr.Destination, "instance", sr.NextTable,
+				"table", tableID, "err", err)
+			continue
+		}
+		slog.Info("next-table rule added",
+			"destination", sr.Destination, "instance", sr.NextTable, "table", tableID)
+		prio++
+	}
+	return nil
+}
+
+// clearNextTableRules removes all ip rules in the next-table priority range.
+func (m *Manager) clearNextTableRules() error {
+	for _, family := range []int{unix.AF_INET, unix.AF_INET6} {
+		rules, err := m.nlHandle.RuleList(family)
+		if err != nil {
+			continue
+		}
+		for _, r := range rules {
+			if r.Priority >= nextTableRulePriority && r.Priority < nextTableRulePriority+100 {
+				if err := m.nlHandle.RuleDel(&r); err != nil {
+					slog.Debug("failed to delete stale next-table rule",
+						"priority", r.Priority, "err", err)
+				}
+			}
+		}
+	}
+	return nil
+}

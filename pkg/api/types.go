@@ -164,6 +164,7 @@ type RouteInfo struct {
 	NextHop     string `json:"next_hop,omitempty"`
 	Interface   string `json:"interface,omitempty"`
 	Preference  int    `json:"preference,omitempty"`
+	NextTable   string `json:"next_table,omitempty"`
 }
 
 // ScreenInfo holds screen profile information.

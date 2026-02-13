@@ -958,6 +958,87 @@ func TestECMPStaticRoutes(t *testing.T) {
 	}
 }
 
+func TestNextTableStaticRoutes(t *testing.T) {
+	// Test flat set syntax with next-table
+	tree := &ConfigTree{}
+	setCommands := []string{
+		"set routing-options static route 0.0.0.0/0 next-table Comcast-GigabitPro.inet.0",
+		"set routing-options static route 10.1.10.0/24 next-hop 50.247.115.22",
+	}
+	for _, cmd := range setCommands {
+		fields := strings.Fields(cmd)
+		if err := tree.SetPath(fields[1:]); err != nil {
+			t.Fatalf("SetPath(%q): %v", cmd, err)
+		}
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+
+	if len(cfg.RoutingOptions.StaticRoutes) != 2 {
+		t.Fatalf("expected 2 routes, got %d", len(cfg.RoutingOptions.StaticRoutes))
+	}
+
+	// next-table route
+	r0 := cfg.RoutingOptions.StaticRoutes[0]
+	if r0.Destination != "0.0.0.0/0" {
+		t.Errorf("route 0 dest: %s", r0.Destination)
+	}
+	if r0.NextTable != "Comcast-GigabitPro" {
+		t.Errorf("route 0 next-table: got %q, want %q", r0.NextTable, "Comcast-GigabitPro")
+	}
+	if len(r0.NextHops) != 0 {
+		t.Errorf("route 0 should have no next-hops, got %v", r0.NextHops)
+	}
+
+	// Regular next-hop route
+	r1 := cfg.RoutingOptions.StaticRoutes[1]
+	if r1.NextTable != "" {
+		t.Errorf("route 1 should have no next-table, got %q", r1.NextTable)
+	}
+	if len(r1.NextHops) != 1 || r1.NextHops[0].Address != "50.247.115.22" {
+		t.Errorf("route 1 next-hops: %v", r1.NextHops)
+	}
+
+	// Test hierarchical syntax with next-table
+	hierInput := `routing-options {
+    static {
+        route 0.0.0.0/0 {
+            next-table Comcast-GigabitPro.inet.0;
+        }
+    }
+    rib inet6.0 {
+        static {
+            route ::/0 next-table Comcast-GigabitPro.inet6.0;
+        }
+    }
+}`
+	parser := NewParser(hierInput)
+	hierTree, errs := parser.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	hierCfg, err := CompileConfig(hierTree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+
+	if len(hierCfg.RoutingOptions.StaticRoutes) != 1 {
+		t.Fatalf("expected 1 inet route, got %d", len(hierCfg.RoutingOptions.StaticRoutes))
+	}
+	if hierCfg.RoutingOptions.StaticRoutes[0].NextTable != "Comcast-GigabitPro" {
+		t.Errorf("inet next-table: got %q", hierCfg.RoutingOptions.StaticRoutes[0].NextTable)
+	}
+
+	if len(hierCfg.RoutingOptions.Inet6StaticRoutes) != 1 {
+		t.Fatalf("expected 1 inet6 route, got %d", len(hierCfg.RoutingOptions.Inet6StaticRoutes))
+	}
+	if hierCfg.RoutingOptions.Inet6StaticRoutes[0].NextTable != "Comcast-GigabitPro" {
+		t.Errorf("inet6 next-table: got %q", hierCfg.RoutingOptions.Inet6StaticRoutes[0].NextTable)
+	}
+}
+
 func TestSyslogSeverityParsing(t *testing.T) {
 	tree := &ConfigTree{}
 	setCommands := []string{

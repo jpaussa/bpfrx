@@ -884,6 +884,7 @@ type StaticRoute struct {
 	NextHops    []NextHopEntry // multiple next-hops = ECMP
 	Discard     bool           // null route (blackhole)
 	Preference  int            // route preference (admin distance), default 5
+	NextTable   string         // routing instance name for inter-VRF route leaking (e.g. "Comcast.inet.0" → "Comcast")
 }
 
 // ProtocolsConfig holds dynamic routing protocol configuration.

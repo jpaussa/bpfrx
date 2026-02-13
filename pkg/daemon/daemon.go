@@ -585,6 +585,15 @@ func (d *Daemon) applyConfig(cfg *config.Config) {
 		}
 	}
 
+	// 3b. Apply next-table policy routing rules (ip rule)
+	if d.routing != nil {
+		// Collect all static routes from main + per-rib
+		allRoutes := append(cfg.RoutingOptions.StaticRoutes, cfg.RoutingOptions.Inet6StaticRoutes...)
+		if err := d.routing.ApplyNextTableRules(allRoutes, cfg.RoutingInstances); err != nil {
+			slog.Warn("failed to apply next-table rules", "err", err)
+		}
+	}
+
 	// 4. Proactive neighbor resolution for all known next-hops/gateways.
 	// This ensures bpf_fib_lookup returns SUCCESS (with valid MACs)
 	// instead of NO_NEIGH for the first forwarded packet.

@@ -7026,6 +7026,10 @@ func (c *CLI) showRoutingOptions() error {
 				fmt.Printf("  %-24s %-20s %-6s %s\n", sr.Destination, "discard", fmtPref(sr.Preference), "")
 				continue
 			}
+			if sr.NextTable != "" {
+				fmt.Printf("  %-24s %-20s %-6s %s\n", sr.Destination, "next-table "+sr.NextTable, fmtPref(sr.Preference), "")
+				continue
+			}
 			for i, nh := range sr.NextHops {
 				dest := sr.Destination
 				if i > 0 {
@@ -7048,6 +7052,10 @@ func (c *CLI) showRoutingOptions() error {
 		for _, sr := range ro.Inet6StaticRoutes {
 			if sr.Discard {
 				fmt.Printf("  %-40s %-30s %-6s\n", sr.Destination, "discard", fmtPref(sr.Preference))
+				continue
+			}
+			if sr.NextTable != "" {
+				fmt.Printf("  %-40s %-30s %-6s\n", sr.Destination, "next-table "+sr.NextTable, fmtPref(sr.Preference))
 				continue
 			}
 			for i, nh := range sr.NextHops {

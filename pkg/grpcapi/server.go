@@ -3889,6 +3889,10 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 						fmt.Fprintf(&buf, "  %-24s %-20s %s\n", sr.Destination, "discard", fmtPref(sr.Preference))
 						continue
 					}
+					if sr.NextTable != "" {
+						fmt.Fprintf(&buf, "  %-24s %-20s %s\n", sr.Destination, "next-table "+sr.NextTable, fmtPref(sr.Preference))
+						continue
+					}
 					for i, nh := range sr.NextHops {
 						dest := sr.Destination
 						if i > 0 {
@@ -3910,6 +3914,10 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 				for _, sr := range ro.Inet6StaticRoutes {
 					if sr.Discard {
 						fmt.Fprintf(&buf, "  %-40s %-30s %s\n", sr.Destination, "discard", fmtPref(sr.Preference))
+						continue
+					}
+					if sr.NextTable != "" {
+						fmt.Fprintf(&buf, "  %-40s %-30s %s\n", sr.Destination, "next-table "+sr.NextTable, fmtPref(sr.Preference))
 						continue
 					}
 					for i, nh := range sr.NextHops {

@@ -310,7 +310,11 @@ func (m *Manager) ApplyFull(fc *FullConfig) error {
 
 // generateStaticRoute produces FRR static route commands.
 // Multiple next-hops produce one line each (FRR creates ECMP).
+// Routes with NextTable are handled via ip rule (policy routing), not FRR.
 func (m *Manager) generateStaticRoute(sr *config.StaticRoute, vrfName string) string {
+	if sr.NextTable != "" {
+		return "" // handled via ip rule in routing package
+	}
 	isV6 := strings.Contains(sr.Destination, ":")
 	prefix := "ip"
 	if isV6 {

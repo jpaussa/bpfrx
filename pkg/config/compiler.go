@@ -2039,8 +2039,10 @@ func compileStaticRoutes(staticNode *Node, existing []*StaticRoute) []*StaticRou
 						route.NextHops = append(route.NextHops, NextHopEntry{Address: routeInst.node.Keys[i]})
 					}
 				case "next-table":
-					// next-table is used for policy-based routing — store as discard with preference
-					i++ // skip the table name
+					if i+1 < len(routeInst.node.Keys) {
+						i++
+						route.NextTable = parseNextTableInstance(routeInst.node.Keys[i])
+					}
 				case "discard":
 					route.Discard = true
 				case "preference":
@@ -2089,6 +2091,10 @@ func compileStaticRoutes(staticNode *Node, existing []*StaticRoute) []*StaticRou
 					nh.Interface = nodeVal(ifNode)
 				}
 				route.NextHops = append(route.NextHops, nh)
+			case "next-table":
+				if v := nodeVal(prop); v != "" {
+					route.NextTable = parseNextTableInstance(v)
+				}
 			}
 		}
 
@@ -2102,12 +2108,25 @@ func compileStaticRoutes(staticNode *Node, existing []*StaticRoute) []*StaticRou
 			if route.Preference != 5 {
 				existingRoute.Preference = route.Preference
 			}
+			if route.NextTable != "" {
+				existingRoute.NextTable = route.NextTable
+			}
 		} else {
 			destIdx[route.Destination] = len(existing)
 			existing = append(existing, route)
 		}
 	}
 	return existing
+}
+
+// parseNextTableInstance extracts the routing instance name from a Junos
+// next-table value like "Comcast-GigabitPro.inet.0" → "Comcast-GigabitPro".
+func parseNextTableInstance(table string) string {
+	// Strip .inet.0 or .inet6.0 suffix to get the routing instance name
+	if idx := strings.Index(table, ".inet"); idx > 0 {
+		return table[:idx]
+	}
+	return table
 }
 
 func compileRouterAdvertisement(node *Node, proto *ProtocolsConfig) error {
