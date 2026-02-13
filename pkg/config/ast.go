@@ -170,21 +170,54 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 		}},
 		"nat": {children: map[string]*schemaNode{
 			"source": {children: map[string]*schemaNode{
-				"pool": {args: 1, valueHint: ValueHintPoolName, children: nil},
+				"pool":              {args: 1, valueHint: ValueHintPoolName, children: nil},
+				"address-persistent": {children: nil},
 				"rule-set": {args: 1, children: map[string]*schemaNode{
-					"rule": {args: 1, children: map[string]*schemaNode{
-						"match": {children: nil},
-						"then":  {children: nil},
+					"from": {children: map[string]*schemaNode{
+						"zone": {args: 1, valueHint: ValueHintZoneName, children: nil},
 					}},
-					// from zone <zone>, to zone <zone> → leaves
+					"to": {children: map[string]*schemaNode{
+						"zone": {args: 1, valueHint: ValueHintZoneName, children: nil},
+					}},
+					"rule": {args: 1, children: map[string]*schemaNode{
+						"match": {children: map[string]*schemaNode{
+							"source-address":      {args: 1, children: nil},
+							"destination-address":  {args: 1, children: nil},
+							"destination-port":     {args: 1, children: nil},
+							"application":          {args: 1, children: nil},
+						}},
+						"then": {children: map[string]*schemaNode{
+							"source-nat": {children: map[string]*schemaNode{
+								"interface": {children: nil},
+								"off":       {children: nil},
+								"pool":      {args: 1, valueHint: ValueHintPoolName, children: nil},
+							}},
+						}},
+					}},
 				}},
 			}},
 			"destination": {children: map[string]*schemaNode{
 				"pool": {args: 1, valueHint: ValueHintPoolName, children: nil},
 				"rule-set": {args: 1, children: map[string]*schemaNode{
+					"from": {children: map[string]*schemaNode{
+						"zone": {args: 1, valueHint: ValueHintZoneName, children: nil},
+					}},
+					"to": {children: map[string]*schemaNode{
+						"zone": {args: 1, valueHint: ValueHintZoneName, children: nil},
+					}},
 					"rule": {args: 1, children: map[string]*schemaNode{
-						"match": {children: nil},
-						"then":  {children: nil},
+						"match": {children: map[string]*schemaNode{
+							"source-address":       {args: 1, children: nil},
+							"destination-address":  {args: 1, children: nil},
+							"destination-port":     {args: 1, children: nil},
+							"protocol":             {args: 1, children: nil},
+							"application":          {args: 1, children: nil},
+						}},
+						"then": {children: map[string]*schemaNode{
+							"destination-nat": {children: map[string]*schemaNode{
+								"pool": {args: 1, valueHint: ValueHintPoolName, children: nil},
+							}},
+						}},
 					}},
 				}},
 			}},

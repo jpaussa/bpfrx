@@ -121,6 +121,7 @@ func (m *Manager) loadAllObjects() error {
 	m.maps["iface_filter_map"] = mainObjs.IfaceFilterMap
 	m.maps["filter_configs"] = mainObjs.FilterConfigs
 	m.maps["filter_rules"] = mainObjs.FilterRules
+	m.maps["filter_counters"] = mainObjs.FilterCounters
 	m.maps["redirect_capable"] = mainObjs.RedirectCapable
 	m.maps["cpu_map"] = mainObjs.CpuMap
 	m.maps["cpumap_available"] = mainObjs.CpumapAvailable
@@ -169,6 +170,7 @@ func (m *Manager) loadAllObjects() error {
 			"iface_filter_map":   mainObjs.IfaceFilterMap,
 			"filter_configs":     mainObjs.FilterConfigs,
 			"filter_rules":       mainObjs.FilterRules,
+			"filter_counters":    mainObjs.FilterCounters,
 			"redirect_capable":   mainObjs.RedirectCapable,
 			"cpu_map":            mainObjs.CpuMap,
 			"cpumap_available":   mainObjs.CpumapAvailable,

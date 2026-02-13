@@ -783,20 +783,32 @@ func compileNAT64(node *Node, sec *SecurityConfig) error {
 }
 
 // parseZoneList extracts zone names from a from/to node.
-// Handles bracket lists: Keys=["from","zone","A","B","C"] → ["A","B","C"]
-// Handles single: Keys=["from","zone","A"] → ["A"]
-// Handles hierarchical: child zone node with value → ["A"]
+// Handles multiple AST shapes:
+//   - Hierarchical bracket list: Keys=["from","zone","A","B","C"] → ["A","B","C"]
+//   - SetPath single: child zone node with value → ["A"]
+//   - SetPath multiple: multiple zone children → ["A","B"]
+//   - SetPath bracket-expanded: zone child with orphan leaf children → ["A","B"]
 func parseZoneList(node *Node) []string {
+	// Hierarchical: all zone names inline in Keys
 	if len(node.Keys) >= 3 && node.Keys[1] == "zone" {
 		return node.Keys[2:]
 	}
-	if zn := node.FindChild("zone"); zn != nil {
-		v := nodeVal(zn)
-		if v != "" {
-			return []string{v}
+	// SetPath: iterate all "zone" children (multiple set commands create siblings)
+	var zones []string
+	for _, child := range node.Children {
+		if child.Name() == "zone" {
+			if v := nodeVal(child); v != "" {
+				zones = append(zones, v)
+			}
+			// Also collect orphan leaf children (bracket-expanded extra zone names)
+			for _, grandchild := range child.Children {
+				if grandchild.IsLeaf && len(grandchild.Keys) >= 1 {
+					zones = append(zones, grandchild.Keys[0])
+				}
+			}
 		}
 	}
-	return nil
+	return zones
 }
 
 func compileNATSource(node *Node, sec *SecurityConfig) error {

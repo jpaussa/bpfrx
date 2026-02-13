@@ -25,6 +25,7 @@ type CompileResult struct {
 	AppIDs     map[string]uint32 // application name -> app ID
 	PoolIDs    map[string]uint8  // NAT pool name -> pool ID (0-based)
 	PolicySets int               // number of policy sets created
+	FilterIDs  map[string]uint32 // "inet:name" or "inet6:name" -> filter_id
 
 	nextAddrID       uint32            // next available address ID (after address book)
 	implicitSets     map[string]uint32 // cache of implicit set key -> set ID
@@ -1106,9 +1107,66 @@ func (m *Manager) compileNAT(cfg *config.Config, result *CompileResult) error {
 		}
 
 		for _, rule := range rs.Rules {
-			if !rule.Then.Interface && rule.Then.PoolName == "" {
+			if !rule.Then.Interface && rule.Then.PoolName == "" && !rule.Then.Off {
 				slog.Warn("SNAT rule has no action",
 					"rule", rule.Name, "rule-set", rs.Name)
+				continue
+			}
+
+			// source-nat off: write exemption rule (no pool allocation)
+			if rule.Then.Off {
+				srcAddrID, err := m.resolveSNATMatchAddr(rule.Match.SourceAddress, result)
+				if err != nil {
+					return fmt.Errorf("snat rule %s/%s source match: %w",
+						rs.Name, rule.Name, err)
+				}
+				dstAddrID, err := m.resolveSNATMatchAddr(rule.Match.DestinationAddress, result)
+				if err != nil {
+					return fmt.Errorf("snat rule %s/%s dest match: %w",
+						rs.Name, rule.Name, err)
+				}
+
+				zp := zonePairIdx{fromZone, toZone}
+				ruleKey := rs.Name + "/" + rule.Name
+				counterID := result.nextNATCounterID
+				result.NATCounterIDs[ruleKey] = counterID
+				result.nextNATCounterID++
+
+				// Write v4 rule
+				val := SNATValue{
+					Mode:      SNATModeOff,
+					SrcAddrID: srcAddrID,
+					DstAddrID: dstAddrID,
+					CounterID: counterID,
+				}
+				ri := v4RuleIdx[zp]
+				if err := m.SetSNATRule(fromZone, toZone, ri, val); err != nil {
+					return fmt.Errorf("set snat off rule %s/%s: %w",
+						rs.Name, rule.Name, err)
+				}
+				writtenSNAT[SNATKey{FromZone: fromZone, ToZone: toZone, RuleIdx: ri}] = true
+				v4RuleIdx[zp] = ri + 1
+
+				// Write v6 rule
+				val6 := SNATValueV6{
+					Mode:      SNATModeOff,
+					SrcAddrID: srcAddrID,
+					DstAddrID: dstAddrID,
+					CounterID: counterID,
+				}
+				ri6 := v6RuleIdx[zp]
+				if err := m.SetSNATRuleV6(fromZone, toZone, ri6, val6); err != nil {
+					return fmt.Errorf("set snat_v6 off rule %s/%s: %w",
+						rs.Name, rule.Name, err)
+				}
+				writtenSNATv6[SNATKey{FromZone: fromZone, ToZone: toZone, RuleIdx: ri6}] = true
+				v6RuleIdx[zp] = ri6 + 1
+
+				slog.Info("source NAT off rule compiled",
+					"rule-set", rs.Name, "rule", rule.Name,
+					"from", rs.FromZone, "to", rs.ToZone,
+					"counter_id", counterID,
+					"src_addr_id", srcAddrID, "dst_addr_id", dstAddrID)
 				continue
 			}
 
@@ -1855,8 +1913,14 @@ func (m *Manager) compileFirewallFilters(cfg *config.Config, result *CompileResu
 	ruleIdx := uint32(0)
 	filterIDs := make(map[string]uint32) // "inet:name" or "inet6:name" -> filter_id
 
-	// Compile inet filters
-	for name, filter := range cfg.Firewall.FiltersInet {
+	// Compile inet filters (sorted for deterministic IDs)
+	inetNames := make([]string, 0, len(cfg.Firewall.FiltersInet))
+	for name := range cfg.Firewall.FiltersInet {
+		inetNames = append(inetNames, name)
+	}
+	sort.Strings(inetNames)
+	for _, name := range inetNames {
+		filter := cfg.Firewall.FiltersInet[name]
 		if filterID >= MaxFilterConfigs || ruleIdx >= MaxFilterRules {
 			slog.Warn("firewall filter limit reached", "filter", name)
 			break
@@ -1889,8 +1953,14 @@ func (m *Manager) compileFirewallFilters(cfg *config.Config, result *CompileResu
 		filterID++
 	}
 
-	// Compile inet6 filters
-	for name, filter := range cfg.Firewall.FiltersInet6 {
+	// Compile inet6 filters (sorted for deterministic IDs)
+	inet6Names := make([]string, 0, len(cfg.Firewall.FiltersInet6))
+	for name := range cfg.Firewall.FiltersInet6 {
+		inet6Names = append(inet6Names, name)
+	}
+	sort.Strings(inet6Names)
+	for _, name := range inet6Names {
+		filter := cfg.Firewall.FiltersInet6[name]
 		if filterID >= MaxFilterConfigs || ruleIdx >= MaxFilterRules {
 			slog.Warn("firewall filter limit reached", "filter", name)
 			break
@@ -2005,6 +2075,7 @@ func (m *Manager) compileFirewallFilters(cfg *config.Config, result *CompileResu
 	m.DeleteStaleIfaceFilter(writtenIfaceFilter)
 	m.ZeroStaleFilterConfigs(filterID)
 
+	result.FilterIDs = filterIDs
 	return nil
 }
 

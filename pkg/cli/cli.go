@@ -3727,9 +3727,37 @@ func (c *CLI) showFirewallFilters() error {
 		return nil
 	}
 
-	showFilters := func(family string, filters map[string]*config.FirewallFilter) {
-		for name, f := range filters {
+	if len(cfg.Firewall.FiltersInet) == 0 && len(cfg.Firewall.FiltersInet6) == 0 {
+		fmt.Println("No firewall filters configured")
+		return nil
+	}
+
+	// Look up filter IDs from compile result for counter display
+	var filterIDs map[string]uint32
+	if c.dp != nil && c.dp.IsLoaded() {
+		if cr := c.dp.LastCompileResult(); cr != nil {
+			filterIDs = cr.FilterIDs
+		}
+	}
+
+	showFilters := func(family string, filters map[string]*config.FirewallFilter, names []string) {
+		for _, name := range names {
+			f := filters[name]
 			fmt.Printf("Filter: %s (family %s)\n", name, family)
+
+			// Get filter config for counter lookup
+			var ruleStart uint32
+			var hasCounters bool
+			if filterIDs != nil {
+				if fid, ok := filterIDs[family+":"+name]; ok {
+					if fcfg, err := c.dp.ReadFilterConfig(fid); err == nil {
+						ruleStart = fcfg.RuleStart
+						hasCounters = true
+					}
+				}
+			}
+
+			ruleOffset := ruleStart
 			for _, term := range f.Terms {
 				fmt.Printf("  Term: %s\n", term.Name)
 				if term.DSCP != "" {
@@ -3764,18 +3792,48 @@ func (c *CLI) showFirewallFilters() error {
 					fmt.Printf("    then log\n")
 				}
 				fmt.Printf("    then %s\n", action)
+
+				// Sum counters across all expanded BPF rules for this term
+				if hasCounters {
+					nSrc := len(term.SourceAddresses)
+					if nSrc == 0 {
+						nSrc = 1
+					}
+					nDst := len(term.DestAddresses)
+					if nDst == 0 {
+						nDst = 1
+					}
+					numRules := uint32(nSrc * nDst)
+					var totalPkts, totalBytes uint64
+					for i := uint32(0); i < numRules; i++ {
+						if ctrs, err := c.dp.ReadFilterCounters(ruleOffset + i); err == nil {
+							totalPkts += ctrs.Packets
+							totalBytes += ctrs.Bytes
+						}
+					}
+					fmt.Printf("    Hit count: %d packets, %d bytes\n", totalPkts, totalBytes)
+					ruleOffset += numRules
+				}
 			}
 			fmt.Println()
 		}
 	}
 
-	if len(cfg.Firewall.FiltersInet) == 0 && len(cfg.Firewall.FiltersInet6) == 0 {
-		fmt.Println("No firewall filters configured")
-		return nil
+	// Sort filter names for deterministic output (matches compiler order)
+	inetNames := make([]string, 0, len(cfg.Firewall.FiltersInet))
+	for name := range cfg.Firewall.FiltersInet {
+		inetNames = append(inetNames, name)
 	}
+	sort.Strings(inetNames)
 
-	showFilters("inet", cfg.Firewall.FiltersInet)
-	showFilters("inet6", cfg.Firewall.FiltersInet6)
+	inet6Names := make([]string, 0, len(cfg.Firewall.FiltersInet6))
+	for name := range cfg.Firewall.FiltersInet6 {
+		inet6Names = append(inet6Names, name)
+	}
+	sort.Strings(inet6Names)
+
+	showFilters("inet", cfg.Firewall.FiltersInet, inetNames)
+	showFilters("inet6", cfg.Firewall.FiltersInet6, inet6Names)
 	return nil
 }
 

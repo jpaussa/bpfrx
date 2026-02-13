@@ -474,6 +474,24 @@ func (m *Manager) ReadPolicyCounters(policyID uint32) (CounterValue, error) {
 	return total, nil
 }
 
+// ReadFilterCounters reads the per-CPU firewall filter counter values and sums them.
+func (m *Manager) ReadFilterCounters(ruleIdx uint32) (CounterValue, error) {
+	zm, ok := m.maps["filter_counters"]
+	if !ok {
+		return CounterValue{}, fmt.Errorf("filter_counters map not found")
+	}
+	var perCPU []CounterValue
+	if err := zm.Lookup(ruleIdx, &perCPU); err != nil {
+		return CounterValue{}, err
+	}
+	var total CounterValue
+	for _, v := range perCPU {
+		total.Packets += v.Packets
+		total.Bytes += v.Bytes
+	}
+	return total, nil
+}
+
 // SetDefaultPolicy writes the global default policy action (0=deny, 1=permit).
 func (m *Manager) SetDefaultPolicy(action uint8) error {
 	zm, ok := m.maps["default_policy"]
@@ -814,6 +832,19 @@ func (m *Manager) SetFilterConfig(filterID uint32, cfg FilterConfig) error {
 		return fmt.Errorf("filter_configs not found")
 	}
 	return zm.Update(filterID, cfg, ebpf.UpdateAny)
+}
+
+// ReadFilterConfig reads a filter config entry.
+func (m *Manager) ReadFilterConfig(filterID uint32) (FilterConfig, error) {
+	zm, ok := m.maps["filter_configs"]
+	if !ok {
+		return FilterConfig{}, fmt.Errorf("filter_configs not found")
+	}
+	var cfg FilterConfig
+	if err := zm.Lookup(filterID, &cfg); err != nil {
+		return FilterConfig{}, err
+	}
+	return cfg, nil
 }
 
 // SetFilterRule writes a filter rule entry.

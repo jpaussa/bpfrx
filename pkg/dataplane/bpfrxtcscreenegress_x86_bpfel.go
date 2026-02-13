@@ -513,6 +513,7 @@ type bpfrxTcScreenEgressMapSpecs struct {
 	Events            *ebpf.MapSpec `ebpf:"events"`
 	FibGenMap         *ebpf.MapSpec `ebpf:"fib_gen_map"`
 	FilterConfigs     *ebpf.MapSpec `ebpf:"filter_configs"`
+	FilterCounters    *ebpf.MapSpec `ebpf:"filter_counters"`
 	FilterRules       *ebpf.MapSpec `ebpf:"filter_rules"`
 	FloodCounters     *ebpf.MapSpec `ebpf:"flood_counters"`
 	FlowConfigMap     *ebpf.MapSpec `ebpf:"flow_config_map"`
@@ -585,6 +586,7 @@ type bpfrxTcScreenEgressMaps struct {
 	Events            *ebpf.Map `ebpf:"events"`
 	FibGenMap         *ebpf.Map `ebpf:"fib_gen_map"`
 	FilterConfigs     *ebpf.Map `ebpf:"filter_configs"`
+	FilterCounters    *ebpf.Map `ebpf:"filter_counters"`
 	FilterRules       *ebpf.Map `ebpf:"filter_rules"`
 	FloodCounters     *ebpf.Map `ebpf:"flood_counters"`
 	FlowConfigMap     *ebpf.Map `ebpf:"flow_config_map"`
@@ -633,6 +635,7 @@ func (m *bpfrxTcScreenEgressMaps) Close() error {
 		m.Events,
 		m.FibGenMap,
 		m.FilterConfigs,
+		m.FilterCounters,
 		m.FilterRules,
 		m.FloodCounters,
 		m.FlowConfigMap,

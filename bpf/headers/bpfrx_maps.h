@@ -634,4 +634,12 @@ struct {
 	__type(value, struct filter_rule);
 } filter_rules SEC(".maps");
 
+/* Per-rule filter counters: indexed by rule_start + i */
+struct {
+	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+	__uint(max_entries, MAX_FILTER_RULES);
+	__type(key, __u32);
+	__type(value, struct counter_value);
+} filter_counters SEC(".maps");
+
 #endif /* __BPFRX_MAPS_H__ */

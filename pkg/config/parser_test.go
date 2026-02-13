@@ -4831,3 +4831,287 @@ security {
 	}
 }
 
+func TestNATMultiZoneBracketList(t *testing.T) {
+	input := `security {
+    nat {
+        source {
+            rule-set multi-zone-snat {
+                from zone [ guest lan dmz ];
+                to zone [ Internet-ATT Internet-BCI ];
+                rule catch-all {
+                    match {
+                        source-address 0.0.0.0/0;
+                        destination-address 0.0.0.0/0;
+                    }
+                    then {
+                        source-nat {
+                            interface;
+                        }
+                    }
+                }
+            }
+        }
+        destination {
+            pool web-server {
+                address 10.0.1.100/32 port 80;
+            }
+            rule-set multi-zone-dnat {
+                from zone [ Internet-ATT Internet-BCI ];
+                rule http-in {
+                    match {
+                        destination-address 1.2.3.4/32;
+                        destination-port 80;
+                    }
+                    then {
+                        destination-nat {
+                            pool {
+                                web-server;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}`
+	parser := NewParser(input)
+	tree, errs := parser.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	// Source NAT: 3 from-zones × 2 to-zones = 6 expanded rule-sets
+	if len(cfg.Security.NAT.Source) != 6 {
+		t.Fatalf("got %d source rule-sets, want 6 (3×2 Cartesian)", len(cfg.Security.NAT.Source))
+	}
+
+	// Verify all zone combinations are present
+	zonePairs := make(map[string]bool)
+	for _, rs := range cfg.Security.NAT.Source {
+		zonePairs[rs.FromZone+"->"+rs.ToZone] = true
+		if len(rs.Rules) != 1 || rs.Rules[0].Name != "catch-all" {
+			t.Errorf("rule-set %s->%s: expected 1 rule 'catch-all', got %d",
+				rs.FromZone, rs.ToZone, len(rs.Rules))
+		}
+	}
+	for _, pair := range []string{
+		"guest->Internet-ATT", "guest->Internet-BCI",
+		"lan->Internet-ATT", "lan->Internet-BCI",
+		"dmz->Internet-ATT", "dmz->Internet-BCI",
+	} {
+		if !zonePairs[pair] {
+			t.Errorf("missing zone pair: %s", pair)
+		}
+	}
+
+	// Destination NAT: 2 from-zones × 1 to-zone (empty) = 2 expanded rule-sets
+	if cfg.Security.NAT.Destination == nil {
+		t.Fatal("no destination NAT config")
+	}
+	if len(cfg.Security.NAT.Destination.RuleSets) != 2 {
+		t.Fatalf("got %d DNAT rule-sets, want 2", len(cfg.Security.NAT.Destination.RuleSets))
+	}
+	dnatZones := make(map[string]bool)
+	for _, rs := range cfg.Security.NAT.Destination.RuleSets {
+		dnatZones[rs.FromZone] = true
+	}
+	if !dnatZones["Internet-ATT"] || !dnatZones["Internet-BCI"] {
+		t.Errorf("DNAT from zones = %v, want Internet-ATT + Internet-BCI", dnatZones)
+	}
+}
+
+func TestNATMultiZoneSetSyntax(t *testing.T) {
+	tree := &ConfigTree{}
+	for _, cmd := range []string{
+		"set security nat source rule-set internal-to-internet from zone [ guest lan ]",
+		"set security nat source rule-set internal-to-internet to zone Internet-ATT",
+		"set security nat source rule-set internal-to-internet rule catch-all match source-address 0.0.0.0/0",
+		"set security nat source rule-set internal-to-internet rule catch-all then source-nat interface",
+	} {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%q): %v", cmd, err)
+		}
+	}
+
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+
+	// 2 from-zones × 1 to-zone = 2 expanded rule-sets
+	if len(cfg.Security.NAT.Source) != 2 {
+		t.Fatalf("got %d source rule-sets, want 2", len(cfg.Security.NAT.Source))
+	}
+	zones := make(map[string]bool)
+	for _, rs := range cfg.Security.NAT.Source {
+		zones[rs.FromZone] = true
+		if rs.ToZone != "Internet-ATT" {
+			t.Errorf("to-zone = %q, want Internet-ATT", rs.ToZone)
+		}
+	}
+	if !zones["guest"] || !zones["lan"] {
+		t.Errorf("from zones = %v, want guest + lan", zones)
+	}
+}
+
+func TestNATSourceOff(t *testing.T) {
+	input := `security {
+    nat {
+        source {
+            rule-set exempt {
+                from zone internal;
+                to zone Internet;
+                rule no-nat {
+                    match {
+                        source-address 192.203.228.0/24;
+                        destination-address 0.0.0.0/0;
+                    }
+                    then {
+                        source-nat {
+                            off;
+                        }
+                    }
+                }
+                rule catch-all {
+                    match {
+                        source-address 0.0.0.0/0;
+                    }
+                    then {
+                        source-nat {
+                            interface;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}`
+	parser := NewParser(input)
+	tree, errs := parser.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+	if len(cfg.Security.NAT.Source) != 1 {
+		t.Fatalf("got %d source rule-sets, want 1", len(cfg.Security.NAT.Source))
+	}
+	rs := cfg.Security.NAT.Source[0]
+	if len(rs.Rules) != 2 {
+		t.Fatalf("got %d rules, want 2", len(rs.Rules))
+	}
+
+	// First rule: source-nat off
+	r0 := rs.Rules[0]
+	if r0.Name != "no-nat" {
+		t.Errorf("rule[0] name = %q, want no-nat", r0.Name)
+	}
+	if !r0.Then.Off {
+		t.Error("rule[0] should have Then.Off = true")
+	}
+	if r0.Then.Interface {
+		t.Error("rule[0] should NOT have Then.Interface")
+	}
+
+	// Second rule: source-nat interface
+	r1 := rs.Rules[1]
+	if !r1.Then.Interface {
+		t.Error("rule[1] should have Then.Interface = true")
+	}
+	if r1.Then.Off {
+		t.Error("rule[1] should NOT have Then.Off")
+	}
+}
+
+func TestNATSourceOffSetSyntax(t *testing.T) {
+	tree := &ConfigTree{}
+	for _, cmd := range []string{
+		"set security nat source rule-set exempt from zone internal",
+		"set security nat source rule-set exempt to zone Internet",
+		"set security nat source rule-set exempt rule no-nat match source-address 192.203.228.0/24",
+		"set security nat source rule-set exempt rule no-nat then source-nat off",
+	} {
+		if err := tree.SetPath(strings.Fields(cmd)[1:]); err != nil {
+			t.Fatalf("SetPath(%q): %v", cmd, err)
+		}
+	}
+
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+	if len(cfg.Security.NAT.Source) != 1 {
+		t.Fatalf("got %d source rule-sets, want 1", len(cfg.Security.NAT.Source))
+	}
+	if len(cfg.Security.NAT.Source[0].Rules) != 1 {
+		t.Fatalf("got %d rules, want 1", len(cfg.Security.NAT.Source[0].Rules))
+	}
+	r := cfg.Security.NAT.Source[0].Rules[0]
+	if !r.Then.Off {
+		t.Error("Then.Off should be true")
+	}
+	if r.Match.SourceAddress != "192.203.228.0/24" {
+		t.Errorf("source address = %q, want 192.203.228.0/24", r.Match.SourceAddress)
+	}
+}
+
+func TestDNATApplicationMatch(t *testing.T) {
+	input := `security {
+    nat {
+        destination {
+            pool web-server {
+                address 192.168.1.100/32;
+            }
+            rule-set internet-dnat {
+                from zone untrust;
+                rule app-match {
+                    match {
+                        destination-address 1.2.3.4/32;
+                        application junos-http;
+                    }
+                    then {
+                        destination-nat {
+                            pool {
+                                web-server;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}`
+	parser := NewParser(input)
+	tree, errs := parser.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+	if cfg.Security.NAT.Destination == nil {
+		t.Fatal("no destination NAT config")
+	}
+	if len(cfg.Security.NAT.Destination.RuleSets) != 1 {
+		t.Fatalf("got %d DNAT rule-sets, want 1", len(cfg.Security.NAT.Destination.RuleSets))
+	}
+	r := cfg.Security.NAT.Destination.RuleSets[0].Rules[0]
+	if r.Match.Application != "junos-http" {
+		t.Errorf("application = %q, want junos-http", r.Match.Application)
+	}
+	if r.Then.PoolName != "web-server" {
+		t.Errorf("pool = %q, want web-server", r.Then.PoolName)
+	}
+}
+

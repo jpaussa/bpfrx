@@ -933,6 +933,11 @@ evaluate_firewall_filter(struct pkt_meta *meta)
 		if (!match)
 			continue;
 
+		/* Increment per-rule counter */
+		struct counter_value *fc =
+			bpf_map_lookup_elem(&filter_counters, &idx);
+		if (fc) { fc->packets++; fc->bytes += meta->pkt_len; }
+
 		/* Term matched — apply action */
 		switch (rule->action) {
 		case FILTER_ACTION_ACCEPT:
