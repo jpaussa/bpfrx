@@ -830,3 +830,115 @@ func TestApplyFull_PerPacketNotConsistent(t *testing.T) {
 		t.Error("ConsistentHash should be false with load-balance per-packet")
 	}
 }
+
+func TestParseRouteJSON(t *testing.T) {
+	input := `{
+		"10.0.1.0/24": [{
+			"prefix": "10.0.1.0/24",
+			"protocol": "connected",
+			"selected": true,
+			"installed": true,
+			"distance": 0,
+			"metric": 0,
+			"uptime": "2d05h30m",
+			"table": 254,
+			"nexthops": [{
+				"directlyConnected": true,
+				"interfaceName": "trust0",
+				"active": true,
+				"fib": true
+			}]
+		}],
+		"0.0.0.0/0": [{
+			"prefix": "0.0.0.0/0",
+			"protocol": "static",
+			"selected": true,
+			"installed": true,
+			"distance": 5,
+			"metric": 0,
+			"uptime": "01:02:20",
+			"table": 254,
+			"nexthops": [{
+				"ip": "172.16.50.1",
+				"interfaceName": "wan0.50",
+				"active": true,
+				"fib": true
+			}]
+		}]
+	}`
+
+	routes, err := parseRouteJSON(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(routes) != 2 {
+		t.Fatalf("expected 2 routes, got %d", len(routes))
+	}
+
+	// Routes should be sorted by prefix (0.0.0.0/0 before 10.0.1.0/24)
+	if routes[0].Prefix != "0.0.0.0/0" {
+		t.Errorf("expected first route 0.0.0.0/0, got %s", routes[0].Prefix)
+	}
+	if routes[0].Protocol != "static" {
+		t.Errorf("expected protocol static, got %s", routes[0].Protocol)
+	}
+	if routes[0].Distance != 5 {
+		t.Errorf("expected distance 5, got %d", routes[0].Distance)
+	}
+	if len(routes[0].NextHops) != 1 || routes[0].NextHops[0].IP != "172.16.50.1" {
+		t.Errorf("expected next-hop 172.16.50.1")
+	}
+
+	if routes[1].Prefix != "10.0.1.0/24" {
+		t.Errorf("expected second route 10.0.1.0/24, got %s", routes[1].Prefix)
+	}
+	if !routes[1].NextHops[0].DirectlyConnected {
+		t.Error("expected directly connected")
+	}
+}
+
+func TestFormatRouteDetail(t *testing.T) {
+	routes := []FRRRouteDetail{
+		{
+			Prefix:    "0.0.0.0/0",
+			Protocol:  "static",
+			Selected:  true,
+			Installed: true,
+			Distance:  5,
+			Metric:    0,
+			Uptime:    "01:02:20",
+			NextHops: []FRRNextHop{
+				{IP: "172.16.50.1", Interface: "wan0.50", Active: true, FIB: true},
+			},
+		},
+		{
+			Prefix:    "10.0.1.0/24",
+			Protocol:  "connected",
+			Selected:  true,
+			Installed: true,
+			Distance:  0,
+			NextHops: []FRRNextHop{
+				{DirectlyConnected: true, Interface: "trust0", Active: true, FIB: true},
+			},
+		},
+	}
+
+	got := FormatRouteDetail(routes)
+
+	checks := []string{
+		"* 0.0.0.0/0",
+		"Protocol: static",
+		"Preference: 5/0",
+		"Age: 01:02:20",
+		"Next-hop: 172.16.50.1 via wan0.50",
+		"* 10.0.1.0/24",
+		"Protocol: connected",
+		"Next-hop: directly connected via trust0",
+	}
+	for _, want := range checks {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+}

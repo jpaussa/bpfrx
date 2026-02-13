@@ -441,6 +441,13 @@ func (c *ctl) handleShow(args []string) error {
 		}
 		return nil
 
+	case "class-of-service":
+		if len(args) >= 2 && args[1] == "interface" {
+			return c.showText("class-of-service")
+		}
+		printRemoteTreeHelp("show class-of-service:", "show", "class-of-service")
+		return nil
+
 	case "dhcp":
 		if len(args) >= 2 {
 			switch args[1] {
@@ -454,6 +461,9 @@ func (c *ctl) handleShow(args []string) error {
 		return nil
 
 	case "route":
+		if len(args) >= 2 && args[1] == "detail" {
+			return c.showText("route-detail")
+		}
 		if len(args) >= 2 && args[1] == "summary" {
 			return c.showText("route-summary")
 		}
@@ -1464,6 +1474,10 @@ func (c *ctl) handleShowProtocols(args []string) error {
 		typ := "summary"
 		if len(args) >= 2 {
 			typ = args[1]
+			// "show protocols bgp neighbor <ip>" → type "neighbor:<ip>"
+			if typ == "neighbor" && len(args) >= 3 {
+				typ = "neighbor:" + args[2]
+			}
 		}
 		resp, err := c.client.GetBGPStatus(context.Background(), &pb.GetBGPStatusRequest{Type: typ})
 		if err != nil {
@@ -1739,7 +1753,18 @@ func (c *ctl) handleClearSecurity(args []string) error {
 			fmt.Println(resp.Message)
 			return nil
 		}
-		return fmt.Errorf("usage: clear security nat source persistent-nat-table")
+		if len(args) >= 2 && args[1] == "statistics" {
+			resp, err := c.client.SystemAction(context.Background(), &pb.SystemActionRequest{
+				Action: "clear-nat-counters",
+			})
+			if err != nil {
+				return fmt.Errorf("%v", err)
+			}
+			fmt.Println(resp.Message)
+			return nil
+		}
+		printRemoteTreeHelp("clear security nat:", "clear", "security", "nat")
+		return nil
 
 	case "flow":
 		if len(args) < 2 || args[1] != "session" {
@@ -1898,6 +1923,8 @@ func (c *ctl) handleRequest(args []string) error {
 	switch args[0] {
 	case "dhcp":
 		return c.handleRequestDHCP(args[1:])
+	case "security":
+		return c.handleRequestSecurity(args[1:])
 	case "system":
 		// fall through to existing logic below
 	default:
@@ -1960,6 +1987,28 @@ func (c *ctl) handleRequestDHCP(args []string) error {
 	resp, err := c.client.SystemAction(context.Background(), &pb.SystemActionRequest{
 		Action: "dhcp-renew",
 		Target: args[1],
+	})
+	if err != nil {
+		return fmt.Errorf("%v", err)
+	}
+	fmt.Println(resp.Message)
+	return nil
+}
+
+func (c *ctl) handleRequestSecurity(args []string) error {
+	if len(args) == 0 {
+		printRemoteTreeHelp("request security:", "request", "security")
+		return nil
+	}
+	if args[0] != "ipsec" {
+		return fmt.Errorf("unknown request security target: %s", args[0])
+	}
+	if len(args) < 3 || args[1] != "sa" || args[2] != "clear" {
+		printRemoteTreeHelp("request security ipsec sa:", "request", "security", "ipsec", "sa")
+		return nil
+	}
+	resp, err := c.client.SystemAction(context.Background(), &pb.SystemActionRequest{
+		Action: "ipsec-sa-clear",
 	})
 	if err != nil {
 		return fmt.Errorf("%v", err)

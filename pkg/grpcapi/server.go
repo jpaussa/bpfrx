@@ -1518,6 +1518,18 @@ func (s *Server) GetBGPStatus(_ context.Context, req *pb.GetBGPStatusRequest) (*
 			}
 		}
 	default:
+		// "neighbor" or "neighbor:<ip>" for detailed neighbor info
+		if req.Type == "neighbor" || strings.HasPrefix(req.Type, "neighbor:") {
+			ip := ""
+			if strings.HasPrefix(req.Type, "neighbor:") {
+				ip = strings.TrimPrefix(req.Type, "neighbor:")
+			}
+			output, err := s.frr.GetBGPNeighborDetail(ip)
+			if err != nil {
+				return nil, status.Errorf(codes.Internal, "%v", err)
+			}
+			return &pb.GetBGPStatusResponse{Output: output}, nil
+		}
 		peers, err := s.frr.GetBGPSummary()
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "%v", err)
@@ -2709,6 +2721,102 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 	}
 
 	switch req.Topic {
+	case "class-of-service":
+		if cfg == nil {
+			buf.WriteString("No active configuration\n")
+		} else {
+			type ifBinding struct {
+				name     string
+				inputV4  string
+				outputV4 string
+				inputV6  string
+				outputV6 string
+			}
+			var bindings []ifBinding
+			for _, ifc := range cfg.Interfaces.Interfaces {
+				for _, unit := range ifc.Units {
+					b := ifBinding{name: ifc.Name}
+					b.inputV4 = unit.FilterInputV4
+					b.outputV4 = unit.FilterOutputV4
+					b.inputV6 = unit.FilterInputV6
+					b.outputV6 = unit.FilterOutputV6
+					if b.inputV4 != "" || b.outputV4 != "" || b.inputV6 != "" || b.outputV6 != "" {
+						bindings = append(bindings, b)
+					}
+				}
+			}
+			if len(bindings) == 0 {
+				buf.WriteString("No interfaces with class-of-service configuration\n")
+			} else {
+				sort.Slice(bindings, func(i, j int) bool { return bindings[i].name < bindings[j].name })
+				printBinding := func(dir, family, filterName string) {
+					filters := cfg.Firewall.FiltersInet
+					if family == "inet6" {
+						filters = cfg.Firewall.FiltersInet6
+					}
+					f, ok := filters[filterName]
+					if !ok {
+						fmt.Fprintf(&buf, "  %s filter (%s): %s (not found)\n", dir, family, filterName)
+						return
+					}
+					fmt.Fprintf(&buf, "  %s filter (%s): %s\n", dir, family, filterName)
+					for _, term := range f.Terms {
+						var matchParts []string
+						if term.DSCP != "" {
+							matchParts = append(matchParts, "dscp "+term.DSCP)
+						}
+						if term.Protocol != "" {
+							matchParts = append(matchParts, "protocol "+term.Protocol)
+						}
+						if len(term.DestinationPorts) > 0 {
+							matchParts = append(matchParts, "port "+strings.Join(term.DestinationPorts, ","))
+						}
+						if term.ICMPType >= 0 {
+							matchParts = append(matchParts, fmt.Sprintf("icmp-type %d", term.ICMPType))
+						}
+						if term.ICMPCode >= 0 {
+							matchParts = append(matchParts, fmt.Sprintf("icmp-code %d", term.ICMPCode))
+						}
+						matchStr := "any"
+						if len(matchParts) > 0 {
+							matchStr = strings.Join(matchParts, " ")
+						}
+						action := term.Action
+						if action == "" {
+							action = "accept"
+						}
+						extras := ""
+						if term.ForwardingClass != "" {
+							extras += " forwarding-class " + term.ForwardingClass
+						}
+						if term.DSCPRewrite != "" {
+							extras += " dscp " + term.DSCPRewrite
+						}
+						if term.Log {
+							extras += " log"
+						}
+						fmt.Fprintf(&buf, "    Term %s: match %s -> %s%s\n", term.Name, matchStr, action, extras)
+					}
+				}
+				for _, b := range bindings {
+					fmt.Fprintf(&buf, "Interface: %s\n", b.name)
+					if b.inputV4 != "" {
+						printBinding("Input", "inet", b.inputV4)
+					}
+					if b.outputV4 != "" {
+						printBinding("Output", "inet", b.outputV4)
+					}
+					if b.inputV6 != "" {
+						printBinding("Input", "inet6", b.inputV6)
+					}
+					if b.outputV6 != "" {
+						printBinding("Output", "inet6", b.outputV6)
+					}
+					buf.WriteString("\n")
+				}
+			}
+		}
+
 	case "schedulers":
 		if cfg == nil || len(cfg.Schedulers) == 0 {
 			buf.WriteString("No schedulers configured\n")
@@ -3487,29 +3595,66 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 			if err != nil {
 				return nil, status.Errorf(codes.Internal, "get routes: %v", err)
 			}
-			byProto := make(map[string]int)
-			var v4Count, v6Count int
-			for _, e := range entries {
-				byProto[e.Protocol]++
-				if strings.Contains(e.Destination, ":") {
-					v6Count++
-				} else {
-					v4Count++
+			// Determine router ID from config
+			if cfg != nil {
+				routerID := ""
+				if cfg.Protocols.OSPF != nil && cfg.Protocols.OSPF.RouterID != "" {
+					routerID = cfg.Protocols.OSPF.RouterID
+				} else if cfg.Protocols.BGP != nil && cfg.Protocols.BGP.RouterID != "" {
+					routerID = cfg.Protocols.BGP.RouterID
+				}
+				if routerID != "" {
+					fmt.Fprintf(&buf, "Router ID: %s\n\n", routerID)
 				}
 			}
-			fmt.Fprintf(&buf, "inet.0: %d destinations\n", v4Count)
-			fmt.Fprintf(&buf, "inet6.0: %d destinations\n\n", v6Count)
-			fmt.Fprintf(&buf, "Route summary by protocol:\n")
-			fmt.Fprintf(&buf, "  %-14s %s\n", "Protocol", "Routes")
-			protos := make([]string, 0, len(byProto))
-			for p := range byProto {
-				protos = append(protos, p)
+			v4ByProto := make(map[string]int)
+			v6ByProto := make(map[string]int)
+			var v4Count, v6Count int
+			for _, e := range entries {
+				if strings.Contains(e.Destination, ":") {
+					v6Count++
+					v6ByProto[e.Protocol]++
+				} else {
+					v4Count++
+					v4ByProto[e.Protocol]++
+				}
 			}
-			sort.Strings(protos)
-			for _, p := range protos {
-				fmt.Fprintf(&buf, "  %-14s %d\n", p, byProto[p])
+			fmt.Fprintf(&buf, "inet.0: %d destinations, %d routes (%d active)\n", v4Count, v4Count, v4Count)
+			v4Protos := make([]string, 0, len(v4ByProto))
+			for p := range v4ByProto {
+				v4Protos = append(v4Protos, p)
 			}
-			fmt.Fprintf(&buf, "  %-14s %d\n", "Total", len(entries))
+			sort.Strings(v4Protos)
+			for _, p := range v4Protos {
+				fmt.Fprintf(&buf, "  %-14s %d routes, %d active\n", p+":", v4ByProto[p], v4ByProto[p])
+			}
+			if v6Count > 0 {
+				fmt.Fprintln(&buf)
+				fmt.Fprintf(&buf, "inet6.0: %d destinations, %d routes (%d active)\n", v6Count, v6Count, v6Count)
+				v6Protos := make([]string, 0, len(v6ByProto))
+				for p := range v6ByProto {
+					v6Protos = append(v6Protos, p)
+				}
+				sort.Strings(v6Protos)
+				for _, p := range v6Protos {
+					fmt.Fprintf(&buf, "  %-14s %d routes, %d active\n", p+":", v6ByProto[p], v6ByProto[p])
+				}
+			}
+		}
+
+	case "route-detail":
+		if s.frr == nil {
+			fmt.Fprintln(&buf, "FRR manager not available")
+		} else {
+			routes, err := s.frr.GetRouteDetailJSON()
+			if err != nil {
+				return nil, status.Errorf(codes.Internal, "get route detail: %v", err)
+			}
+			if len(routes) == 0 {
+				buf.WriteString("No routes\n")
+			} else {
+				buf.WriteString(frr.FormatRouteDetail(routes))
+			}
 		}
 
 	case "interfaces-extensive":
@@ -4714,6 +4859,15 @@ func (s *Server) SystemAction(_ context.Context, req *pb.SystemActionRequest) (*
 		}
 		return &pb.SystemActionResponse{Message: "Firewall filter counters cleared"}, nil
 
+	case "clear-nat-counters":
+		if s.dp == nil || !s.dp.IsLoaded() {
+			return nil, status.Error(codes.Unavailable, "dataplane not loaded")
+		}
+		if err := s.dp.ClearNATRuleCounters(); err != nil {
+			return nil, status.Errorf(codes.Internal, "%v", err)
+		}
+		return &pb.SystemActionResponse{Message: "NAT translation statistics cleared"}, nil
+
 	case "clear-persistent-nat":
 		if s.dp == nil || s.dp.PersistentNAT == nil {
 			return &pb.SystemActionResponse{Message: "Persistent NAT table not available"}, nil
@@ -4722,6 +4876,18 @@ func (s *Server) SystemAction(_ context.Context, req *pb.SystemActionRequest) (*
 		s.dp.PersistentNAT.Clear()
 		return &pb.SystemActionResponse{
 			Message: fmt.Sprintf("Cleared %d persistent NAT bindings", count),
+		}, nil
+
+	case "ipsec-sa-clear":
+		if s.ipsec == nil {
+			return nil, status.Errorf(codes.FailedPrecondition, "IPsec manager not available")
+		}
+		count, err := s.ipsec.TerminateAllSAs()
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "%v", err)
+		}
+		return &pb.SystemActionResponse{
+			Message: fmt.Sprintf("Cleared %d IPsec SA(s)", count),
 		}, nil
 
 	case "dhcp-renew":

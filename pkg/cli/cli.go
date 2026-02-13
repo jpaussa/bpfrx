@@ -709,6 +709,9 @@ func (c *CLI) handleShow(args []string) error {
 		}
 		return nil
 
+	case "class-of-service":
+		return c.handleShowClassOfService(args[1:])
+
 	case "dhcp":
 		if len(args) >= 2 {
 			switch args[1] {
@@ -2352,7 +2355,19 @@ func (c *CLI) handleClearSecurity(args []string) error {
 		if len(args) >= 3 && args[1] == "source" && args[2] == "persistent-nat-table" {
 			return c.clearPersistentNAT()
 		}
-		return fmt.Errorf("usage: clear security nat source persistent-nat-table")
+		if len(args) >= 2 && args[1] == "statistics" {
+			if c.dp == nil || !c.dp.IsLoaded() {
+				fmt.Println("dataplane not loaded")
+				return nil
+			}
+			if err := c.dp.ClearNATRuleCounters(); err != nil {
+				return fmt.Errorf("clear NAT counters: %w", err)
+			}
+			fmt.Println("NAT translation statistics cleared")
+			return nil
+		}
+		cmdtree.PrintTreeHelp("clear security nat:", operationalTree, "clear", "security", "nat")
+		return nil
 	case "flow":
 		if len(args) < 2 || args[1] != "session" {
 			return fmt.Errorf("usage: clear security flow session [filters...]")
@@ -3540,6 +3555,9 @@ func (c *CLI) handleShowRoute(args []string) error {
 	if len(args) >= 1 && args[0] == "summary" {
 		return c.showRouteSummary()
 	}
+	if len(args) >= 1 && args[0] == "detail" {
+		return c.showRouteDetail()
+	}
 	// Treat a single arg as prefix filter (e.g. "show route 10.0.1.0/24")
 	if len(args) == 1 && (strings.Contains(args[0], "/") || strings.Contains(args[0], ".") || strings.Contains(args[0], ":")) {
 		return c.showRoutesForPrefix(args[0])
@@ -3735,34 +3753,78 @@ func (c *CLI) showRouteSummary() error {
 		return fmt.Errorf("get routes: %w", err)
 	}
 
+	// Determine router ID from config (OSPF or BGP)
+	routerID := ""
+	cfg := c.store.ActiveConfig()
+	if cfg != nil {
+		if cfg.Protocols.OSPF != nil && cfg.Protocols.OSPF.RouterID != "" {
+			routerID = cfg.Protocols.OSPF.RouterID
+		} else if cfg.Protocols.BGP != nil && cfg.Protocols.BGP.RouterID != "" {
+			routerID = cfg.Protocols.BGP.RouterID
+		}
+	}
+	if routerID != "" {
+		fmt.Printf("Router ID: %s\n\n", routerID)
+	}
+
 	// Count by protocol and address family
-	byProto := make(map[string]int)
+	v4ByProto := make(map[string]int)
+	v6ByProto := make(map[string]int)
 	var v4Count, v6Count int
 	for _, e := range entries {
-		byProto[e.Protocol]++
 		if strings.Contains(e.Destination, ":") {
 			v6Count++
+			v6ByProto[e.Protocol]++
 		} else {
 			v4Count++
+			v4ByProto[e.Protocol]++
 		}
 	}
 
-	fmt.Printf("Router ID: (not set)\n\n")
-	fmt.Printf("inet.0: %d destinations\n", v4Count)
-	fmt.Printf("inet6.0: %d destinations\n\n", v6Count)
+	// Print inet.0 summary
+	fmt.Printf("inet.0: %d destinations, %d routes (%d active)\n", v4Count, v4Count, v4Count)
+	v4Protos := make([]string, 0, len(v4ByProto))
+	for p := range v4ByProto {
+		v4Protos = append(v4Protos, p)
+	}
+	sort.Strings(v4Protos)
+	for _, p := range v4Protos {
+		fmt.Printf("  %-14s %d routes, %d active\n", p+":", v4ByProto[p], v4ByProto[p])
+	}
 
-	fmt.Printf("Route summary by protocol:\n")
-	fmt.Printf("  %-14s %s\n", "Protocol", "Routes")
-	// Sort protocols for deterministic output
-	protos := make([]string, 0, len(byProto))
-	for p := range byProto {
-		protos = append(protos, p)
+	if v6Count > 0 {
+		fmt.Println()
+		fmt.Printf("inet6.0: %d destinations, %d routes (%d active)\n", v6Count, v6Count, v6Count)
+		v6Protos := make([]string, 0, len(v6ByProto))
+		for p := range v6ByProto {
+			v6Protos = append(v6Protos, p)
+		}
+		sort.Strings(v6Protos)
+		for _, p := range v6Protos {
+			fmt.Printf("  %-14s %d routes, %d active\n", p+":", v6ByProto[p], v6ByProto[p])
+		}
 	}
-	sort.Strings(protos)
-	for _, p := range protos {
-		fmt.Printf("  %-14s %d\n", p, byProto[p])
+
+	return nil
+}
+
+func (c *CLI) showRouteDetail() error {
+	if c.frr == nil {
+		fmt.Println("FRR manager not available")
+		return nil
 	}
-	fmt.Printf("  %-14s %d\n", "Total", len(entries))
+
+	routes, err := c.frr.GetRouteDetailJSON()
+	if err != nil {
+		return fmt.Errorf("get route detail: %w", err)
+	}
+
+	if len(routes) == 0 {
+		fmt.Println("No routes")
+		return nil
+	}
+
+	fmt.Print(frr.FormatRouteDetail(routes))
 	return nil
 }
 
@@ -3870,6 +3932,18 @@ func (c *CLI) showBGP(args []string) error {
 		for _, r := range routes {
 			fmt.Printf("  %-24s %-20s %s\n", r.Network, r.NextHop, r.Path)
 		}
+		return nil
+
+	case "neighbor":
+		ip := ""
+		if len(args) >= 2 {
+			ip = args[1]
+		}
+		output, err := c.frr.GetBGPNeighborDetail(ip)
+		if err != nil {
+			return fmt.Errorf("BGP neighbor: %w", err)
+		}
+		fmt.Print(output)
 		return nil
 
 	default:
@@ -5545,6 +5619,118 @@ func (c *CLI) showFirewallFilters() error {
 
 	showFilters("inet", cfg.Firewall.FiltersInet, inetNames)
 	showFilters("inet6", cfg.Firewall.FiltersInet6, inet6Names)
+	return nil
+}
+
+func (c *CLI) handleShowClassOfService(args []string) error {
+	if len(args) == 0 || args[0] != "interface" {
+		cmdtree.PrintTreeHelp("show class-of-service:", operationalTree, "show", "class-of-service")
+		return nil
+	}
+	return c.showClassOfServiceInterface()
+}
+
+func (c *CLI) showClassOfServiceInterface() error {
+	cfg := c.store.ActiveConfig()
+	if cfg == nil {
+		fmt.Println("No active configuration")
+		return nil
+	}
+
+	// Collect interfaces with filter bindings
+	type ifBinding struct {
+		name       string
+		inputV4    string
+		outputV4   string
+		inputV6    string
+		outputV6   string
+	}
+	var bindings []ifBinding
+	for _, ifc := range cfg.Interfaces.Interfaces {
+		for _, unit := range ifc.Units {
+			b := ifBinding{name: ifc.Name}
+			b.inputV4 = unit.FilterInputV4
+			b.outputV4 = unit.FilterOutputV4
+			b.inputV6 = unit.FilterInputV6
+			b.outputV6 = unit.FilterOutputV6
+			if b.inputV4 != "" || b.outputV4 != "" || b.inputV6 != "" || b.outputV6 != "" {
+				bindings = append(bindings, b)
+			}
+		}
+	}
+
+	if len(bindings) == 0 {
+		fmt.Println("No interfaces with class-of-service configuration")
+		return nil
+	}
+
+	sort.Slice(bindings, func(i, j int) bool { return bindings[i].name < bindings[j].name })
+
+	for _, b := range bindings {
+		fmt.Printf("Interface: %s\n", b.name)
+		printFilterBinding := func(dir, family, filterName string) {
+			filters := cfg.Firewall.FiltersInet
+			if family == "inet6" {
+				filters = cfg.Firewall.FiltersInet6
+			}
+			f, ok := filters[filterName]
+			if !ok {
+				fmt.Printf("  %s filter (%s): %s (not found)\n", dir, family, filterName)
+				return
+			}
+			fmt.Printf("  %s filter (%s): %s\n", dir, family, filterName)
+			for _, term := range f.Terms {
+				var matchParts []string
+				if term.DSCP != "" {
+					matchParts = append(matchParts, "dscp "+term.DSCP)
+				}
+				if term.Protocol != "" {
+					matchParts = append(matchParts, "protocol "+term.Protocol)
+				}
+				if len(term.DestinationPorts) > 0 {
+					matchParts = append(matchParts, "port "+strings.Join(term.DestinationPorts, ","))
+				}
+				if term.ICMPType >= 0 {
+					matchParts = append(matchParts, fmt.Sprintf("icmp-type %d", term.ICMPType))
+				}
+				if term.ICMPCode >= 0 {
+					matchParts = append(matchParts, fmt.Sprintf("icmp-code %d", term.ICMPCode))
+				}
+				matchStr := "any"
+				if len(matchParts) > 0 {
+					matchStr = strings.Join(matchParts, " ")
+				}
+				action := term.Action
+				if action == "" {
+					action = "accept"
+				}
+				extras := ""
+				if term.ForwardingClass != "" {
+					extras += " forwarding-class " + term.ForwardingClass
+				}
+				if term.DSCPRewrite != "" {
+					extras += " dscp " + term.DSCPRewrite
+				}
+				if term.Log {
+					extras += " log"
+				}
+				fmt.Printf("    Term %s: match %s -> %s%s\n", term.Name, matchStr, action, extras)
+			}
+		}
+		if b.inputV4 != "" {
+			printFilterBinding("Input", "inet", b.inputV4)
+		}
+		if b.outputV4 != "" {
+			printFilterBinding("Output", "inet", b.outputV4)
+		}
+		if b.inputV6 != "" {
+			printFilterBinding("Input", "inet6", b.inputV6)
+		}
+		if b.outputV6 != "" {
+			printFilterBinding("Output", "inet6", b.outputV6)
+		}
+		fmt.Println()
+	}
 	return nil
 }
 
@@ -7274,6 +7460,8 @@ func (c *CLI) handleRequest(args []string) error {
 	switch args[0] {
 	case "dhcp":
 		return c.handleRequestDHCP(args[1:])
+	case "security":
+		return c.handleRequestSecurity(args[1:])
 	case "system":
 		return c.handleRequestSystem(args[1:])
 	default:
@@ -7375,4 +7563,29 @@ func (c *CLI) handleRequestSystem(args []string) error {
 	default:
 		return fmt.Errorf("unknown request system command: %s", args[0])
 	}
+}
+
+func (c *CLI) handleRequestSecurity(args []string) error {
+	if len(args) == 0 {
+		fmt.Println("request security:")
+		writeCompletionHelp(os.Stdout, treeHelpCandidates(operationalTree["request"].Children["security"].Children))
+		return nil
+	}
+	if args[0] != "ipsec" {
+		return fmt.Errorf("unknown request security target: %s", args[0])
+	}
+	if len(args) < 3 || args[1] != "sa" || args[2] != "clear" {
+		fmt.Println("request security ipsec sa:")
+		writeCompletionHelp(os.Stdout, treeHelpCandidates(operationalTree["request"].Children["security"].Children["ipsec"].Children["sa"].Children))
+		return nil
+	}
+	if c.ipsec == nil {
+		return fmt.Errorf("IPsec manager not available")
+	}
+	count, err := c.ipsec.TerminateAllSAs()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Cleared %d IPsec SA(s)\n", count)
+	return nil
 }

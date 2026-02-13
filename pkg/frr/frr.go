@@ -4,6 +4,7 @@ package frr
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -699,6 +700,16 @@ func (m *Manager) GetBGPSummary() ([]BGPPeerSummary, error) {
 	return peers, nil
 }
 
+// GetBGPNeighborDetail returns detailed info for a specific BGP neighbor,
+// or all neighbors if ip is empty.
+func (m *Manager) GetBGPNeighborDetail(ip string) (string, error) {
+	cmd := "show bgp neighbor"
+	if ip != "" {
+		cmd += " " + ip
+	}
+	return vtyshCmd(cmd)
+}
+
 // BGPRoute represents a BGP route.
 type BGPRoute struct {
 	Network string
@@ -861,6 +872,149 @@ func (m *Manager) generatePolicyOptions(po *config.PolicyOptionsConfig) string {
 		b.WriteString("!\n")
 	}
 
+	return b.String()
+}
+
+// FRRRouteDetail holds detailed route information parsed from FRR's JSON output.
+type FRRRouteDetail struct {
+	Prefix    string
+	Protocol  string
+	Selected  bool
+	Installed bool
+	Distance  int
+	Metric    int
+	Uptime    string
+	Table     string
+	NextHops  []FRRNextHop
+}
+
+// FRRNextHop holds next-hop detail from FRR JSON.
+type FRRNextHop struct {
+	IP               string
+	Interface        string
+	DirectlyConnected bool
+	Active           bool
+	FIB              bool
+	Recursive        bool
+}
+
+// frrRouteJSON maps the JSON output of "show ip route json".
+type frrRouteJSON struct {
+	Prefix    string          `json:"prefix"`
+	Protocol  string          `json:"protocol"`
+	Selected  bool            `json:"selected"`
+	Installed bool            `json:"installed"`
+	Distance  int             `json:"distance"`
+	Metric    int             `json:"metric"`
+	Uptime    string          `json:"uptime"`
+	Table     int             `json:"table"`
+	NextHops  []frrNextHopJSON `json:"nexthops"`
+}
+
+type frrNextHopJSON struct {
+	IP                string `json:"ip"`
+	InterfaceName     string `json:"interfaceName"`
+	DirectlyConnected bool   `json:"directlyConnected"`
+	Active            bool   `json:"active"`
+	FIB               bool   `json:"fib"`
+	Recursive         bool   `json:"recursive"`
+}
+
+// GetRouteDetailJSON queries FRR for detailed IPv4 and IPv6 routes via vtysh JSON output.
+func (m *Manager) GetRouteDetailJSON() ([]FRRRouteDetail, error) {
+	var all []FRRRouteDetail
+	for _, cmd := range []string{"show ip route json", "show ipv6 route json"} {
+		output, err := vtyshCmd(cmd)
+		if err != nil {
+			continue
+		}
+		routes, err := parseRouteJSON(output)
+		if err != nil {
+			continue
+		}
+		all = append(all, routes...)
+	}
+	return all, nil
+}
+
+// parseRouteJSON parses FRR's JSON route output into FRRRouteDetail entries.
+func parseRouteJSON(data string) ([]FRRRouteDetail, error) {
+	var raw map[string][]frrRouteJSON
+	if err := json.Unmarshal([]byte(data), &raw); err != nil {
+		return nil, err
+	}
+
+	// Sort prefixes for deterministic output.
+	prefixes := make([]string, 0, len(raw))
+	for p := range raw {
+		prefixes = append(prefixes, p)
+	}
+	sort.Strings(prefixes)
+
+	var result []FRRRouteDetail
+	for _, prefix := range prefixes {
+		entries := raw[prefix]
+		for _, e := range entries {
+			d := FRRRouteDetail{
+				Prefix:    e.Prefix,
+				Protocol:  e.Protocol,
+				Selected:  e.Selected,
+				Installed: e.Installed,
+				Distance:  e.Distance,
+				Metric:    e.Metric,
+				Uptime:    e.Uptime,
+				Table:     strconv.Itoa(e.Table),
+			}
+			for _, nh := range e.NextHops {
+				d.NextHops = append(d.NextHops, FRRNextHop{
+					IP:                nh.IP,
+					Interface:         nh.InterfaceName,
+					DirectlyConnected: nh.DirectlyConnected,
+					Active:            nh.Active,
+					FIB:               nh.FIB,
+					Recursive:         nh.Recursive,
+				})
+			}
+			result = append(result, d)
+		}
+	}
+	return result, nil
+}
+
+// FormatRouteDetail formats FRR route details in Junos-style output.
+func FormatRouteDetail(routes []FRRRouteDetail) string {
+	var b strings.Builder
+	for _, r := range routes {
+		active := " "
+		if r.Selected {
+			active = "*"
+		}
+		fmt.Fprintf(&b, "%s %s\n", active, r.Prefix)
+		fmt.Fprintf(&b, "    Protocol: %s\n", r.Protocol)
+		fmt.Fprintf(&b, "    Preference: %d/%d\n", r.Distance, r.Metric)
+		if r.Uptime != "" {
+			fmt.Fprintf(&b, "    Age: %s\n", r.Uptime)
+		}
+		if r.Installed {
+			b.WriteString("    State: installed\n")
+		}
+		for _, nh := range r.NextHops {
+			if nh.DirectlyConnected {
+				fmt.Fprintf(&b, "    Next-hop: directly connected via %s\n", nh.Interface)
+			} else if nh.IP != "" && nh.Interface != "" {
+				fmt.Fprintf(&b, "    Next-hop: %s via %s\n", nh.IP, nh.Interface)
+			} else if nh.IP != "" {
+				label := "Next-hop"
+				if nh.Recursive {
+					label = "    Resolved"
+				}
+				fmt.Fprintf(&b, "    %s: %s\n", label, nh.IP)
+			} else if nh.Interface != "" {
+				fmt.Fprintf(&b, "    Next-hop: via %s\n", nh.Interface)
+			}
+		}
+		b.WriteString("\n")
+	}
 	return b.String()
 }
 

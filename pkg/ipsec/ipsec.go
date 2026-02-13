@@ -406,6 +406,24 @@ type SAStatus struct {
 	OutBytes  string
 }
 
+// TerminateAllSAs terminates all active IKE SAs via swanctl.
+func (m *Manager) TerminateAllSAs() (int, error) {
+	sas, err := m.GetSAStatus()
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, sa := range sas {
+		cmd := exec.Command("swanctl", "--terminate", "--ike", sa.Name)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			slog.Warn("swanctl terminate failed", "ike", sa.Name, "err", err, "output", string(out))
+		} else {
+			count++
+		}
+	}
+	return count, nil
+}
+
 // GetSAStatus queries strongSwan for active SAs.
 func (m *Manager) GetSAStatus() ([]SAStatus, error) {
 	cmd := exec.Command("swanctl", "--list-sas")

@@ -42,6 +42,9 @@ var OperationalTree = map[string]*Node{
 			"environment": {Desc: "Show temperature and power"},
 			"hardware":    {Desc: "Show hardware details"},
 		}},
+		"class-of-service": {Desc: "Show class-of-service information", Children: map[string]*Node{
+			"interface": {Desc: "Show per-interface CoS configuration"},
+		}},
 		"configuration": {Desc: "Show active configuration"},
 		"dhcp": {Desc: "Show DHCP information", Children: map[string]*Node{
 			"leases":            {Desc: "Show DHCP leases"},
@@ -51,6 +54,7 @@ var OperationalTree = map[string]*Node{
 		"flow-monitoring": {Desc: "Show flow monitoring/NetFlow configuration"},
 		"log":             {Desc: "Show daemon log entries [N]"},
 		"route": {Desc: "Show routing table [instance <name>]", Children: map[string]*Node{
+			"detail":   {Desc: "Show detailed route information"},
 			"summary":  {Desc: "Show route summary by protocol"},
 			"table":    {Desc: "Show routes for a VRF table"},
 			"protocol": {Desc: "Show routes by protocol (static, connected, bgp, ospf, dhcp)"},
@@ -182,8 +186,9 @@ var OperationalTree = map[string]*Node{
 				"database": {Desc: "Show OSPF database"},
 			}},
 			"bgp": {Desc: "Show BGP information", Children: map[string]*Node{
-				"summary": {Desc: "Show BGP peer summary"},
-				"routes":  {Desc: "Show BGP routes"},
+				"summary":  {Desc: "Show BGP peer summary"},
+				"routes":   {Desc: "Show BGP routes"},
+				"neighbor": {Desc: "Show BGP neighbor details"},
 			}},
 			"rip":  {Desc: "Show RIP information"},
 			"isis": {Desc: "Show IS-IS information", Children: map[string]*Node{
@@ -245,6 +250,7 @@ var OperationalTree = map[string]*Node{
 				"source": {Desc: "Clear source NAT", Children: map[string]*Node{
 					"persistent-nat-table": {Desc: "Clear persistent NAT bindings"},
 				}},
+				"statistics": {Desc: "Clear NAT translation statistics"},
 			}},
 		}},
 		"firewall": {Desc: "Clear firewall counters", Children: map[string]*Node{
@@ -257,6 +263,13 @@ var OperationalTree = map[string]*Node{
 	"request": {Desc: "Perform system operations", Children: map[string]*Node{
 		"dhcp": {Desc: "DHCP operations", Children: map[string]*Node{
 			"renew": {Desc: "Renew DHCP lease on an interface"},
+		}},
+		"security": {Desc: "Security operations", Children: map[string]*Node{
+			"ipsec": {Desc: "IPsec operations", Children: map[string]*Node{
+				"sa": {Desc: "IPsec SA operations", Children: map[string]*Node{
+					"clear": {Desc: "Clear all IPsec SAs"},
+				}},
+			}},
 		}},
 		"system": {Desc: "System operations", Children: map[string]*Node{
 			"reboot":  {Desc: "Reboot the system"},
