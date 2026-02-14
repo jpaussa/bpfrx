@@ -6,6 +6,8 @@
  * matching via LPM, application matching, and NAT rule association.
  */
 
+#include <string.h>
+
 #include <rte_mbuf.h>
 #include <rte_hash.h>
 #include <rte_lpm.h>
@@ -193,78 +195,190 @@ policy_check(struct rte_mbuf *pkt, struct pkt_meta *meta,
 		}
 
 		/* Dynamic SNAT pool allocation (skip if static already matched) */
-		if (!(meta->nat_flags & SESS_FLAG_STATIC_NAT) &&
-		    meta->addr_family == AF_INET &&
-		    ctx->shm->snat_rules && ctx->shm->snat_values_v4) {
-			struct snat_key sk = {
-				.from_zone = meta->ingress_zone,
-				.to_zone = meta->egress_zone,
-			};
+		if (!(meta->nat_flags & SESS_FLAG_STATIC_NAT)) {
+			if (meta->addr_family == AF_INET &&
+			    ctx->shm->snat_rules && ctx->shm->snat_values_v4) {
+				struct snat_key sk = {
+					.from_zone = meta->ingress_zone,
+					.to_zone = meta->egress_zone,
+				};
 
-			for (uint16_t ri = 0; ri < MAX_SNAT_RULES_PER_PAIR; ri++) {
-				sk.rule_idx = ri;
-				int spos = rte_hash_lookup(ctx->shm->snat_rules, &sk);
-				if (spos < 0)
-					break;
+				for (uint16_t ri = 0; ri < MAX_SNAT_RULES_PER_PAIR; ri++) {
+					sk.rule_idx = ri;
+					int spos = rte_hash_lookup(ctx->shm->snat_rules, &sk);
+					if (spos < 0)
+						break;
 
-				struct snat_value *sv = &ctx->shm->snat_values_v4[spos];
+					struct snat_value *sv = &ctx->shm->snat_values_v4[spos];
 
-				/* Source address match */
-				if (sv->src_addr_id != 0 &&
-				    lpm_lookup_addr_id(ctx, meta, 1, sv->src_addr_id) == 0)
-					continue;
+					if (sv->src_addr_id != 0 &&
+					    lpm_lookup_addr_id(ctx, meta, 1, sv->src_addr_id) == 0)
+						continue;
+					if (sv->dst_addr_id != 0 &&
+					    lpm_lookup_addr_id(ctx, meta, 0, sv->dst_addr_id) == 0)
+						continue;
 
-				/* Destination address match */
-				if (sv->dst_addr_id != 0 &&
-				    lpm_lookup_addr_id(ctx, meta, 0, sv->dst_addr_id) == 0)
-					continue;
+					if (sv->counter_id > 0)
+						ctr_nat_rule_add(ctx, sv->counter_id,
+						                 rte_pktmbuf_pkt_len(pkt));
 
-				/* NAT rule counter */
-				if (sv->counter_id > 0)
-					ctr_nat_rule_add(ctx, sv->counter_id,
-					                 rte_pktmbuf_pkt_len(pkt));
+					if (sv->mode != SNAT_MODE_OFF &&
+					    ctx->shm->nat_pool_configs &&
+					    ctx->shm->nat_pool_ips_v4) {
+						uint32_t pool_id = sv->mode;
+						if (pool_id < MAX_NAT_POOLS) {
+							struct nat_pool_config *cfg =
+								&ctx->shm->nat_pool_configs[pool_id];
+							if (cfg->num_ips > 0) {
+								uint32_t port_range =
+									cfg->port_high - cfg->port_low + 1;
+								if (port_range == 0)
+									port_range = 1;
 
-				if (sv->mode != SNAT_MODE_OFF &&
-				    ctx->shm->nat_pool_configs &&
-				    ctx->shm->nat_pool_ips_v4) {
-					uint32_t pool_id = sv->mode;
-					if (pool_id < MAX_NAT_POOLS) {
-						struct nat_pool_config *cfg =
-							&ctx->shm->nat_pool_configs[pool_id];
-						if (cfg->num_ips > 0) {
-							uint32_t port_range =
-								cfg->port_high - cfg->port_low + 1;
-							if (port_range == 0)
-								port_range = 1;
+								uint64_t val = ctx->snat_port_counter++
+									* MAX_LCORES + ctx->lcore_id;
+								uint16_t port = cfg->port_low +
+									(uint16_t)(val % port_range);
 
-							uint64_t val = ctx->snat_port_counter++
-								* MAX_LCORES + ctx->lcore_id;
-							uint16_t port = cfg->port_low +
-								(uint16_t)(val % port_range);
+								uint32_t ip_idx;
+								if (cfg->addr_persistent)
+									ip_idx = meta->src_ip.v4 % cfg->num_ips;
+								else
+									ip_idx = (uint32_t)(
+										(val / port_range) % cfg->num_ips);
 
-							uint32_t ip_idx;
-							if (cfg->addr_persistent)
-								ip_idx = meta->src_ip.v4 % cfg->num_ips;
-							else
-								ip_idx = (uint32_t)(
-									(val / port_range) % cfg->num_ips);
+								uint32_t map_idx =
+									pool_id * MAX_NAT_POOL_IPS_PER_POOL + ip_idx;
+								if (map_idx < MAX_NAT_POOL_IPS) {
+									uint32_t alloc_ip =
+										ctx->shm->nat_pool_ips_v4[map_idx];
+									if (alloc_ip != 0) {
+										meta->nat_src_ip.v4 = alloc_ip;
+										meta->nat_src_port =
+											rte_cpu_to_be_16(port);
+										meta->nat_flags |= SESS_FLAG_SNAT;
 
-							uint32_t map_idx =
-								pool_id * MAX_NAT_POOL_IPS_PER_POOL + ip_idx;
-							if (map_idx < MAX_NAT_POOL_IPS) {
-								uint32_t alloc_ip =
-									ctx->shm->nat_pool_ips_v4[map_idx];
-								if (alloc_ip != 0) {
-									meta->nat_src_ip.v4 = alloc_ip;
-									meta->nat_src_port =
-										rte_cpu_to_be_16(port);
-									meta->nat_flags |= SESS_FLAG_SNAT;
+										/* Insert return-path DNAT entry so
+										 * zone_lookup translates return packets
+										 * back to the original src IP/port */
+										if (ctx->shm->dnat_table &&
+										    ctx->shm->dnat_values) {
+											struct dnat_key rdk = {
+												.protocol = meta->protocol,
+												.dst_ip = alloc_ip,
+												.dst_port = rte_cpu_to_be_16(port),
+											};
+											int rdpos = rte_hash_add_key(
+												ctx->shm->dnat_table, &rdk);
+											if (rdpos >= 0) {
+												struct dnat_value *rdv =
+													&ctx->shm->dnat_values[rdpos];
+												rdv->new_dst_ip = meta->src_ip.v4;
+												rdv->new_dst_port = meta->src_port;
+												rdv->flags = 0;
+											}
+										}
+									}
 								}
 							}
 						}
 					}
+					break;
 				}
-				break;  /* First matching SNAT rule wins */
+			} else if (meta->addr_family == AF_INET6 &&
+			           ctx->shm->snat_rules_v6 && ctx->shm->snat_values_v6) {
+				/* IPv6 SNAT pool allocation */
+				struct snat_key sk = {
+					.from_zone = meta->ingress_zone,
+					.to_zone = meta->egress_zone,
+				};
+
+				for (uint16_t ri = 0; ri < MAX_SNAT_RULES_PER_PAIR; ri++) {
+					sk.rule_idx = ri;
+					int spos = rte_hash_lookup(ctx->shm->snat_rules_v6, &sk);
+					if (spos < 0)
+						break;
+
+					struct snat_value_v6 *sv6 = &ctx->shm->snat_values_v6[spos];
+
+					if (sv6->src_addr_id != 0 &&
+					    lpm_lookup_addr_id(ctx, meta, 1, sv6->src_addr_id) == 0)
+						continue;
+					if (sv6->dst_addr_id != 0 &&
+					    lpm_lookup_addr_id(ctx, meta, 0, sv6->dst_addr_id) == 0)
+						continue;
+
+					if (sv6->counter_id > 0)
+						ctr_nat_rule_add(ctx, sv6->counter_id,
+						                 rte_pktmbuf_pkt_len(pkt));
+
+					if (sv6->mode != SNAT_MODE_OFF &&
+					    ctx->shm->nat_pool_configs &&
+					    ctx->shm->nat_pool_ips_v6) {
+						uint32_t pool_id = sv6->mode;
+						if (pool_id < MAX_NAT_POOLS) {
+							struct nat_pool_config *cfg =
+								&ctx->shm->nat_pool_configs[pool_id];
+							if (cfg->num_ips_v6 > 0) {
+								uint32_t port_range =
+									cfg->port_high - cfg->port_low + 1;
+								if (port_range == 0)
+									port_range = 1;
+
+								uint64_t val = ctx->snat_port_counter++
+									* MAX_LCORES + ctx->lcore_id;
+								uint16_t port = cfg->port_low +
+									(uint16_t)(val % port_range);
+
+								uint32_t ip_idx;
+								if (cfg->addr_persistent) {
+									uint32_t hash = 0;
+									for (int i = 0; i < 4; i++)
+										hash ^= ((uint32_t *)meta->src_ip.v6)[i];
+									ip_idx = hash % cfg->num_ips_v6;
+								} else {
+									ip_idx = (uint32_t)(
+										(val / port_range) % cfg->num_ips_v6);
+								}
+
+								uint32_t map_idx =
+									pool_id * MAX_NAT_POOL_IPS_PER_POOL + ip_idx;
+								if (map_idx < MAX_NAT_POOL_IPS) {
+									struct nat_pool_ip_v6 *pip6 =
+										&ctx->shm->nat_pool_ips_v6[map_idx];
+									uint8_t zero[16] = {0};
+									if (memcmp(pip6->ip, zero, 16) != 0) {
+										memcpy(meta->nat_src_ip.v6, pip6->ip, 16);
+										meta->nat_src_port =
+											rte_cpu_to_be_16(port);
+										meta->nat_flags |= SESS_FLAG_SNAT;
+
+										/* Insert return-path DNAT v6 entry */
+										if (ctx->shm->dnat_table_v6 &&
+										    ctx->shm->dnat_values_v6) {
+											struct dnat_key_v6 rdk6 = {
+												.protocol = meta->protocol,
+												.dst_port = rte_cpu_to_be_16(port),
+											};
+											memcpy(rdk6.dst_ip, pip6->ip, 16);
+											int rdpos = rte_hash_add_key(
+												ctx->shm->dnat_table_v6, &rdk6);
+											if (rdpos >= 0) {
+												struct dnat_value_v6 *rdv6 =
+													&ctx->shm->dnat_values_v6[rdpos];
+												memcpy(rdv6->new_dst_ip,
+												       meta->src_ip.v6, 16);
+												rdv6->new_dst_port = meta->src_port;
+												rdv6->flags = 0;
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+					break;
+				}
 			}
 		}
 
