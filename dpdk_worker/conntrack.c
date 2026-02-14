@@ -54,6 +54,8 @@ tcp_mss_clamp(struct rte_mbuf *pkt, struct pkt_meta *meta,
 	uint16_t max_mss = fc->tcp_mss_ipsec;
 	if (fc->tcp_mss_gre_in > 0 && (fc->tcp_mss_gre_in < max_mss || max_mss == 0))
 		max_mss = fc->tcp_mss_gre_in;
+	if (fc->tcp_mss_gre_out > 0 && (fc->tcp_mss_gre_out < max_mss || max_mss == 0))
+		max_mss = fc->tcp_mss_gre_out;
 
 	if (max_mss == 0)
 		return;
