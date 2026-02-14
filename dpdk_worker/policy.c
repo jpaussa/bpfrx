@@ -15,6 +15,7 @@
 #include "shared_mem.h"
 #include "tables.h"
 #include "counters.h"
+#include "events.h"
 
 /**
  * lpm_lookup_addr_id — Look up an address in the LPM and then check membership.
@@ -164,12 +165,14 @@ policy_check(struct rte_mbuf *pkt, struct pkt_meta *meta,
 			ctr_policy_add(ctx, rule->counter_id, rte_pktmbuf_pkt_len(pkt));
 
 		/* Log */
-		if (rule->log) {
-			/* TODO: emit event to event_ring */
-		}
+		if (rule->log)
+			emit_event(ctx, meta, EVENT_TYPE_FILTER_LOG, rule->action);
 
-		if (rule->action != ACTION_PERMIT)
+		/* Emit deny event for non-permit actions */
+		if (rule->action != ACTION_PERMIT) {
 			ctr_global_inc(ctx, GLOBAL_CTR_POLICY_DENY);
+			emit_event(ctx, meta, EVENT_TYPE_POLICY_DENY, rule->action);
+		}
 
 		return rule->action;
 	}

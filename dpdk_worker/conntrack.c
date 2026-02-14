@@ -14,6 +14,7 @@
 #include "shared_mem.h"
 #include "tables.h"
 #include "counters.h"
+#include "events.h"
 
 /* Conntrack result codes */
 #define CT_NEW         0
@@ -134,8 +135,20 @@ conntrack_lookup(struct rte_mbuf *pkt, struct pkt_meta *meta,
 			sv->last_seen = now;
 
 			/* TCP state transition */
-			if (meta->protocol == PROTO_TCP)
-				sv->state = ct_tcp_update_state(sv->state, meta->tcp_flags, dir);
+			if (meta->protocol == PROTO_TCP) {
+				uint8_t old_state = sv->state;
+				sv->state = ct_tcp_update_state(old_state, meta->tcp_flags, dir);
+				if (sv->state == SESS_STATE_CLOSED ||
+				    (sv->state == SESS_STATE_TIME_WAIT && old_state != SESS_STATE_TIME_WAIT)) {
+					meta->ingress_zone = sv->ingress_zone;
+					meta->egress_zone = sv->egress_zone;
+					meta->policy_id = sv->policy_id;
+					emit_event_with_stats(ctx, meta, EVENT_TYPE_SESSION_CLOSE,
+					                      ACTION_PERMIT,
+					                      sv->fwd_packets + sv->rev_packets,
+					                      sv->fwd_bytes + sv->rev_bytes);
+				}
+			}
 
 			/* Update counters */
 			if (dir == 0) {
@@ -185,8 +198,20 @@ conntrack_lookup(struct rte_mbuf *pkt, struct pkt_meta *meta,
 			struct session_value *sv = &ctx->shm->session_values_v4[pos];
 
 			sv->last_seen = now;
-			if (meta->protocol == PROTO_TCP)
-				sv->state = ct_tcp_update_state(sv->state, meta->tcp_flags, 1);
+			if (meta->protocol == PROTO_TCP) {
+				uint8_t old_state = sv->state;
+				sv->state = ct_tcp_update_state(old_state, meta->tcp_flags, 1);
+				if (sv->state == SESS_STATE_CLOSED ||
+				    (sv->state == SESS_STATE_TIME_WAIT && old_state != SESS_STATE_TIME_WAIT)) {
+					meta->ingress_zone = sv->egress_zone;
+					meta->egress_zone = sv->ingress_zone;
+					meta->policy_id = sv->policy_id;
+					emit_event_with_stats(ctx, meta, EVENT_TYPE_SESSION_CLOSE,
+					                      ACTION_PERMIT,
+					                      sv->fwd_packets + sv->rev_packets,
+					                      sv->fwd_bytes + sv->rev_bytes);
+				}
+			}
 
 			sv->rev_packets++;
 			sv->rev_bytes += rte_pktmbuf_pkt_len(pkt);
@@ -230,8 +255,21 @@ conntrack_lookup(struct rte_mbuf *pkt, struct pkt_meta *meta,
 		if (pos >= 0) {
 			struct session_value_v6 *sv = &ctx->shm->session_values_v6[pos];
 			sv->last_seen = now;
-			if (meta->protocol == PROTO_TCP)
-				sv->state = ct_tcp_update_state(sv->state, meta->tcp_flags, sv->is_reverse ? 1 : 0);
+			if (meta->protocol == PROTO_TCP) {
+				uint8_t old_state = sv->state;
+				uint8_t dir = sv->is_reverse ? 1 : 0;
+				sv->state = ct_tcp_update_state(old_state, meta->tcp_flags, dir);
+				if (sv->state == SESS_STATE_CLOSED ||
+				    (sv->state == SESS_STATE_TIME_WAIT && old_state != SESS_STATE_TIME_WAIT)) {
+					meta->ingress_zone = sv->ingress_zone;
+					meta->egress_zone = sv->egress_zone;
+					meta->policy_id = sv->policy_id;
+					emit_event_with_stats(ctx, meta, EVENT_TYPE_SESSION_CLOSE,
+					                      ACTION_PERMIT,
+					                      sv->fwd_packets + sv->rev_packets,
+					                      sv->fwd_bytes + sv->rev_bytes);
+				}
+			}
 
 			if (!sv->is_reverse) {
 				sv->fwd_packets++;
@@ -269,8 +307,20 @@ conntrack_lookup(struct rte_mbuf *pkt, struct pkt_meta *meta,
 		if (pos >= 0) {
 			struct session_value_v6 *sv = &ctx->shm->session_values_v6[pos];
 			sv->last_seen = now;
-			if (meta->protocol == PROTO_TCP)
-				sv->state = ct_tcp_update_state(sv->state, meta->tcp_flags, 1);
+			if (meta->protocol == PROTO_TCP) {
+				uint8_t old_state = sv->state;
+				sv->state = ct_tcp_update_state(old_state, meta->tcp_flags, 1);
+				if (sv->state == SESS_STATE_CLOSED ||
+				    (sv->state == SESS_STATE_TIME_WAIT && old_state != SESS_STATE_TIME_WAIT)) {
+					meta->ingress_zone = sv->egress_zone;
+					meta->egress_zone = sv->ingress_zone;
+					meta->policy_id = sv->policy_id;
+					emit_event_with_stats(ctx, meta, EVENT_TYPE_SESSION_CLOSE,
+					                      ACTION_PERMIT,
+					                      sv->fwd_packets + sv->rev_packets,
+					                      sv->fwd_bytes + sv->rev_bytes);
+				}
+			}
 			sv->rev_packets++;
 			sv->rev_bytes += rte_pktmbuf_pkt_len(pkt);
 			meta->ct_state = sv->state;
@@ -361,6 +411,8 @@ conntrack_create(struct rte_mbuf *pkt, struct pkt_meta *meta,
 		}
 		ctx->shm->session_values_v4[rpos] = rev_val;
 
+		emit_event(ctx, meta, EVENT_TYPE_SESSION_OPEN, ACTION_PERMIT);
+
 	} else if (meta->addr_family == AF_INET6) {
 		if (!ctx->shm->sessions_v6 || !ctx->shm->session_values_v6)
 			return -1;
@@ -410,6 +462,8 @@ conntrack_create(struct rte_mbuf *pkt, struct pkt_meta *meta,
 			return -1;
 		}
 		ctx->shm->session_values_v6[rpos] = rev_val6;
+
+		emit_event(ctx, meta, EVENT_TYPE_SESSION_OPEN, ACTION_PERMIT);
 	}
 
 	return 0;

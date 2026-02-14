@@ -177,6 +177,20 @@ type DataPlane interface {
 	// Persistent NAT table
 	GetPersistentNAT() *PersistentNATTable
 
+	// Event source for reading pipeline events (session open/close, deny, etc.)
+	NewEventSource() (EventSource, error)
+
 	// Raw map access (eBPF-specific; DPDK implementations may return nil)
 	Map(name string) *ebpf.Map
+}
+
+// EventSource reads raw event records from the dataplane.
+// The eBPF implementation wraps a ring buffer reader; DPDK uses rte_ring.
+type EventSource interface {
+	// ReadEvent blocks until an event is available and returns raw bytes.
+	// Returns an error on close or failure.
+	ReadEvent() ([]byte, error)
+
+	// Close shuts down the event source, unblocking any pending ReadEvent.
+	Close() error
 }

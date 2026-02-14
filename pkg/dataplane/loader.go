@@ -8,6 +8,7 @@ import (
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
+	"github.com/cilium/ebpf/ringbuf"
 )
 
 const linkPinPath = "/sys/fs/bpf/bpfrx/links"
@@ -299,6 +300,36 @@ func (m *Manager) GetPersistentNAT() *PersistentNATTable {
 // Map returns a named eBPF map, or nil if not found.
 func (m *Manager) Map(name string) *ebpf.Map {
 	return m.maps[name]
+}
+
+// NewEventSource creates an EventSource that reads from the eBPF events ring buffer.
+func (m *Manager) NewEventSource() (EventSource, error) {
+	evMap := m.maps["events"]
+	if evMap == nil {
+		return nil, fmt.Errorf("events map not loaded")
+	}
+	rd, err := ringbuf.NewReader(evMap)
+	if err != nil {
+		return nil, fmt.Errorf("create ring buffer reader: %w", err)
+	}
+	return &ebpfEventSource{reader: rd}, nil
+}
+
+// ebpfEventSource reads events from a cilium/ebpf ring buffer.
+type ebpfEventSource struct {
+	reader *ringbuf.Reader
+}
+
+func (s *ebpfEventSource) ReadEvent() ([]byte, error) {
+	rec, err := s.reader.Read()
+	if err != nil {
+		return nil, err
+	}
+	return rec.RawSample, nil
+}
+
+func (s *ebpfEventSource) Close() error {
+	return s.reader.Close()
 }
 
 // LastCompileResult returns the result from the most recent Compile call.

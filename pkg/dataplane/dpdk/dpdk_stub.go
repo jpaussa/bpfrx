@@ -235,6 +235,10 @@ func (m *Manager) ClearFilterCounters() error    { return nil }
 func (m *Manager) ClearAllCounters() error       { return nil }
 func (m *Manager) ClearNATRuleCounters() error   { return nil }
 
+// --- Events ---
+
+func (m *Manager) NewEventSource() (dataplane.EventSource, error) { return nil, nil }
+
 // --- FIB ---
 
 func (m *Manager) BumpFIBGeneration() {}

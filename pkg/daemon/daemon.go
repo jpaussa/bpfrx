@@ -182,9 +182,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 			gc.Run(ctx)
 		}()
 
-		eventsMap := d.dp.Map("events")
-		if eventsMap != nil {
-			er = logging.NewEventReader(eventsMap, eventBuf)
+		evSrc, evErr := d.dp.NewEventSource()
+		if evErr != nil {
+			slog.Warn("failed to create event source", "err", evErr)
+		}
+		if evSrc != nil {
+			er = logging.NewEventReader(evSrc, eventBuf)
 			d.eventReader = er
 			wg.Add(1)
 			go func() {

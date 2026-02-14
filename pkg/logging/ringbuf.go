@@ -1,4 +1,4 @@
-// Package logging implements eBPF ring buffer event reading.
+// Package logging implements dataplane event reading.
 package logging
 
 import (
@@ -11,17 +11,15 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/cilium/ebpf"
-	"github.com/cilium/ebpf/ringbuf"
 	"github.com/psaab/bpfrx/pkg/dataplane"
 )
 
 // EventCallback is called for each processed event record.
 type EventCallback func(rec EventRecord, raw []byte)
 
-// EventReader reads events from the eBPF ring buffer.
+// EventReader reads events from a dataplane EventSource.
 type EventReader struct {
-	eventsMap     *ebpf.Map
+	source        dataplane.EventSource
 	buffer        *EventBuffer
 	syslogMu      sync.RWMutex
 	syslogClients []*SyslogClient
@@ -29,11 +27,11 @@ type EventReader struct {
 	callbacks     []EventCallback
 }
 
-// NewEventReader creates a new event reader for the given events map.
-func NewEventReader(eventsMap *ebpf.Map, buffer *EventBuffer) *EventReader {
+// NewEventReader creates a new event reader for the given event source.
+func NewEventReader(source dataplane.EventSource, buffer *EventBuffer) *EventReader {
 	return &EventReader{
-		eventsMap: eventsMap,
-		buffer:    buffer,
+		source: source,
+		buffer: buffer,
 	}
 }
 
@@ -72,44 +70,37 @@ func (er *EventReader) ReplaceSyslogClients(clients []*SyslogClient) {
 
 // Run starts reading events. It blocks until ctx is cancelled.
 func (er *EventReader) Run(ctx context.Context) {
-	if er.eventsMap == nil {
-		slog.Warn("events map is nil, event reader not starting")
+	if er.source == nil {
+		slog.Warn("event source is nil, event reader not starting")
 		return
 	}
-
-	rd, err := ringbuf.NewReader(er.eventsMap)
-	if err != nil {
-		slog.Error("failed to create ring buffer reader", "err", err)
-		return
-	}
-	defer rd.Close()
 
 	slog.Info("event reader started")
 
-	// Close the reader when context is done
+	// Close the source when context is done
 	go func() {
 		<-ctx.Done()
-		rd.Close()
+		er.source.Close()
 	}()
 
 	for {
-		record, err := rd.Read()
+		data, err := er.source.ReadEvent()
 		if err != nil {
 			select {
 			case <-ctx.Done():
 				slog.Info("event reader stopped")
 				return
 			default:
-				slog.Error("ring buffer read error", "err", err)
+				slog.Error("event source read error", "err", err)
 				return
 			}
 		}
 
-		if len(record.RawSample) < int(unsafe.Sizeof(dataplane.Event{})) {
+		if len(data) < int(unsafe.Sizeof(dataplane.Event{})) {
 			continue
 		}
 
-		er.logEvent(record.RawSample)
+		er.logEvent(data)
 	}
 }
 

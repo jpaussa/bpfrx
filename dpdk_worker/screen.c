@@ -13,6 +13,7 @@
 #include "shared_mem.h"
 #include "tables.h"
 #include "counters.h"
+#include "events.h"
 
 /**
  * screen_check — Run IDS/screen checks against the packet.
@@ -56,6 +57,7 @@ screen_check(struct rte_mbuf *pkt, struct pkt_meta *meta,
 		    meta->src_port == meta->dst_port &&
 		    (meta->protocol == PROTO_TCP || meta->protocol == PROTO_UDP)) {
 			ctr_global_inc(ctx, GLOBAL_CTR_SCREEN_LAND_ATTACK);
+			emit_event(ctx, meta, EVENT_TYPE_SCREEN_DROP, ACTION_DENY);
 			return -1;
 		}
 	}
@@ -65,12 +67,14 @@ screen_check(struct rte_mbuf *pkt, struct pkt_meta *meta,
 		if ((sc->flags & SCREEN_TCP_SYN_FIN) &&
 		    (meta->tcp_flags & 0x02) && (meta->tcp_flags & 0x01)) {
 			ctr_global_inc(ctx, GLOBAL_CTR_SCREEN_TCP_SYN_FIN);
+			emit_event(ctx, meta, EVENT_TYPE_SCREEN_DROP, ACTION_DENY);
 			return -1;
 		}
 
 		/* 3. TCP no flag (null scan) */
 		if ((sc->flags & SCREEN_TCP_NO_FLAG) && meta->tcp_flags == 0) {
 			ctr_global_inc(ctx, GLOBAL_CTR_SCREEN_TCP_NO_FLAG);
+			emit_event(ctx, meta, EVENT_TYPE_SCREEN_DROP, ACTION_DENY);
 			return -1;
 		}
 
@@ -78,6 +82,7 @@ screen_check(struct rte_mbuf *pkt, struct pkt_meta *meta,
 		if ((sc->flags & SCREEN_TCP_FIN_NO_ACK) &&
 		    (meta->tcp_flags & 0x01) && !(meta->tcp_flags & 0x10)) {
 			ctr_global_inc(ctx, GLOBAL_CTR_SCREEN_TCP_FIN_NO_ACK);
+			emit_event(ctx, meta, EVENT_TYPE_SCREEN_DROP, ACTION_DENY);
 			return -1;
 		}
 
@@ -86,6 +91,7 @@ screen_check(struct rte_mbuf *pkt, struct pkt_meta *meta,
 		    (meta->tcp_flags & 0x20) &&
 		    rte_be_to_cpu_16(meta->dst_port) == 139) {
 			ctr_global_inc(ctx, GLOBAL_CTR_SCREEN_WINNUKE);
+			emit_event(ctx, meta, EVENT_TYPE_SCREEN_DROP, ACTION_DENY);
 			return -1;
 		}
 
@@ -93,6 +99,7 @@ screen_check(struct rte_mbuf *pkt, struct pkt_meta *meta,
 		if ((sc->flags & SCREEN_SYN_FRAG) &&
 		    (meta->tcp_flags & 0x02) && meta->is_fragment) {
 			ctr_global_inc(ctx, GLOBAL_CTR_SCREEN_SYN_FRAG);
+			emit_event(ctx, meta, EVENT_TYPE_SCREEN_DROP, ACTION_DENY);
 			return -1;
 		}
 	}
@@ -102,6 +109,7 @@ screen_check(struct rte_mbuf *pkt, struct pkt_meta *meta,
 	    (meta->protocol == PROTO_ICMP || meta->protocol == PROTO_ICMPV6) &&
 	    meta->pkt_len > 65535) {
 		ctr_global_inc(ctx, GLOBAL_CTR_SCREEN_PING_DEATH);
+		emit_event(ctx, meta, EVENT_TYPE_SCREEN_DROP, ACTION_DENY);
 		return -1;
 	}
 
@@ -136,6 +144,7 @@ screen_check(struct rte_mbuf *pkt, struct pkt_meta *meta,
 			fs->syn_count++;
 			if (sc->syn_flood_thresh > 0 && fs->syn_count > sc->syn_flood_thresh) {
 				ctr_global_inc(ctx, GLOBAL_CTR_SCREEN_SYN_FLOOD);
+				emit_event(ctx, meta, EVENT_TYPE_SCREEN_DROP, ACTION_DENY);
 				return -1;
 			}
 		}
@@ -146,6 +155,7 @@ screen_check(struct rte_mbuf *pkt, struct pkt_meta *meta,
 			fs->icmp_count++;
 			if (sc->icmp_flood_thresh > 0 && fs->icmp_count > sc->icmp_flood_thresh) {
 				ctr_global_inc(ctx, GLOBAL_CTR_SCREEN_ICMP_FLOOD);
+				emit_event(ctx, meta, EVENT_TYPE_SCREEN_DROP, ACTION_DENY);
 				return -1;
 			}
 		}
@@ -155,6 +165,7 @@ screen_check(struct rte_mbuf *pkt, struct pkt_meta *meta,
 			fs->udp_count++;
 			if (sc->udp_flood_thresh > 0 && fs->udp_count > sc->udp_flood_thresh) {
 				ctr_global_inc(ctx, GLOBAL_CTR_SCREEN_UDP_FLOOD);
+				emit_event(ctx, meta, EVENT_TYPE_SCREEN_DROP, ACTION_DENY);
 				return -1;
 			}
 		}

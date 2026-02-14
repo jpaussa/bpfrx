@@ -15,6 +15,7 @@ package dpdk
 #include <rte_eal.h>
 #include <rte_malloc.h>
 #include <rte_memzone.h>
+#include <rte_cycles.h>
 #include <stdlib.h>
 #include <string.h>
 */
@@ -1059,6 +1060,71 @@ func (m *Manager) ClearAllCounters() error {
 
 func (m *Manager) ClearNATRuleCounters() error {
 	return m.ClearGlobalCounters()
+}
+
+// --- Events ---
+
+// dpdkEventSource reads events from an rte_ring shared with the primary process.
+type dpdkEventSource struct {
+	ring   *C.struct_rte_ring
+	closed uint32 // atomic flag
+}
+
+func (m *Manager) NewEventSource() (dataplane.EventSource, error) {
+	shm := m.platform.shm
+	if shm == nil {
+		return nil, fmt.Errorf("DPDK shared memory not loaded")
+	}
+	if shm.event_ring == nil {
+		return nil, fmt.Errorf("DPDK event_ring not allocated")
+	}
+	return &dpdkEventSource{ring: shm.event_ring}, nil
+}
+
+func (s *dpdkEventSource) ReadEvent() ([]byte, error) {
+	for {
+		if atomic.LoadUint32(&s.closed) != 0 {
+			return nil, fmt.Errorf("event source closed")
+		}
+
+		var obj unsafe.Pointer
+		n := C.rte_ring_dequeue(s.ring, &obj)
+		if n != 0 {
+			// Ring empty — brief sleep to avoid busy-wait
+			C.rte_delay_us_sleep(C.uint(1000)) // 1ms
+			continue
+		}
+
+		// obj points to a struct event allocated by the DPDK worker
+		evt := (*C.struct_event)(obj)
+
+		// Serialize to bytes matching the eBPF event layout
+		data := make([]byte, unsafe.Sizeof(dataplane.Event{}))
+		binary.LittleEndian.PutUint64(data[0:8], uint64(evt.timestamp))
+		copy(data[8:24], C.GoBytes(unsafe.Pointer(&evt.src_ip[0]), 16))
+		copy(data[24:40], C.GoBytes(unsafe.Pointer(&evt.dst_ip[0]), 16))
+		binary.BigEndian.PutUint16(data[40:42], uint16(evt.src_port))
+		binary.BigEndian.PutUint16(data[42:44], uint16(evt.dst_port))
+		binary.LittleEndian.PutUint32(data[44:48], uint32(evt.policy_id))
+		binary.LittleEndian.PutUint16(data[48:50], uint16(evt.ingress_zone))
+		binary.LittleEndian.PutUint16(data[50:52], uint16(evt.egress_zone))
+		data[52] = uint8(evt.event_type)
+		data[53] = uint8(evt.protocol)
+		data[54] = uint8(evt.action)
+		data[55] = uint8(evt.addr_family)
+		binary.LittleEndian.PutUint64(data[56:64], uint64(evt.session_packets))
+		binary.LittleEndian.PutUint64(data[64:72], uint64(evt.session_bytes))
+
+		// Free the event allocated by the worker
+		C.rte_free(unsafe.Pointer(evt))
+
+		return data, nil
+	}
+}
+
+func (s *dpdkEventSource) Close() error {
+	atomic.StoreUint32(&s.closed, 1)
+	return nil
 }
 
 // --- FIB ---
