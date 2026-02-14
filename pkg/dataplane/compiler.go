@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/netip"
 	"os"
 	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cilium/ebpf"
 	"github.com/psaab/bpfrx/pkg/config"
@@ -741,9 +743,12 @@ func compileZones(dp DataPlane,cfg *config.Config, result *CompileResult) error 
 			daemonOwned["vrf-"+ri.Name] = true
 		}
 	}
-	for _, ifc := range cfg.Interfaces.Interfaces {
+	for name, ifc := range cfg.Interfaces.Interfaces {
 		if ifc.Tunnel != nil {
 			daemonOwned[ifc.Tunnel.Name] = true
+		}
+		if len(ifc.FabricMembers) > 0 {
+			daemonOwned[name] = true
 		}
 	}
 
@@ -802,6 +807,17 @@ func compileZones(dp DataPlane,cfg *config.Config, result *CompileResult) error 
 }
 
 func compileAddressBook(dp DataPlane,cfg *config.Config, result *CompileResult) error {
+	// Clear stale address book entries before repopulating.
+	if err := dp.ClearAddressBookV4(); err != nil {
+		return fmt.Errorf("clear address_book_v4: %w", err)
+	}
+	if err := dp.ClearAddressBookV6(); err != nil {
+		return fmt.Errorf("clear address_book_v6: %w", err)
+	}
+	if err := dp.ClearAddressMembership(); err != nil {
+		return fmt.Errorf("clear address_membership: %w", err)
+	}
+
 	ab := cfg.Security.AddressBook
 	if ab == nil {
 		result.nextAddrID = 1 // start from 1 for implicit entries
@@ -948,8 +964,10 @@ func compileApplications(dp DataPlane,cfg *config.Config, result *CompileResult)
 			appTimeout = uint16(app.InactivityTimeout)
 		}
 
+		algType := algTypeFromString(app.ALG)
+
 		for _, port := range ports {
-			if err := dp.SetApplication(proto, port, appID, appTimeout); err != nil {
+			if err := dp.SetApplication(proto, port, appID, appTimeout, algType); err != nil {
 				return fmt.Errorf("set application %s port %d: %w",
 					appName, port, err)
 			}
@@ -1326,6 +1344,11 @@ func compileNAT(dp DataPlane,cfg *config.Config, result *CompileResult) error {
 	writtenDNAT := make(map[DNATKey]bool)
 	writtenDNATv6 := make(map[DNATKeyV6]bool)
 
+	// Clear stale persistent NAT pool configs before recompilation
+	if pnat := dp.GetPersistentNAT(); pnat != nil {
+		pnat.ClearPoolConfigs()
+	}
+
 	natCfg := &cfg.Security.NAT
 
 	// Source NAT: allocate pool IDs and compile pools + rules
@@ -1527,6 +1550,40 @@ func compileNAT(dp DataPlane,cfg *config.Config, result *CompileResult) error {
 
 			if err := dp.SetNATPoolConfig(uint32(curPoolID), poolCfg); err != nil {
 				return fmt.Errorf("set pool config %d: %w", curPoolID, err)
+			}
+
+			// Register persistent NAT pool config and IPs on the persistent NAT table
+			if !rule.Then.Interface {
+				pool := natCfg.SourcePools[rule.Then.PoolName]
+				if pool.PersistentNAT != nil {
+					pnat := dp.GetPersistentNAT()
+					if pnat != nil {
+						timeout := time.Duration(pool.PersistentNAT.InactivityTimeout) * time.Second
+						if timeout == 0 {
+							timeout = 300 * time.Second
+						}
+						pnat.SetPoolConfig(pool.Name, PersistentNATPoolInfo{
+							Timeout:             timeout,
+							PermitAnyRemoteHost: pool.PersistentNAT.PermitAnyRemoteHost,
+						})
+						for _, ip := range v4IPs {
+							addr, ok := netip.AddrFromSlice(ip.To4())
+							if ok {
+								pnat.RegisterNATIP(addr, pool.Name)
+							}
+						}
+						for _, ip := range v6IPs {
+							addr, ok := netip.AddrFromSlice(ip.To16())
+							if ok {
+								pnat.RegisterNATIP(addr, pool.Name)
+							}
+						}
+						slog.Info("persistent NAT pool registered",
+							"pool", pool.Name,
+							"timeout", timeout,
+							"permit_any_remote_host", pool.PersistentNAT.PermitAnyRemoteHost)
+					}
+				}
 			}
 
 			// Resolve SNAT match criteria to address IDs
@@ -2155,6 +2212,20 @@ func protocolNumber(name string) uint8 {
 		return 1
 	case "icmpv6", "icmp6":
 		return 58
+	default:
+		return 0
+	}
+}
+
+// algTypeFromString maps an ALG name to its BPF constant (0=none, 1=FTP, 2=SIP, 3=DNS).
+func algTypeFromString(alg string) uint8 {
+	switch strings.ToLower(alg) {
+	case "ftp":
+		return 1
+	case "sip":
+		return 2
+	case "dns":
+		return 3
 	default:
 		return 0
 	}

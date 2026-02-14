@@ -106,9 +106,15 @@ func (m *Manager) SetAddressBookEntry(cidr string, addressID uint32) error { ret
 
 func (m *Manager) SetAddressMembership(resolvedID, setID uint32) error { return nil }
 
+func (m *Manager) ClearAddressBookV4() error { return nil }
+
+func (m *Manager) ClearAddressBookV6() error { return nil }
+
+func (m *Manager) ClearAddressMembership() error { return nil }
+
 // --- Application ---
 
-func (m *Manager) SetApplication(protocol uint8, dstPort uint16, appID uint32, timeout uint16) error {
+func (m *Manager) SetApplication(protocol uint8, dstPort uint16, appID uint32, timeout uint16, algType uint8) error {
 	return nil
 }
 

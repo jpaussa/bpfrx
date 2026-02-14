@@ -3,7 +3,9 @@ package conntrack
 
 import (
 	"context"
+	"encoding/binary"
 	"log/slog"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -117,8 +119,31 @@ func (gc *GC) sweep() {
 		}
 	}
 
-	// Clean up dynamic dnat_table entries for expired SNAT sessions
+	// Clean up dynamic dnat_table entries for expired SNAT sessions.
+	// For persistent NAT pools, save the binding before cleanup.
+	pnat := gc.dp.GetPersistentNAT()
 	for _, s := range snatExpired {
+		// Check if this SNAT session belongs to a persistent NAT pool
+		if pnat != nil {
+			var natIPBytes [4]byte
+			binary.NativeEndian.PutUint32(natIPBytes[:], s.val.NATSrcIP)
+			natIP := netip.AddrFrom4(natIPBytes)
+
+			if poolName, poolCfg, ok := pnat.LookupPool(natIP); ok {
+				srcIP := netip.AddrFrom4(s.key.SrcIP)
+				pnat.Save(&dataplane.PersistentNATBinding{
+					SrcIP:               srcIP,
+					SrcPort:             s.key.SrcPort,
+					NatIP:               natIP,
+					NatPort:             s.val.NATSrcPort,
+					PoolName:            poolName,
+					LastSeen:            time.Now(),
+					Timeout:             poolCfg.Timeout,
+					PermitAnyRemoteHost: poolCfg.PermitAnyRemoteHost,
+				})
+			}
+		}
+
 		dk := dataplane.DNATKey{
 			Protocol: s.key.Protocol,
 			DstIP:    s.val.NATSrcIP,
@@ -167,6 +192,24 @@ func (gc *GC) sweep() {
 	}
 
 	for _, s := range snatExpiredV6 {
+		// Check if this SNAT session belongs to a persistent NAT pool
+		if pnat != nil {
+			natIP := netip.AddrFrom16(s.val.NATSrcIP)
+			if poolName, poolCfg, ok := pnat.LookupPool(natIP); ok {
+				srcIP := netip.AddrFrom16(s.key.SrcIP)
+				pnat.Save(&dataplane.PersistentNATBinding{
+					SrcIP:               srcIP,
+					SrcPort:             s.key.SrcPort,
+					NatIP:               natIP,
+					NatPort:             s.val.NATSrcPort,
+					PoolName:            poolName,
+					LastSeen:            time.Now(),
+					Timeout:             poolCfg.Timeout,
+					PermitAnyRemoteHost: poolCfg.PermitAnyRemoteHost,
+				})
+			}
+		}
+
 		dk := dataplane.DNATKeyV6{
 			Protocol: s.key.Protocol,
 			DstIP:    s.val.NATSrcIP,
@@ -174,6 +217,13 @@ func (gc *GC) sweep() {
 		}
 		if err := gc.dp.DeleteDNATEntryV6(dk); err != nil {
 			slog.Debug("conntrack GC dnat_v6 cleanup failed", "err", err)
+		}
+	}
+
+	// Run persistent NAT table GC to expire old bindings
+	if pnat != nil {
+		if removed := pnat.GC(); removed > 0 {
+			slog.Info("persistent NAT GC", "removed", removed)
 		}
 	}
 

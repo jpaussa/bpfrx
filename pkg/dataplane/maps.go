@@ -89,8 +89,65 @@ func (m *Manager) SetAddressMembership(resolvedID, setID uint32) error {
 	return zm.Update(key, val, ebpf.UpdateAny)
 }
 
+// ClearAddressBookV4 removes all entries from the address_book_v4 LPM trie.
+func (m *Manager) ClearAddressBookV4() error {
+	zm, ok := m.maps["address_book_v4"]
+	if !ok {
+		return fmt.Errorf("address_book_v4 map not found")
+	}
+	var key LPMKeyV4
+	iter := zm.Iterate()
+	var keys []LPMKeyV4
+	var val []byte
+	for iter.Next(&key, &val) {
+		keys = append(keys, key)
+	}
+	for _, k := range keys {
+		zm.Delete(k)
+	}
+	return nil
+}
+
+// ClearAddressBookV6 removes all entries from the address_book_v6 LPM trie.
+func (m *Manager) ClearAddressBookV6() error {
+	zm, ok := m.maps["address_book_v6"]
+	if !ok {
+		return fmt.Errorf("address_book_v6 map not found")
+	}
+	var key LPMKeyV6
+	iter := zm.Iterate()
+	var keys []LPMKeyV6
+	var val []byte
+	for iter.Next(&key, &val) {
+		keys = append(keys, key)
+	}
+	for _, k := range keys {
+		zm.Delete(k)
+	}
+	return nil
+}
+
+// ClearAddressMembership removes all entries from the address_membership map.
+func (m *Manager) ClearAddressMembership() error {
+	zm, ok := m.maps["address_membership"]
+	if !ok {
+		return fmt.Errorf("address_membership map not found")
+	}
+	var key AddrMembershipKey
+	iter := zm.Iterate()
+	var keys []AddrMembershipKey
+	var val []byte
+	for iter.Next(&key, &val) {
+		keys = append(keys, key)
+	}
+	for _, k := range keys {
+		zm.Delete(k)
+	}
+	return nil
+}
+
 // SetApplication writes an application map entry.
-func (m *Manager) SetApplication(protocol uint8, dstPort uint16, appID uint32, timeout uint16) error {
+func (m *Manager) SetApplication(protocol uint8, dstPort uint16, appID uint32, timeout uint16, algType uint8) error {
 	zm, ok := m.maps["applications"]
 	if !ok {
 		return fmt.Errorf("applications map not found")
@@ -99,7 +156,7 @@ func (m *Manager) SetApplication(protocol uint8, dstPort uint16, appID uint32, t
 		Protocol: protocol,
 		DstPort:  htons(dstPort),
 	}
-	val := AppValue{AppID: appID, Timeout: timeout}
+	val := AppValue{AppID: appID, ALGType: algType, Timeout: timeout}
 	return zm.Update(key, val, ebpf.UpdateAny)
 }
 

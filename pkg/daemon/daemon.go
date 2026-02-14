@@ -67,10 +67,13 @@ type Daemon struct {
 	dhcpServer   *dhcpserver.Manager
 	feeds        *feeds.Manager
 	rpm          *rpm.Manager
-	flowExporter *flowexport.Exporter
-	flowCancel   context.CancelFunc
-	flowWg       sync.WaitGroup
-	dhcpRelay    *dhcprelay.Manager
+	flowExporter  *flowexport.Exporter
+	flowCancel    context.CancelFunc
+	flowWg        sync.WaitGroup
+	ipfixExporter *flowexport.IPFIXExporter
+	ipfixCancel   context.CancelFunc
+	ipfixWg       sync.WaitGroup
+	dhcpRelay     *dhcprelay.Manager
 	snmpAgent    *snmp.Agent
 	scheduler    *scheduler.Scheduler
 	slogHandler  *logging.SyslogSlogHandler
@@ -208,6 +211,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 				d.startFlowExporter(ctx, cfg, er)
 			}
 
+			// Start IPFIX exporter if configured
+			if cfg := d.store.ActiveConfig(); cfg != nil {
+				d.startIPFIXExporter(ctx, cfg, er)
+			}
+
 			// Set up flow traceoptions if configured
 			if cfg := d.store.ActiveConfig(); cfg != nil {
 				d.applyFlowTrace(cfg, er)
@@ -318,6 +326,15 @@ func (d *Daemon) Run(ctx context.Context) error {
 			defer wg.Done()
 			d.snmpAgent.Start(ctx)
 		}()
+
+		// Start link state monitor for SNMP traps.
+		if len(cfg.System.SNMP.TrapGroups) > 0 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				d.monitorLinkState(ctx)
+			}()
+		}
 	}
 
 	// Start policy scheduler if configured.
@@ -474,8 +491,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 	stop()
 	wg.Wait()
 
-	// Clean up flow exporter.
+	// Clean up flow exporters.
 	d.stopFlowExporter()
+	d.stopIPFIXExporter()
 
 	// Clean up dynamic address feeds.
 	if d.feeds != nil {
@@ -664,6 +682,21 @@ func (d *Daemon) applyConfig(cfg *config.Config) {
 	if d.routing != nil && len(cfg.Security.IPsec.VPNs) > 0 {
 		if err := d.routing.ApplyXfrmi(cfg.Security.IPsec.VPNs); err != nil {
 			slog.Warn("failed to apply xfrmi interfaces", "err", err)
+		}
+	}
+
+	// 1.7. Create bond (LAG) interfaces for fabric-options member-interfaces.
+	if d.routing != nil {
+		var bondIfaces []*config.InterfaceConfig
+		for _, ifc := range cfg.Interfaces.Interfaces {
+			if len(ifc.FabricMembers) > 0 {
+				bondIfaces = append(bondIfaces, ifc)
+			}
+		}
+		if len(bondIfaces) > 0 {
+			if err := d.routing.ApplyBonds(bondIfaces); err != nil {
+				slog.Warn("failed to apply bonds", "err", err)
+			}
 		}
 	}
 
@@ -1282,6 +1315,68 @@ func (d *Daemon) stopFlowExporter() {
 	if d.flowExporter != nil {
 		d.flowExporter.Close()
 		d.flowExporter = nil
+	}
+}
+
+// startIPFIXExporter starts the IPFIX (NetFlow v10) exporter if configured.
+func (d *Daemon) startIPFIXExporter(ctx context.Context, cfg *config.Config, er *logging.EventReader) {
+	ec := flowexport.BuildIPFIXExportConfig(&cfg.Services, &cfg.ForwardingOptions)
+	if ec == nil {
+		return
+	}
+
+	zoneIDs := buildZoneIDs(cfg)
+	ec.SamplingZones = flowexport.BuildSamplingZones(cfg, zoneIDs)
+
+	exp, err := flowexport.NewIPFIXExporter(*ec)
+	if err != nil {
+		slog.Warn("failed to create IPFIX exporter", "err", err)
+		return
+	}
+
+	ipfixCtx, cancel := context.WithCancel(ctx)
+	d.ipfixExporter = exp
+	d.ipfixCancel = cancel
+
+	er.AddCallback(func(rec logging.EventRecord, raw []byte) {
+		if rec.Type != "SESSION_CLOSE" {
+			return
+		}
+		if !ec.ShouldExport(rec.InZone, rec.OutZone) {
+			return
+		}
+		sd := flowexport.SessionCloseData{
+			SrcPort:  parseSrcPort(rec.SrcAddr),
+			DstPort:  parseSrcPort(rec.DstAddr),
+			Protocol: parseProtocol(rec.Protocol),
+		}
+		sd.SrcIP, sd.DstIP, sd.IsIPv6 = parseAddrPair(rec.SrcAddr, rec.DstAddr)
+		exp.ExportSessionClose(rec, sd)
+	})
+
+	d.ipfixWg.Add(1)
+	go func() {
+		defer d.ipfixWg.Done()
+		exp.Run(ipfixCtx)
+	}()
+
+	slog.Info("IPFIX exporter started",
+		"collectors", len(ec.Collectors),
+		"active_timeout", ec.FlowActiveTimeout,
+		"inactive_timeout", ec.FlowInactiveTimeout,
+		"sampling_zones", len(ec.SamplingZones),
+		"sampling_rate", ec.SamplingRate)
+}
+
+// stopIPFIXExporter stops the running IPFIX exporter.
+func (d *Daemon) stopIPFIXExporter() {
+	if d.ipfixCancel != nil {
+		d.ipfixCancel()
+	}
+	d.ipfixWg.Wait()
+	if d.ipfixExporter != nil {
+		d.ipfixExporter.Close()
+		d.ipfixExporter = nil
 	}
 }
 
@@ -1975,4 +2070,61 @@ func (d *Daemon) updateFlowTrace(cfg *config.Config) {
 	slog.Info("flow traceoptions updated",
 		"file", cfg.Security.Flow.Traceoptions.File,
 		"filters", len(cfg.Security.Flow.Traceoptions.PacketFilters))
+}
+
+// monitorLinkState subscribes to netlink link updates and sends SNMP traps
+// on interface state changes (link up / link down).
+func (d *Daemon) monitorLinkState(ctx context.Context) {
+	updates := make(chan netlink.LinkUpdate, 64)
+	done := make(chan struct{})
+	if err := netlink.LinkSubscribe(updates, done); err != nil {
+		slog.Warn("SNMP link monitor: failed to subscribe", "err", err)
+		return
+	}
+	slog.Info("SNMP link state monitor started")
+
+	// Track previous oper state per ifindex to avoid duplicate traps.
+	prevOper := make(map[int]bool) // true = up
+
+	// Seed with current state.
+	links, err := netlink.LinkList()
+	if err == nil {
+		for _, l := range links {
+			attrs := l.Attrs()
+			prevOper[attrs.Index] = (attrs.OperState == netlink.OperUp)
+		}
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			close(done)
+			return
+		case update, ok := <-updates:
+			if !ok {
+				return
+			}
+			attrs := update.Attrs()
+			if attrs.Name == "lo" {
+				continue
+			}
+
+			nowUp := (attrs.OperState == netlink.OperUp)
+			wasUp, known := prevOper[attrs.Index]
+			if known && wasUp == nowUp {
+				continue // no change
+			}
+			prevOper[attrs.Index] = nowUp
+
+			if d.snmpAgent == nil {
+				continue
+			}
+
+			if nowUp {
+				d.snmpAgent.NotifyLinkUp(attrs.Index, attrs.Name)
+			} else {
+				d.snmpAgent.NotifyLinkDown(attrs.Index, attrs.Name)
+			}
+		}
+	}
 }

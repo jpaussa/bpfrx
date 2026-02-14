@@ -35,6 +35,7 @@ type Manager struct {
 	tunnels    []string // currently created tunnel interface names
 	vrfs       []string // currently created VRF device names
 	xfrmis     []string // currently created xfrmi interface names
+	bonds      []string // currently created bond interface names
 	keepalives map[string]*keepaliveRunner // tunnel name -> runner
 }
 
@@ -1110,8 +1111,6 @@ func dscpToTOS(dscp string) uint8 {
 	return 0
 }
 
-// resolveRibTable maps a Junos RIB name to a Linux routing table ID.
-// "inet.0" or "inet6.0" maps to main table (254).
 // "<instance>.inet.0" or "<instance>.inet6.0" maps to the instance's table.
 func resolveRibTable(ribName string, tableIDs map[string]int) int {
 	if ribName == "inet.0" || ribName == "inet6.0" {
@@ -1125,4 +1124,88 @@ func resolveRibTable(ribName string, tableIDs map[string]int) int {
 		}
 	}
 	return 0
+}
+
+// ApplyBonds creates Linux bond devices for interfaces with fabric-options
+// member-interfaces configured. Uses 802.3ad (LACP) mode.
+func (m *Manager) ApplyBonds(interfaces []*config.InterfaceConfig) error {
+	// Clear previous bonds first
+	if err := m.ClearBonds(); err != nil {
+		slog.Warn("failed to clear previous bonds", "err", err)
+	}
+
+	for _, ifc := range interfaces {
+		if len(ifc.FabricMembers) == 0 {
+			continue
+		}
+		bondName := ifc.Name
+
+		// Check if bond already exists
+		if existing, err := m.nlHandle.LinkByName(bondName); err == nil {
+			// Already exists — ensure it's up and skip creation
+			m.nlHandle.LinkSetUp(existing)
+			m.bonds = append(m.bonds, bondName)
+			slog.Debug("bond already exists", "name", bondName)
+			continue
+		}
+
+		bond := netlink.NewLinkBond(netlink.LinkAttrs{Name: bondName})
+		bond.Mode = netlink.BOND_MODE_802_3AD
+		if ifc.MTU > 0 {
+			bond.LinkAttrs.MTU = ifc.MTU
+		}
+		if err := m.nlHandle.LinkAdd(bond); err != nil {
+			slog.Warn("failed to create bond", "name", bondName, "err", err)
+			continue
+		}
+
+		// Enslave member interfaces
+		bondLink, err := m.nlHandle.LinkByName(bondName)
+		if err != nil {
+			slog.Warn("failed to find created bond", "name", bondName, "err", err)
+			continue
+		}
+		for _, member := range ifc.FabricMembers {
+			memberLink, err := m.nlHandle.LinkByName(member)
+			if err != nil {
+				slog.Warn("bond member not found",
+					"bond", bondName, "member", member, "err", err)
+				continue
+			}
+			// Member must be down before enslaving
+			m.nlHandle.LinkSetDown(memberLink)
+			if err := m.nlHandle.LinkSetMaster(memberLink, bondLink); err != nil {
+				slog.Warn("failed to enslave member",
+					"bond", bondName, "member", member, "err", err)
+				continue
+			}
+			m.nlHandle.LinkSetUp(memberLink)
+			slog.Info("bond member added", "bond", bondName, "member", member)
+		}
+
+		if err := m.nlHandle.LinkSetUp(bondLink); err != nil {
+			slog.Warn("failed to bring up bond", "name", bondName, "err", err)
+		}
+		m.bonds = append(m.bonds, bondName)
+		slog.Info("bond created", "name", bondName,
+			"mode", "802.3ad", "members", ifc.FabricMembers)
+	}
+	return nil
+}
+
+// ClearBonds removes all previously created bond devices.
+func (m *Manager) ClearBonds() error {
+	for _, name := range m.bonds {
+		link, err := m.nlHandle.LinkByName(name)
+		if err != nil {
+			continue // already gone
+		}
+		if err := m.nlHandle.LinkDel(link); err != nil {
+			slog.Warn("failed to delete bond", "name", name, "err", err)
+		} else {
+			slog.Info("bond removed", "name", name)
+		}
+	}
+	m.bonds = nil
+	return nil
 }

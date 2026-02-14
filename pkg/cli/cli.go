@@ -7506,6 +7506,9 @@ func (c *CLI) showPersistentNATDetail() error {
 		fmt.Printf("  Reflexive IP:       %s\n", b.NatIP)
 		fmt.Printf("  Reflexive port:     %d\n", b.NatPort)
 		fmt.Printf("  Pool:               %s\n", b.PoolName)
+		if b.PermitAnyRemoteHost {
+			fmt.Printf("  Any remote host:    yes\n")
+		}
 		fmt.Printf("  Current sessions:   %d\n", sessions)
 		fmt.Printf("  Left time:          %s\n", remaining.Truncate(time.Second))
 		fmt.Printf("  Configured timeout: %ds\n", int(b.Timeout.Seconds()))

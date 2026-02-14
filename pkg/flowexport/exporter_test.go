@@ -1,7 +1,10 @@
 package flowexport
 
 import (
+	"encoding/binary"
+	"net"
 	"testing"
+	"time"
 
 	"github.com/psaab/bpfrx/pkg/config"
 )
@@ -166,5 +169,203 @@ func TestBuildExportConfig_FlowServerSourceAddressTakesPrecedence(t *testing.T) 
 	}
 	if ec.Collectors[0].SourceAddress != "10.0.1.20" {
 		t.Errorf("SourceAddress = %q, want flow-server source-address %q", ec.Collectors[0].SourceAddress, "10.0.1.20")
+	}
+}
+
+func TestIPFIXHeader(t *testing.T) {
+	h := ipfixHeader{
+		Version:        10,
+		Length:         100,
+		ExportTime:     1700000000,
+		SequenceNumber: 42,
+		ObservationID:  1,
+	}
+	b := encodeIPFIXHeader(h)
+	if len(b) != 16 {
+		t.Fatalf("header len = %d, want 16", len(b))
+	}
+	if v := binary.BigEndian.Uint16(b[0:2]); v != 10 {
+		t.Errorf("version = %d, want 10", v)
+	}
+	if v := binary.BigEndian.Uint16(b[2:4]); v != 100 {
+		t.Errorf("length = %d, want 100", v)
+	}
+	if v := binary.BigEndian.Uint32(b[4:8]); v != 1700000000 {
+		t.Errorf("export time = %d, want 1700000000", v)
+	}
+	if v := binary.BigEndian.Uint32(b[8:12]); v != 42 {
+		t.Errorf("seq = %d, want 42", v)
+	}
+	if v := binary.BigEndian.Uint32(b[12:16]); v != 1 {
+		t.Errorf("observation ID = %d, want 1", v)
+	}
+}
+
+func TestIPFIXTemplateSet(t *testing.T) {
+	b := encodeIPFIXTemplateSet()
+	if len(b) < 4 {
+		t.Fatalf("template set too short: %d bytes", len(b))
+	}
+	// Set ID should be 2 (template)
+	setID := binary.BigEndian.Uint16(b[0:2])
+	if setID != ipfixSetIDTemplate {
+		t.Errorf("set ID = %d, want %d", setID, ipfixSetIDTemplate)
+	}
+	setLen := binary.BigEndian.Uint16(b[2:4])
+	if int(setLen) != len(b) {
+		t.Errorf("set length = %d, want %d", setLen, len(b))
+	}
+	// First template ID should be 256 (v4)
+	tmplID := binary.BigEndian.Uint16(b[4:6])
+	if tmplID != ipfixTemplateIDv4 {
+		t.Errorf("first template ID = %d, want %d", tmplID, ipfixTemplateIDv4)
+	}
+}
+
+func TestIPFIXDataSetV4(t *testing.T) {
+	now := time.Now()
+	records := []FlowRecord{
+		{
+			SrcIP:     net.IPv4(10, 0, 1, 100),
+			DstIP:     net.IPv4(10, 0, 2, 200),
+			SrcPort:   12345,
+			DstPort:   80,
+			Protocol:  6,
+			Packets:   100,
+			Bytes:     50000,
+			StartTime: now.Add(-time.Second),
+			EndTime:   now,
+			IsIPv6:    false,
+		},
+	}
+
+	ds := encodeIPFIXDataSet(records)
+	if ds == nil {
+		t.Fatal("expected non-nil data set")
+	}
+	// Set header: template ID 256
+	setID := binary.BigEndian.Uint16(ds[0:2])
+	if setID != ipfixTemplateIDv4 {
+		t.Errorf("data set ID = %d, want %d", setID, ipfixTemplateIDv4)
+	}
+	// Length should be 4 (header) + 57 (one record) = 61
+	setLen := binary.BigEndian.Uint16(ds[2:4])
+	if setLen != 4+ipfixRecordSizeV4 {
+		t.Errorf("data set length = %d, want %d", setLen, 4+ipfixRecordSizeV4)
+	}
+	// Verify source IP at offset 4
+	srcIP := net.IP(ds[4:8])
+	if !srcIP.Equal(net.IPv4(10, 0, 1, 100).To4()) {
+		t.Errorf("src IP = %s, want 10.0.1.100", srcIP)
+	}
+}
+
+func TestIPFIXDataSetV6(t *testing.T) {
+	now := time.Now()
+	records := []FlowRecord{
+		{
+			SrcIP:     net.ParseIP("2001:db8::1"),
+			DstIP:     net.ParseIP("2001:db8::2"),
+			SrcPort:   443,
+			DstPort:   54321,
+			Protocol:  6,
+			Packets:   50,
+			Bytes:     25000,
+			StartTime: now.Add(-time.Second),
+			EndTime:   now,
+			IsIPv6:    true,
+		},
+	}
+
+	ds := encodeIPFIXDataSet(records)
+	if ds == nil {
+		t.Fatal("expected non-nil data set")
+	}
+	setID := binary.BigEndian.Uint16(ds[0:2])
+	if setID != ipfixTemplateIDv6 {
+		t.Errorf("data set ID = %d, want %d", setID, ipfixTemplateIDv6)
+	}
+	setLen := binary.BigEndian.Uint16(ds[2:4])
+	if setLen != 4+ipfixRecordSizeV6 {
+		t.Errorf("data set length = %d, want %d", setLen, 4+ipfixRecordSizeV6)
+	}
+}
+
+func TestBuildIPFIXExportConfig(t *testing.T) {
+	svc := &config.ServicesConfig{
+		FlowMonitoring: &config.FlowMonitoringConfig{
+			VersionIPFIX: &config.NetFlowIPFIXConfig{
+				Templates: map[string]*config.NetFlowIPFIXTemplate{
+					"t1": {
+						FlowActiveTimeout:   120,
+						FlowInactiveTimeout: 30,
+						TemplateRefreshRate: 90,
+					},
+				},
+			},
+		},
+	}
+	fo := &config.ForwardingOptionsConfig{
+		Sampling: &config.SamplingConfig{
+			Instances: map[string]*config.SamplingInstance{
+				"test": {
+					Name:      "test",
+					InputRate: 100,
+					FamilyInet: &config.SamplingFamily{
+						FlowServers: []*config.FlowServer{
+							{Address: "10.0.0.1", Port: 4739},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	ec := BuildIPFIXExportConfig(svc, fo)
+	if ec == nil {
+		t.Fatal("expected non-nil ExportConfig")
+	}
+	if ec.FlowActiveTimeout != 120*time.Second {
+		t.Errorf("active timeout = %v, want 120s", ec.FlowActiveTimeout)
+	}
+	if ec.FlowInactiveTimeout != 30*time.Second {
+		t.Errorf("inactive timeout = %v, want 30s", ec.FlowInactiveTimeout)
+	}
+	if ec.TemplateRefreshRate != 90*time.Second {
+		t.Errorf("refresh rate = %v, want 90s", ec.TemplateRefreshRate)
+	}
+	if ec.SamplingRate != 100 {
+		t.Errorf("sampling rate = %d, want 100", ec.SamplingRate)
+	}
+	if len(ec.Collectors) != 1 {
+		t.Fatalf("collectors = %d, want 1", len(ec.Collectors))
+	}
+	if ec.Collectors[0].Address != "10.0.0.1:4739" {
+		t.Errorf("collector address = %q, want %q", ec.Collectors[0].Address, "10.0.0.1:4739")
+	}
+}
+
+func TestBuildIPFIXExportConfig_NilIPFIX(t *testing.T) {
+	svc := &config.ServicesConfig{
+		FlowMonitoring: &config.FlowMonitoringConfig{
+			Version9: &config.NetFlowV9Config{},
+		},
+	}
+	fo := &config.ForwardingOptionsConfig{
+		Sampling: &config.SamplingConfig{
+			Instances: map[string]*config.SamplingInstance{
+				"test": {
+					FamilyInet: &config.SamplingFamily{
+						FlowServers: []*config.FlowServer{
+							{Address: "10.0.0.1", Port: 2055},
+						},
+					},
+				},
+			},
+		},
+	}
+	ec := BuildIPFIXExportConfig(svc, fo)
+	if ec != nil {
+		t.Error("expected nil ExportConfig when VersionIPFIX is not set")
 	}
 }

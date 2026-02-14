@@ -8,13 +8,14 @@ import (
 
 // PersistentNATBinding holds a NAT port mapping that survives session GC.
 type PersistentNATBinding struct {
-	SrcIP    netip.Addr
-	SrcPort  uint16
-	NatIP    netip.Addr
-	NatPort  uint16
-	PoolName string
-	LastSeen time.Time
-	Timeout  time.Duration
+	SrcIP               netip.Addr
+	SrcPort             uint16
+	NatIP               netip.Addr
+	NatPort             uint16
+	PoolName            string
+	LastSeen            time.Time
+	Timeout             time.Duration
+	PermitAnyRemoteHost bool
 }
 
 type persistentNATKey struct {
@@ -23,17 +24,67 @@ type persistentNATKey struct {
 	Pool    string
 }
 
+// PersistentNATPoolInfo holds per-pool persistent NAT configuration.
+type PersistentNATPoolInfo struct {
+	Timeout             time.Duration
+	PermitAnyRemoteHost bool
+}
+
 // PersistentNATTable stores NAT bindings that persist after session close.
 type PersistentNATTable struct {
-	mu       sync.RWMutex
-	bindings map[persistentNATKey]*PersistentNATBinding
+	mu          sync.RWMutex
+	bindings    map[persistentNATKey]*PersistentNATBinding
+	poolConfigs map[string]PersistentNATPoolInfo // pool name -> config
+	natIPToPool map[netip.Addr]string            // NAT IP -> pool name
 }
 
 // NewPersistentNATTable creates a new persistent NAT table.
 func NewPersistentNATTable() *PersistentNATTable {
 	return &PersistentNATTable{
-		bindings: make(map[persistentNATKey]*PersistentNATBinding),
+		bindings:    make(map[persistentNATKey]*PersistentNATBinding),
+		poolConfigs: make(map[string]PersistentNATPoolInfo),
+		natIPToPool: make(map[netip.Addr]string),
 	}
+}
+
+// SetPoolConfig registers a persistent NAT pool configuration.
+func (t *PersistentNATTable) SetPoolConfig(poolName string, cfg PersistentNATPoolInfo) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.poolConfigs[poolName] = cfg
+}
+
+// RegisterNATIP maps a NAT IP address to its pool name for reverse lookup.
+func (t *PersistentNATTable) RegisterNATIP(ip netip.Addr, poolName string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.natIPToPool[ip] = poolName
+}
+
+// ClearPoolConfigs removes all pool configuration and IP mappings.
+// Called before recompilation to ensure stale pools are removed.
+func (t *PersistentNATTable) ClearPoolConfigs() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.poolConfigs = make(map[string]PersistentNATPoolInfo)
+	t.natIPToPool = make(map[netip.Addr]string)
+}
+
+// LookupPool finds the pool name and config for a given NAT IP.
+// Returns empty string and zero config if the IP is not in any persistent pool.
+func (t *PersistentNATTable) LookupPool(natIP netip.Addr) (string, PersistentNATPoolInfo, bool) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	poolName, ok := t.natIPToPool[natIP]
+	if !ok {
+		return "", PersistentNATPoolInfo{}, false
+	}
+	cfg, ok := t.poolConfigs[poolName]
+	if !ok {
+		return "", PersistentNATPoolInfo{}, false
+	}
+	return poolName, cfg, true
 }
 
 // Lookup finds an existing persistent binding. Returns nil if not found

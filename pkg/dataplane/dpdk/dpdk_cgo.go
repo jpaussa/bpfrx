@@ -430,9 +430,36 @@ func (m *Manager) SetAddressMembership(resolvedID, setID uint32) error {
 	return nil
 }
 
+func (m *Manager) ClearAddressBookV4() error {
+	shm := m.platform.shm
+	if shm == nil {
+		return fmt.Errorf("DPDK not initialized")
+	}
+	C.rte_lpm_delete_all(shm.address_book_v4)
+	return nil
+}
+
+func (m *Manager) ClearAddressBookV6() error {
+	shm := m.platform.shm
+	if shm == nil {
+		return fmt.Errorf("DPDK not initialized")
+	}
+	C.rte_lpm6_delete_all(shm.address_book_v6)
+	return nil
+}
+
+func (m *Manager) ClearAddressMembership() error {
+	shm := m.platform.shm
+	if shm == nil {
+		return fmt.Errorf("DPDK not initialized")
+	}
+	C.rte_hash_reset(shm.address_membership)
+	return nil
+}
+
 // --- Application ---
 
-func (m *Manager) SetApplication(protocol uint8, dstPort uint16, appID uint32, timeout uint16) error {
+func (m *Manager) SetApplication(protocol uint8, dstPort uint16, appID uint32, timeout uint16, algType uint8) error {
 	shm := m.platform.shm
 	if shm == nil {
 		return fmt.Errorf("DPDK not initialized")
@@ -449,6 +476,7 @@ func (m *Manager) SetApplication(protocol uint8, dstPort uint16, appID uint32, t
 		uintptr(unsafe.Pointer(shm.app_values)) +
 			uintptr(pos)*unsafe.Sizeof(C.struct_app_value{})))
 	valPtr.app_id = C.uint32_t(appID)
+	valPtr.alg_type = C.uint8_t(algType)
 	valPtr.timeout = C.uint16_t(timeout)
 	return nil
 }

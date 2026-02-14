@@ -78,9 +78,12 @@ type DataPlane interface {
 	// Address book
 	SetAddressBookEntry(cidr string, addressID uint32) error
 	SetAddressMembership(resolvedID, setID uint32) error
+	ClearAddressBookV4() error
+	ClearAddressBookV6() error
+	ClearAddressMembership() error
 
 	// Application
-	SetApplication(protocol uint8, dstPort uint16, appID uint32, timeout uint16) error
+	SetApplication(protocol uint8, dstPort uint16, appID uint32, timeout uint16, algType uint8) error
 	ClearApplications() error
 
 	// Sessions

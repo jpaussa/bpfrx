@@ -4123,6 +4123,9 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 					fmt.Fprintf(&buf, "  Reflexive IP:       %s\n", b.NatIP)
 					fmt.Fprintf(&buf, "  Reflexive port:     %d\n", b.NatPort)
 					fmt.Fprintf(&buf, "  Pool:               %s\n", b.PoolName)
+					if b.PermitAnyRemoteHost {
+						fmt.Fprintf(&buf, "  Any remote host:    yes\n")
+					}
 					fmt.Fprintf(&buf, "  Current sessions:   %d\n", sessions)
 					fmt.Fprintf(&buf, "  Left time:          %s\n", remaining.Truncate(time.Second))
 					fmt.Fprintf(&buf, "  Configured timeout: %ds\n", int(b.Timeout.Seconds()))
