@@ -423,6 +423,18 @@ conntrack_lookup(struct rte_mbuf *pkt, struct pkt_meta *meta,
 			if (meta->protocol == PROTO_TCP) {
 				uint8_t old_state = sv->state;
 				sv->state = ct_tcp_update_state(old_state, meta->tcp_flags, dir);
+				if (sv->state != old_state) {
+					/* Sync state/timeout to paired entry */
+					uint32_t new_timeout = ct_get_timeout(ctx, PROTO_TCP, sv->state);
+					sv->timeout = new_timeout;
+					int rpos = rte_hash_lookup(ctx->shm->sessions_v4, &sv->reverse_key);
+					if (rpos >= 0) {
+						struct session_value *rsv = &ctx->shm->session_values_v4[rpos];
+						rsv->state = sv->state;
+						rsv->timeout = new_timeout;
+						rsv->last_seen = now;
+					}
+				}
 				if (sv->state == SESS_STATE_CLOSED ||
 				    (sv->state == SESS_STATE_TIME_WAIT && old_state != SESS_STATE_TIME_WAIT)) {
 					meta->ingress_zone = sv->ingress_zone;
@@ -486,6 +498,18 @@ conntrack_lookup(struct rte_mbuf *pkt, struct pkt_meta *meta,
 			if (meta->protocol == PROTO_TCP) {
 				uint8_t old_state = sv->state;
 				sv->state = ct_tcp_update_state(old_state, meta->tcp_flags, 1);
+				if (sv->state != old_state) {
+					/* Sync state/timeout to paired entry */
+					uint32_t new_timeout = ct_get_timeout(ctx, PROTO_TCP, sv->state);
+					sv->timeout = new_timeout;
+					int fpos = rte_hash_lookup(ctx->shm->sessions_v4, &sv->reverse_key);
+					if (fpos >= 0) {
+						struct session_value *fsv = &ctx->shm->session_values_v4[fpos];
+						fsv->state = sv->state;
+						fsv->timeout = new_timeout;
+						fsv->last_seen = now;
+					}
+				}
 				if (sv->state == SESS_STATE_CLOSED ||
 				    (sv->state == SESS_STATE_TIME_WAIT && old_state != SESS_STATE_TIME_WAIT)) {
 					meta->ingress_zone = sv->egress_zone;
@@ -544,6 +568,17 @@ conntrack_lookup(struct rte_mbuf *pkt, struct pkt_meta *meta,
 				uint8_t old_state = sv->state;
 				uint8_t dir = sv->is_reverse ? 1 : 0;
 				sv->state = ct_tcp_update_state(old_state, meta->tcp_flags, dir);
+				if (sv->state != old_state) {
+					uint32_t new_timeout = ct_get_timeout(ctx, PROTO_TCP, sv->state);
+					sv->timeout = new_timeout;
+					int rpos = rte_hash_lookup(ctx->shm->sessions_v6, &sv->reverse_key);
+					if (rpos >= 0) {
+						struct session_value_v6 *rsv = &ctx->shm->session_values_v6[rpos];
+						rsv->state = sv->state;
+						rsv->timeout = new_timeout;
+						rsv->last_seen = now;
+					}
+				}
 				if (sv->state == SESS_STATE_CLOSED ||
 				    (sv->state == SESS_STATE_TIME_WAIT && old_state != SESS_STATE_TIME_WAIT)) {
 					meta->ingress_zone = sv->ingress_zone;
@@ -602,6 +637,17 @@ conntrack_lookup(struct rte_mbuf *pkt, struct pkt_meta *meta,
 			if (meta->protocol == PROTO_TCP) {
 				uint8_t old_state = sv->state;
 				sv->state = ct_tcp_update_state(old_state, meta->tcp_flags, 1);
+				if (sv->state != old_state) {
+					uint32_t new_timeout = ct_get_timeout(ctx, PROTO_TCP, sv->state);
+					sv->timeout = new_timeout;
+					int fpos = rte_hash_lookup(ctx->shm->sessions_v6, &sv->reverse_key);
+					if (fpos >= 0) {
+						struct session_value_v6 *fsv = &ctx->shm->session_values_v6[fpos];
+						fsv->state = sv->state;
+						fsv->timeout = new_timeout;
+						fsv->last_seen = now;
+					}
+				}
 				if (sv->state == SESS_STATE_CLOSED ||
 				    (sv->state == SESS_STATE_TIME_WAIT && old_state != SESS_STATE_TIME_WAIT)) {
 					meta->ingress_zone = sv->egress_zone;
@@ -724,6 +770,15 @@ conntrack_create(struct rte_mbuf *pkt, struct pkt_meta *meta,
 		struct session_value rev_val = fwd_val;
 		rev_val.is_reverse = 1;
 		rev_val.reverse_key = fwd_key;
+		/* Swap zones for reverse direction */
+		rev_val.ingress_zone = fwd_val.egress_zone;
+		rev_val.egress_zone = fwd_val.ingress_zone;
+		/* Clear FIB cache (forward path cache is wrong for return) */
+		rev_val.fib_ifindex = 0;
+		rev_val.fib_vlan_id = 0;
+		memset(rev_val.fib_dmac, 0, 6);
+		memset(rev_val.fib_smac, 0, 6);
+		rev_val.fib_gen = 0;
 
 		int rpos = rte_hash_add_key(ctx->shm->sessions_v4, &fwd_val.reverse_key);
 		if (rpos < 0) {
@@ -792,6 +847,15 @@ conntrack_create(struct rte_mbuf *pkt, struct pkt_meta *meta,
 		struct session_value_v6 rev_val6 = fwd_val6;
 		rev_val6.is_reverse = 1;
 		rev_val6.reverse_key = fwd_key6;
+		/* Swap zones for reverse direction */
+		rev_val6.ingress_zone = fwd_val6.egress_zone;
+		rev_val6.egress_zone = fwd_val6.ingress_zone;
+		/* Clear FIB cache (forward path cache is wrong for return) */
+		rev_val6.fib_ifindex = 0;
+		rev_val6.fib_vlan_id = 0;
+		memset(rev_val6.fib_dmac, 0, 6);
+		memset(rev_val6.fib_smac, 0, 6);
+		rev_val6.fib_gen = 0;
 
 		int rpos = rte_hash_add_key(ctx->shm->sessions_v6, &fwd_val6.reverse_key);
 		if (rpos < 0) {
