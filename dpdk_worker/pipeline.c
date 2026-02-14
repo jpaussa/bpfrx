@@ -58,6 +58,32 @@ extern void flush_tx_buffers(struct pipeline_ctx *ctx);
 #define CT_DNS_REPLY   3
 
 /**
+ * trace_match — Check if a packet matches the trace filter.
+ *
+ * Zero-valued filter fields match any value.
+ * Only called when shm->trace_enabled is set (checked in caller).
+ */
+static inline int
+trace_match(struct pkt_meta *meta, struct shared_memory *shm)
+{
+	uint8_t zero[16] = {0};
+
+	if (shm->trace_protocol != 0 && shm->trace_protocol != meta->protocol)
+		return 0;
+	if (shm->trace_src_port != 0 && shm->trace_src_port != meta->src_port)
+		return 0;
+	if (shm->trace_dst_port != 0 && shm->trace_dst_port != meta->dst_port)
+		return 0;
+	if (memcmp(shm->trace_src_ip, zero, 16) != 0 &&
+	    memcmp(shm->trace_src_ip, meta->src_ip.v6, 16) != 0)
+		return 0;
+	if (memcmp(shm->trace_dst_ip, zero, 16) != 0 &&
+	    memcmp(shm->trace_dst_ip, meta->dst_ip.v6, 16) != 0)
+		return 0;
+	return 1;
+}
+
+/**
  * process_packet — Main per-packet processing function.
  *
  * Replaces the 14 BPF programs (xdp_main -> xdp_screen -> xdp_zone ->
@@ -180,9 +206,18 @@ forward:
 	/* 11. Forward (replaces xdp_forward) */
 	forward_packet(pkt, &meta, ctx);
 	ctr_global_inc(ctx, GLOBAL_CTR_TX_PACKETS);
+
+	/* Packet trace: emit detailed event for matching packets */
+	if (ctx->shm->trace_enabled && trace_match(&meta, ctx->shm))
+		emit_event(ctx, &meta, EVENT_TYPE_PACKET_TRACE, ACTION_PERMIT);
+
 	return;
 
 drop:
+	/* Packet trace: emit event for dropped packets too */
+	if (ctx->shm->trace_enabled && trace_match(&meta, ctx->shm))
+		emit_event(ctx, &meta, EVENT_TYPE_PACKET_TRACE, ACTION_DENY);
+
 	rte_pktmbuf_free(pkt);
 	ctr_global_inc(ctx, GLOBAL_CTR_DROPS);
 }

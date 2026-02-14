@@ -1793,6 +1793,50 @@ func (m *Manager) GCStats() (expired, scanned uint64) {
 	return uint64(shm.gc_sessions_expired), uint64(shm.gc_sessions_scanned)
 }
 
+// SetPacketTrace enables packet tracing for packets matching the given filter.
+// Zero-valued fields match any value. Call with all zeros to trace all packets.
+func (m *Manager) SetPacketTrace(srcIP, dstIP net.IP, srcPort, dstPort uint16, protocol uint8) {
+	shm := m.platform.shm
+	if shm == nil {
+		return
+	}
+	// Clear existing filter
+	C.memset(unsafe.Pointer(&shm.trace_src_ip[0]), 0, 16)
+	C.memset(unsafe.Pointer(&shm.trace_dst_ip[0]), 0, 16)
+	shm.trace_src_port = C.uint16_t(srcPort)
+	shm.trace_dst_port = C.uint16_t(dstPort)
+	shm.trace_protocol = C.uint8_t(protocol)
+
+	if len(srcIP) > 0 {
+		ip := srcIP.To16()
+		if ip != nil {
+			for i := 0; i < 16; i++ {
+				shm.trace_src_ip[i] = C.uint8_t(ip[i])
+			}
+		}
+	}
+	if len(dstIP) > 0 {
+		ip := dstIP.To16()
+		if ip != nil {
+			for i := 0; i < 16; i++ {
+				shm.trace_dst_ip[i] = C.uint8_t(ip[i])
+			}
+		}
+	}
+
+	// Enable after filter is set (atomic visibility)
+	shm.trace_enabled = 1
+}
+
+// ClearPacketTrace disables packet tracing.
+func (m *Manager) ClearPacketTrace() {
+	shm := m.platform.shm
+	if shm == nil {
+		return
+	}
+	shm.trace_enabled = 0
+}
+
 // DNATKey helper: the DstIP field in DNATKey is uint32 not [4]byte.
 // bytesToUint32 already handles this via the native endian field.
 

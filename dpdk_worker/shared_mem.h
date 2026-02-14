@@ -570,6 +570,7 @@ struct fib_nexthop {
 #define EVENT_TYPE_SCREEN_DROP   4
 #define EVENT_TYPE_ALG_REQUEST   5
 #define EVENT_TYPE_FILTER_LOG    6
+#define EVENT_TYPE_PACKET_TRACE  7
 
 struct event {
 	uint64_t timestamp;
@@ -747,6 +748,17 @@ struct shared_memory {
 	/* Session GC statistics (updated by main lcore gc_sweep) */
 	volatile uint64_t gc_sessions_expired;
 	volatile uint64_t gc_sessions_scanned;
+
+	/* Packet trace filter (set by Go, read by workers).
+	 * When trace_enabled is non-zero, packets matching the filter
+	 * emit EVENT_TYPE_PACKET_TRACE events with full metadata. */
+	volatile uint32_t trace_enabled;
+	uint8_t  trace_src_ip[16];   /* Match source IP (zero = any) */
+	uint8_t  trace_dst_ip[16];   /* Match dest IP (zero = any) */
+	uint16_t trace_src_port;     /* Match source port (0 = any) */
+	uint16_t trace_dst_port;     /* Match dest port (0 = any) */
+	uint8_t  trace_protocol;     /* Match protocol (0 = any) */
+	uint8_t  trace_pad[3];
 };
 
 #endif /* DPDK_SHARED_MEM_H */
