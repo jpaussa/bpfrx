@@ -48,6 +48,9 @@ extern void send_icmp_unreach_v4(struct rte_mbuf *pkt, struct pkt_meta *meta,
 extern void send_icmp_unreach_v6(struct rte_mbuf *pkt, struct pkt_meta *meta,
                                  struct pipeline_ctx *ctx);
 
+/* TX buffer flush (forward.c) */
+extern void flush_tx_buffers(struct pipeline_ctx *ctx);
+
 /* Conntrack result codes */
 #define CT_NEW         0
 #define CT_ESTABLISHED 1
@@ -203,4 +206,7 @@ process_burst(struct rte_mbuf **pkts, uint16_t nb_pkts,
 
 		process_packet(pkts[i], ctx);
 	}
+
+	/* Flush any remaining buffered TX packets */
+	flush_tx_buffers(ctx);
 }

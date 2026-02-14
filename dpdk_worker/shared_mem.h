@@ -648,6 +648,8 @@ struct pkt_meta {
 	uint8_t  ip_ihl;
 
 	uint16_t app_timeout;
+	uint8_t  log_flags;
+	uint8_t  meta_pad[3];
 };
 
 /* ============================================================

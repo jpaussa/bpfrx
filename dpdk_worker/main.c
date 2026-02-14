@@ -704,17 +704,26 @@ main(int argc, char **argv)
 	if (!g_shm)
 		rte_exit(EXIT_FAILURE, "Cannot allocate shared memory\n");
 
-	/* Initialize ports */
+	/* Count worker lcores for multi-queue TX */
+	uint16_t nb_workers = 0;
+	RTE_LCORE_FOREACH_WORKER(lcore_id) {
+		nb_workers++;
+	}
+	if (nb_workers == 0)
+		nb_workers = 1;
+
+	printf("Configuring %u TX queues per port (%u workers)\n",
+	       nb_workers, nb_workers);
+
+	/* Initialize ports with per-worker TX queues */
 	RTE_ETH_FOREACH_DEV(port_id) {
-		ret = port_init(port_id, g_pktmbuf_pool, 1, 1);
+		ret = port_init(port_id, g_pktmbuf_pool, 1, nb_workers);
 		if (ret < 0)
 			rte_exit(EXIT_FAILURE, "Cannot init port %u\n", port_id);
 		printf("Port %u initialized\n", port_id);
 	}
 
-	/* TODO: Map ports to lcores based on configuration.
-	 * For now, assign ports round-robin to worker lcores. */
-
+	/* Assign ports round-robin to worker lcores */
 	unsigned worker_idx = 0;
 	RTE_LCORE_FOREACH_WORKER(lcore_id) {
 		struct lcore_conf *conf = &g_lcore_conf[lcore_id];
@@ -729,10 +738,27 @@ main(int argc, char **argv)
 
 		ctx->shm = g_shm;
 		ctx->lcore_id = lcore_id;
+		ctx->tx_queue_id = worker_idx;
+		ctx->nb_ports = nb_ports;
 
 		if (counters_alloc(ctx) < 0)
 			rte_exit(EXIT_FAILURE, "Cannot alloc counters for lcore %u\n",
 			         lcore_id);
+
+		/* Allocate per-port TX buffers for this lcore */
+		RTE_ETH_FOREACH_DEV(port_id) {
+			if (port_id >= MAX_PORTS)
+				break;
+			ctx->tx_bufs[port_id] = rte_zmalloc_socket("tx_buffer",
+				RTE_ETH_TX_BUFFER_SIZE(BURST_SIZE),
+				RTE_CACHE_LINE_SIZE,
+				rte_lcore_to_socket_id(lcore_id));
+			if (!ctx->tx_bufs[port_id])
+				rte_exit(EXIT_FAILURE,
+				         "Cannot alloc TX buffer for lcore %u port %u\n",
+				         lcore_id, port_id);
+			rte_eth_tx_buffer_init(ctx->tx_bufs[port_id], BURST_SIZE);
+		}
 
 		conf->ctx = ctx;
 		conf->rx_mode = g_shm->rx_mode;

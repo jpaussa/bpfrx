@@ -132,6 +132,11 @@ struct pipeline_ctx {
 	struct flood_state         *flood_states;         /* [MAX_ZONES] */
 	uint64_t                   *nat_port_allocs;      /* [MAX_NAT_POOLS] */
 
+	/* TX burst batching: per-port TX buffers */
+	struct rte_eth_dev_tx_buffer *tx_bufs[MAX_PORTS];
+	uint16_t             tx_queue_id;  /* this lcore's TX queue index */
+	uint16_t             nb_ports;     /* total DPDK ports for TX flush */
+
 	/* Mode-switch counter (adaptive mode) */
 	uint64_t mode_switches;
 

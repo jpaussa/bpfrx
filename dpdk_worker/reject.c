@@ -78,8 +78,6 @@ void
 send_tcp_rst_v4(struct rte_mbuf *pkt, struct pkt_meta *meta,
                 struct pipeline_ctx *ctx)
 {
-	(void)ctx;
-
 	/* Read MACs from original packet */
 	struct rte_ether_hdr *orig_eth = rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
 	uint8_t orig_smac[6], orig_dmac[6];
@@ -187,7 +185,7 @@ send_tcp_rst_v4(struct rte_mbuf *pkt, struct pkt_meta *meta,
 
 	/* Send on ingress port */
 	uint16_t tx_port = meta->ingress_ifindex;
-	uint16_t sent = rte_eth_tx_burst(tx_port, 0, &rst, 1);
+	uint16_t sent = rte_eth_tx_burst(tx_port, ctx->tx_queue_id, &rst, 1);
 	if (sent == 0)
 		rte_pktmbuf_free(rst);
 }
@@ -202,7 +200,6 @@ void
 send_tcp_rst_v6(struct rte_mbuf *pkt, struct pkt_meta *meta,
                 struct pipeline_ctx *ctx)
 {
-	(void)ctx;
 
 	struct rte_ether_hdr *orig_eth = rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
 	uint8_t orig_smac[6], orig_dmac[6];
@@ -308,7 +305,7 @@ send_tcp_rst_v6(struct rte_mbuf *pkt, struct pkt_meta *meta,
 
 	/* Send on ingress port */
 	uint16_t tx_port = meta->ingress_ifindex;
-	uint16_t sent = rte_eth_tx_burst(tx_port, 0, &rst, 1);
+	uint16_t sent = rte_eth_tx_burst(tx_port, ctx->tx_queue_id, &rst, 1);
 	if (sent == 0)
 		rte_pktmbuf_free(rst);
 }
@@ -323,7 +320,6 @@ void
 send_icmp_unreach_v4(struct rte_mbuf *pkt, struct pkt_meta *meta,
                      struct pipeline_ctx *ctx)
 {
-	(void)ctx;
 
 	uint8_t *orig_data = rte_pktmbuf_mtod(pkt, uint8_t *);
 	uint32_t orig_data_len = rte_pktmbuf_data_len(pkt);
@@ -395,7 +391,7 @@ send_icmp_unreach_v4(struct rte_mbuf *pkt, struct pkt_meta *meta,
 
 	/* Send on ingress port */
 	uint16_t tx_port = meta->ingress_ifindex;
-	uint16_t sent = rte_eth_tx_burst(tx_port, 0, &icmp_pkt, 1);
+	uint16_t sent = rte_eth_tx_burst(tx_port, ctx->tx_queue_id, &icmp_pkt, 1);
 	if (sent == 0)
 		rte_pktmbuf_free(icmp_pkt);
 }
@@ -410,7 +406,6 @@ void
 send_icmp_unreach_v6(struct rte_mbuf *pkt, struct pkt_meta *meta,
                      struct pipeline_ctx *ctx)
 {
-	(void)ctx;
 
 	uint8_t *orig_data = rte_pktmbuf_mtod(pkt, uint8_t *);
 	uint32_t orig_data_len = rte_pktmbuf_data_len(pkt);
@@ -501,7 +496,7 @@ send_icmp_unreach_v6(struct rte_mbuf *pkt, struct pkt_meta *meta,
 
 	/* Send on ingress port */
 	uint16_t tx_port = meta->ingress_ifindex;
-	uint16_t sent = rte_eth_tx_burst(tx_port, 0, &icmp_pkt, 1);
+	uint16_t sent = rte_eth_tx_burst(tx_port, ctx->tx_queue_id, &icmp_pkt, 1);
 	if (sent == 0)
 		rte_pktmbuf_free(icmp_pkt);
 }
@@ -521,7 +516,6 @@ void
 send_icmp_time_exceeded_v4(struct rte_mbuf *pkt, struct pkt_meta *meta,
                            struct pipeline_ctx *ctx)
 {
-	(void)ctx;
 
 	uint8_t *orig_data = rte_pktmbuf_mtod(pkt, uint8_t *);
 	uint32_t orig_data_len = rte_pktmbuf_data_len(pkt);
@@ -592,7 +586,7 @@ send_icmp_time_exceeded_v4(struct rte_mbuf *pkt, struct pkt_meta *meta,
 
 	/* Send on ingress port */
 	uint16_t tx_port = meta->ingress_ifindex;
-	uint16_t sent = rte_eth_tx_burst(tx_port, 0, &icmp_pkt, 1);
+	uint16_t sent = rte_eth_tx_burst(tx_port, ctx->tx_queue_id, &icmp_pkt, 1);
 	if (sent == 0)
 		rte_pktmbuf_free(icmp_pkt);
 }
@@ -607,7 +601,6 @@ void
 send_icmp_time_exceeded_v6(struct rte_mbuf *pkt, struct pkt_meta *meta,
                            struct pipeline_ctx *ctx)
 {
-	(void)ctx;
 
 	uint8_t *orig_data = rte_pktmbuf_mtod(pkt, uint8_t *);
 	uint32_t orig_data_len = rte_pktmbuf_data_len(pkt);
@@ -695,7 +688,7 @@ send_icmp_time_exceeded_v6(struct rte_mbuf *pkt, struct pkt_meta *meta,
 
 	/* Send on ingress port */
 	uint16_t tx_port = meta->ingress_ifindex;
-	uint16_t sent = rte_eth_tx_burst(tx_port, 0, &icmp_pkt, 1);
+	uint16_t sent = rte_eth_tx_burst(tx_port, ctx->tx_queue_id, &icmp_pkt, 1);
 	if (sent == 0)
 		rte_pktmbuf_free(icmp_pkt);
 }

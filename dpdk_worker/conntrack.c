@@ -695,6 +695,7 @@ conntrack_create(struct rte_mbuf *pkt, struct pkt_meta *meta,
 		fwd_val.nat_dst_ip = meta->nat_dst_ip.v4;
 		fwd_val.nat_src_port = meta->nat_src_port;
 		fwd_val.nat_dst_port = meta->nat_dst_port;
+		fwd_val.log_flags = meta->log_flags;
 		fwd_val.is_reverse = 0;
 
 		/* FIB cache: store forwarding result from zone_lookup */
@@ -765,6 +766,7 @@ conntrack_create(struct rte_mbuf *pkt, struct pkt_meta *meta,
 		memcpy(fwd_val6.nat_dst_ip, meta->nat_dst_ip.v6, 16);
 		fwd_val6.nat_src_port = meta->nat_src_port;
 		fwd_val6.nat_dst_port = meta->nat_dst_port;
+		fwd_val6.log_flags = meta->log_flags;
 		fwd_val6.is_reverse = 0;
 
 		/* FIB cache: store forwarding result from zone_lookup */

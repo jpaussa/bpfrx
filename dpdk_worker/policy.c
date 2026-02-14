@@ -161,6 +161,7 @@ policy_check(struct rte_mbuf *pkt, struct pkt_meta *meta,
 
 		/* Match found */
 		meta->policy_id = rule->rule_id;
+		meta->log_flags = rule->log;
 
 		/* Counter */
 		if (rule->counter_id != 0)

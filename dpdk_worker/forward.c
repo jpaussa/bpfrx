@@ -211,20 +211,47 @@ forward_packet(struct rte_mbuf *pkt, struct pkt_meta *meta,
 		}
 	}
 
-	/* 5. Transmit */
-	uint16_t tx_port = meta->fwd_ifindex;  /* TODO: map ifindex -> DPDK port_id */
-	if (tx_port == 0) {
-		/* No forwarding destination determined — drop */
-		rte_pktmbuf_free(pkt);
-		ctr_global_inc(ctx, GLOBAL_CTR_DROPS);
-		return;
-	}
+	/* 5. Transmit via TX buffer (batched) or direct fallback.
+	 *
+	 * fwd_ifindex is the DPDK port_id, populated by zone.c from
+	 * the FIB nexthop's port_id field (not the kernel ifindex). */
+	uint16_t tx_port = meta->fwd_ifindex;
 
-	uint16_t sent = rte_eth_tx_burst(tx_port, 0, &pkt, 1);
-	if (sent == 0) {
+	if (tx_port < MAX_PORTS && ctx->tx_bufs[tx_port]) {
+		ctr_iface_tx_add(ctx, tx_port, rte_pktmbuf_pkt_len(pkt));
+		uint16_t sent = rte_eth_tx_buffer(tx_port, ctx->tx_queue_id,
+		                                  ctx->tx_bufs[tx_port], pkt);
+		(void)sent;  /* auto-flushed packets counted by buffer */
+	} else if (tx_port != 0) {
+		/* Fallback: direct TX (port outside MAX_PORTS or no buffer) */
+		uint16_t sent = rte_eth_tx_burst(tx_port, ctx->tx_queue_id,
+		                                 &pkt, 1);
+		if (sent == 0) {
+			rte_pktmbuf_free(pkt);
+			ctr_global_inc(ctx, GLOBAL_CTR_DROPS);
+		} else {
+			ctr_iface_tx_add(ctx, tx_port, rte_pktmbuf_pkt_len(pkt));
+		}
+	} else {
+		/* No forwarding destination — drop */
 		rte_pktmbuf_free(pkt);
 		ctr_global_inc(ctx, GLOBAL_CTR_DROPS);
-	} else {
-		ctr_iface_tx_add(ctx, tx_port, rte_pktmbuf_pkt_len(pkt));
+	}
+}
+
+/**
+ * flush_tx_buffers — Flush all per-port TX buffers.
+ *
+ * Called at the end of each RX burst to send any remaining buffered
+ * packets. Without this, the last few packets in each burst would
+ * be delayed until the buffer fills up from the next burst.
+ */
+void
+flush_tx_buffers(struct pipeline_ctx *ctx)
+{
+	for (uint16_t p = 0; p < ctx->nb_ports && p < MAX_PORTS; p++) {
+		if (ctx->tx_bufs[p])
+			rte_eth_tx_buffer_flush(p, ctx->tx_queue_id,
+			                        ctx->tx_bufs[p]);
 	}
 }
