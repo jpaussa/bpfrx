@@ -1183,7 +1183,8 @@ type IPsecGateway struct {
 	IKEPolicy        string // IKE policy reference
 	ExternalIface    string // external-facing interface
 	Version          string // "v1-only", "v2-only" (empty = both)
-	NoNATTraversal   bool   // disable NAT-T
+	NoNATTraversal   bool   // disable NAT-T (legacy, use NATTraversal)
+	NATTraversal     string // "enable" (default), "disable", "force"
 	DeadPeerDetect   string // "always-send", "optimized", "probe-idle"
 	LocalIDType      string // "hostname", "inet", "fqdn"
 	LocalIDValue     string // identity value

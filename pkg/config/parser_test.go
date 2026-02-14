@@ -3877,6 +3877,9 @@ func TestIKEAdvancedFeatures(t *testing.T) {
 	if !gw.NoNATTraversal {
 		t.Error("gateway no-nat-traversal not set")
 	}
+	if gw.NATTraversal != "disable" {
+		t.Errorf("gateway NATTraversal = %q, want 'disable'", gw.NATTraversal)
+	}
 	if gw.DeadPeerDetect != "always-send" {
 		t.Errorf("gateway dpd = %q", gw.DeadPeerDetect)
 	}
@@ -3999,6 +4002,9 @@ func TestIKEAdvancedSetSyntax(t *testing.T) {
 	if !gw.NoNATTraversal {
 		t.Error("no-nat-traversal not set")
 	}
+	if gw.NATTraversal != "disable" {
+		t.Errorf("NATTraversal = %q, want 'disable'", gw.NATTraversal)
+	}
 	if gw.LocalIDType != "hostname" || gw.LocalIDValue != "vpn.test.com" {
 		t.Errorf("local-identity = %q %q", gw.LocalIDType, gw.LocalIDValue)
 	}
@@ -4028,6 +4034,99 @@ func TestIKEAdvancedSetSyntax(t *testing.T) {
 	}
 	if vpn.IPsecPolicy != "ipsec-pol" {
 		t.Errorf("ipsec-policy = %q", vpn.IPsecPolicy)
+	}
+}
+
+func TestIPsecNATTraversal(t *testing.T) {
+	// Hierarchical syntax
+	input := `security {
+    ike {
+        gateway force-gw {
+            address 10.0.0.1;
+            nat-traversal force;
+            version v2-only;
+        }
+        gateway disable-gw {
+            address 10.0.0.2;
+            no-nat-traversal;
+        }
+        gateway enable-gw {
+            address 10.0.0.3;
+            nat-traversal enable;
+        }
+    }
+}`
+	parser := NewParser(input)
+	tree, errs := parser.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	// force-gw
+	fgw := cfg.Security.IPsec.Gateways["force-gw"]
+	if fgw == nil {
+		t.Fatal("missing force-gw")
+	}
+	if fgw.NATTraversal != "force" {
+		t.Errorf("force-gw NATTraversal = %q, want 'force'", fgw.NATTraversal)
+	}
+
+	// disable-gw (using no-nat-traversal)
+	dgw := cfg.Security.IPsec.Gateways["disable-gw"]
+	if dgw == nil {
+		t.Fatal("missing disable-gw")
+	}
+	if !dgw.NoNATTraversal {
+		t.Error("disable-gw NoNATTraversal not set")
+	}
+	if dgw.NATTraversal != "disable" {
+		t.Errorf("disable-gw NATTraversal = %q, want 'disable'", dgw.NATTraversal)
+	}
+
+	// enable-gw
+	egw := cfg.Security.IPsec.Gateways["enable-gw"]
+	if egw == nil {
+		t.Fatal("missing enable-gw")
+	}
+	if egw.NATTraversal != "enable" {
+		t.Errorf("enable-gw NATTraversal = %q, want 'enable'", egw.NATTraversal)
+	}
+	if egw.NoNATTraversal {
+		t.Error("enable-gw should not have NoNATTraversal set")
+	}
+}
+
+func TestIPsecNATTraversalFlatSet(t *testing.T) {
+	lines := []string{
+		`set security ike gateway gw1 address 10.0.0.1`,
+		`set security ike gateway gw1 nat-traversal force`,
+		`set security ike gateway gw1 version v2-only`,
+	}
+	tree := &ConfigTree{}
+	for _, line := range lines {
+		cmd, err := ParseSetCommand(line)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", line, err)
+		}
+		tree.SetPath(cmd)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+	gw := cfg.Security.IPsec.Gateways["gw1"]
+	if gw == nil {
+		t.Fatal("missing gateway gw1")
+	}
+	if gw.NATTraversal != "force" {
+		t.Errorf("NATTraversal = %q, want 'force'", gw.NATTraversal)
+	}
+	if gw.Address != "10.0.0.1" {
+		t.Errorf("Address = %q, want '10.0.0.1'", gw.Address)
 	}
 }
 

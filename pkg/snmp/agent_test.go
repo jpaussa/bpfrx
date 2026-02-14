@@ -367,6 +367,90 @@ func TestIfTableWalk(t *testing.T) {
 	}
 }
 
+func TestIfXTableWalk(t *testing.T) {
+	a := NewAgent(&config.SNMPConfig{})
+	a.SetIfDataFn(func() []IfData {
+		return []IfData{
+			{
+				IfIndex: 2, IfDescr: "trust0", IfName: "trust0",
+				IfType: 6, IfMtu: 1500, AdminStatus: 1, OperStatus: 1,
+				HCInOctets: 1234567890123, HCOutOctets: 9876543210987,
+				HCInUcastPkts: 5000000, HCOutUcastPkts: 4000000,
+				InMulticastPkts: 100, InBroadcastPkts: 50,
+				OutMulticastPkts: 200, OutBroadcastPkts: 25,
+				IfHighSpeed: 10000, IfAlias: "Trust LAN",
+			},
+		}
+	})
+
+	// Walking from last ifTable entry should reach ifXTable
+	// Last ifTable OID: 1.3.6.1.2.1.2.2.1.16.2
+	lastIfTable := append(append([]int{}, oidIfTablePrefix...), 16, 2)
+	next := a.findNextOID(lastIfTable)
+	// Should be ifXTable.1.2 (ifName.2)
+	wantFirst := append(append([]int{}, oidIfXTablePrefix...), 1, 2)
+	if !oidEqual(next, wantFirst) {
+		t.Errorf("first ifXTable entry should be ifName.2, got %v", next)
+	}
+
+	// Get ifName.2
+	val, tag := a.getOIDValue(wantFirst)
+	if tag != tagOctetString || string(val) != "trust0" {
+		t.Errorf("ifName.2 = %q (tag %d), want 'trust0'", val, tag)
+	}
+
+	// Get ifHCInOctets.2 (column 6)
+	hcInOID := append(append([]int{}, oidIfXTablePrefix...), 6, 2)
+	val, tag = a.getOIDValue(hcInOID)
+	if tag != tagCounter64 {
+		t.Errorf("ifHCInOctets tag = 0x%02x, want 0x%02x", tag, tagCounter64)
+	}
+
+	// Get ifHighSpeed.2 (column 15)
+	hsOID := append(append([]int{}, oidIfXTablePrefix...), 15, 2)
+	val, tag = a.getOIDValue(hsOID)
+	if tag != tagGauge32 {
+		t.Errorf("ifHighSpeed tag = 0x%02x, want 0x%02x", tag, tagGauge32)
+	}
+
+	// Get ifAlias.2 (column 18)
+	aliasOID := append(append([]int{}, oidIfXTablePrefix...), 18, 2)
+	val, tag = a.getOIDValue(aliasOID)
+	if tag != tagOctetString || string(val) != "Trust LAN" {
+		t.Errorf("ifAlias.2 = %q (tag %d), want 'Trust LAN'", val, tag)
+	}
+
+	// findNextOID after last ifXTable entry should return nil
+	lastIfXTable := append(append([]int{}, oidIfXTablePrefix...), 18, 2)
+	next = a.findNextOID(lastIfXTable)
+	if next != nil {
+		t.Errorf("next after last ifXTable should be nil, got %v", next)
+	}
+}
+
+func TestCounter64Encoding(t *testing.T) {
+	// 0 should encode to [0]
+	got := berEncodeCounter64(0)
+	if len(got) != 1 || got[0] != 0 {
+		t.Errorf("Counter64(0) = %v, want [0]", got)
+	}
+	// 255 should need leading zero
+	got = berEncodeCounter64(255)
+	if len(got) != 2 || got[0] != 0 || got[1] != 255 {
+		t.Errorf("Counter64(255) = %v, want [0, 255]", got)
+	}
+	// Large 64-bit value
+	got = berEncodeCounter64(1234567890123)
+	if len(got) == 0 {
+		t.Error("Counter64(large) returned empty")
+	}
+	// Max uint64 should encode properly (9 bytes with leading zero)
+	got = berEncodeCounter64(^uint64(0))
+	if len(got) != 9 || got[0] != 0 {
+		t.Errorf("Counter64(max) = %d bytes, first=%d; want 9 bytes with leading 0", len(got), got[0])
+	}
+}
+
 func TestCounter32Encoding(t *testing.T) {
 	// 0 should encode to [0]
 	got := berEncodeCounter32(0)
@@ -605,4 +689,317 @@ func TestAES128EncryptDecrypt(t *testing.T) {
 	if !bytesEqual(dec, plaintext) {
 		t.Errorf("AES128 roundtrip failed: got %v, want %v", dec, plaintext)
 	}
+}
+
+// --- ifXTable tests ---
+
+// testIfXData returns test interface data with ifXTable fields populated.
+func testIfXData() []IfData {
+	return []IfData{
+		{
+			IfIndex: 2, IfDescr: "trust0", IfType: 6, IfMtu: 1500,
+			IfSpeed: 1000000000, AdminStatus: 1, OperStatus: 1,
+			InOctets: 123456, OutOctets: 789012,
+			IfName: "trust0", IfAlias: "Trust LAN",
+			HCInOctets: 5000000000, HCOutOctets: 3000000000,
+			HCInUcastPkts: 1000000, HCOutUcastPkts: 800000,
+			IfHighSpeed: 1000,
+			InMulticastPkts: 500, InBroadcastPkts: 100,
+			OutMulticastPkts: 200, OutBroadcastPkts: 50,
+		},
+		{
+			IfIndex: 3, IfDescr: "untrust0", IfType: 6, IfMtu: 1500,
+			IfSpeed: 4294967295, AdminStatus: 1, OperStatus: 1,
+			InOctets: 0, OutOctets: 0,
+			IfName: "untrust0", IfAlias: "WAN uplink",
+			HCInOctets: 12345678901234, HCOutOctets: 98765432109876,
+			HCInUcastPkts: 9876543210, HCOutUcastPkts: 1234567890,
+			IfHighSpeed: 10000,
+		},
+	}
+}
+
+func TestIfXTable_ifName(t *testing.T) {
+	a := NewAgent(&config.SNMPConfig{})
+	a.SetIfDataFn(testIfXData)
+
+	// ifName.2 = 1.3.6.1.2.1.31.1.1.1.1.2
+	oid := append(append([]int{}, oidIfXTablePrefix...), 1, 2)
+	val, tag := a.getOIDValue(oid)
+	if tag != tagOctetString {
+		t.Fatalf("ifName tag = 0x%02x, want OctetString (0x%02x)", tag, tagOctetString)
+	}
+	if string(val) != "trust0" {
+		t.Errorf("ifName.2 = %q, want 'trust0'", string(val))
+	}
+
+	// ifName.3
+	oid = append(append([]int{}, oidIfXTablePrefix...), 1, 3)
+	val, tag = a.getOIDValue(oid)
+	if tag != tagOctetString || string(val) != "untrust0" {
+		t.Errorf("ifName.3 = %q (tag 0x%02x), want 'untrust0'", string(val), tag)
+	}
+}
+
+func TestIfXTable_ifNameFallback(t *testing.T) {
+	a := NewAgent(&config.SNMPConfig{})
+	a.SetIfDataFn(func() []IfData {
+		return []IfData{
+			{IfIndex: 5, IfDescr: "loopback0"}, // IfName empty, should fall back to IfDescr
+		}
+	})
+
+	oid := append(append([]int{}, oidIfXTablePrefix...), 1, 5)
+	val, tag := a.getOIDValue(oid)
+	if tag != tagOctetString || string(val) != "loopback0" {
+		t.Errorf("ifName fallback = %q, want 'loopback0'", string(val))
+	}
+}
+
+func TestIfXTable_ifHCInOctets(t *testing.T) {
+	a := NewAgent(&config.SNMPConfig{})
+	a.SetIfDataFn(testIfXData)
+
+	// ifHCInOctets.2 = 1.3.6.1.2.1.31.1.1.1.6.2
+	oid := append(append([]int{}, oidIfXTablePrefix...), 6, 2)
+	val, tag := a.getOIDValue(oid)
+	if tag != tagCounter64 {
+		t.Fatalf("ifHCInOctets tag = 0x%02x, want Counter64 (0x%02x)", tag, tagCounter64)
+	}
+	// Decode: berEncodeCounter64(5000000000) should encode correctly
+	decoded := decodeCounter64(val)
+	if decoded != 5000000000 {
+		t.Errorf("ifHCInOctets.2 = %d, want 5000000000", decoded)
+	}
+}
+
+func TestIfXTable_ifHCOutOctets(t *testing.T) {
+	a := NewAgent(&config.SNMPConfig{})
+	a.SetIfDataFn(testIfXData)
+
+	// ifHCOutOctets.3 = large value (98765432109876)
+	oid := append(append([]int{}, oidIfXTablePrefix...), 10, 3)
+	val, tag := a.getOIDValue(oid)
+	if tag != tagCounter64 {
+		t.Fatalf("ifHCOutOctets tag = 0x%02x, want Counter64", tag)
+	}
+	decoded := decodeCounter64(val)
+	if decoded != 98765432109876 {
+		t.Errorf("ifHCOutOctets.3 = %d, want 98765432109876", decoded)
+	}
+}
+
+func TestIfXTable_ifHighSpeed(t *testing.T) {
+	a := NewAgent(&config.SNMPConfig{})
+	a.SetIfDataFn(testIfXData)
+
+	// ifHighSpeed.2 = 1000 Mbps
+	oid := append(append([]int{}, oidIfXTablePrefix...), 15, 2)
+	val, tag := a.getOIDValue(oid)
+	if tag != tagGauge32 {
+		t.Fatalf("ifHighSpeed tag = 0x%02x, want Gauge32 (0x%02x)", tag, tagGauge32)
+	}
+	// Decode Gauge32 (same encoding as Counter32)
+	decoded32 := decodeUint32(val)
+	if decoded32 != 1000 {
+		t.Errorf("ifHighSpeed.2 = %d, want 1000", decoded32)
+	}
+
+	// ifHighSpeed.3 = 10000 Mbps (10G)
+	oid = append(append([]int{}, oidIfXTablePrefix...), 15, 3)
+	val, _ = a.getOIDValue(oid)
+	decoded32 = decodeUint32(val)
+	if decoded32 != 10000 {
+		t.Errorf("ifHighSpeed.3 = %d, want 10000", decoded32)
+	}
+}
+
+func TestIfXTable_ifAlias(t *testing.T) {
+	a := NewAgent(&config.SNMPConfig{})
+	a.SetIfDataFn(testIfXData)
+
+	// ifAlias.2
+	oid := append(append([]int{}, oidIfXTablePrefix...), 18, 2)
+	val, tag := a.getOIDValue(oid)
+	if tag != tagOctetString {
+		t.Fatalf("ifAlias tag = 0x%02x, want OctetString", tag)
+	}
+	if string(val) != "Trust LAN" {
+		t.Errorf("ifAlias.2 = %q, want 'Trust LAN'", string(val))
+	}
+
+	// ifAlias.3
+	oid = append(append([]int{}, oidIfXTablePrefix...), 18, 3)
+	val, tag = a.getOIDValue(oid)
+	if tag != tagOctetString || string(val) != "WAN uplink" {
+		t.Errorf("ifAlias.3 = %q, want 'WAN uplink'", string(val))
+	}
+}
+
+func TestIfXTable_UnknownIfIndex(t *testing.T) {
+	a := NewAgent(&config.SNMPConfig{})
+	a.SetIfDataFn(testIfXData)
+
+	// ifName.99 (nonexistent interface)
+	oid := append(append([]int{}, oidIfXTablePrefix...), 1, 99)
+	val, _ := a.getOIDValue(oid)
+	if val != nil {
+		t.Error("expected nil for unknown ifIndex")
+	}
+}
+
+func TestIfXTable_GETNEXTWalk(t *testing.T) {
+	a := NewAgent(&config.SNMPConfig{})
+	a.SetIfDataFn(testIfXData)
+
+	// GETNEXT from last ifTable entry should reach ifXTable
+	// Last ifTable entry is ifOutOctets (col 16) for ifIndex 3
+	lastIfTable := append(append([]int{}, oidIfTablePrefix...), 16, 3)
+	next := a.findNextOID(lastIfTable)
+	if next == nil {
+		t.Fatal("expected ifXTable entry after last ifTable, got nil")
+	}
+	// Should be ifXTable.1.2 (ifName for first interface)
+	wantFirst := append(append([]int{}, oidIfXTablePrefix...), 1, 2)
+	if !oidEqual(next, wantFirst) {
+		t.Errorf("first ifXTable entry = %v, want %v", next, wantFirst)
+	}
+}
+
+func TestIfXTable_GETNEXTWalkColumns(t *testing.T) {
+	a := NewAgent(&config.SNMPConfig{})
+	a.SetIfDataFn(testIfXData)
+
+	// Walk from ifName.3 → should go to ifInMulticastPkts.2 (col 2, first iface)
+	ifName3 := append(append([]int{}, oidIfXTablePrefix...), 1, 3)
+	next := a.findNextOID(ifName3)
+	wantNext := append(append([]int{}, oidIfXTablePrefix...), 2, 2)
+	if !oidEqual(next, wantNext) {
+		t.Errorf("next after ifName.3 = %v, want %v (ifInMulticastPkts.2)", next, wantNext)
+	}
+}
+
+func TestCounter64Roundtrip(t *testing.T) {
+	tests := []struct {
+		val  uint64
+		name string
+	}{
+		{0, "zero"},
+		{1, "one"},
+		{127, "127"},
+		{128, "128"},
+		{255, "255"},
+		{256, "256"},
+		{65535, "65535"},
+		{4294967295, "max32"},
+		{4294967296, "max32+1"},
+		{5000000000, "5G"},
+		{12345678901234, "large"},
+		{18446744073709551615, "max64"},
+	}
+	for _, tt := range tests {
+		encoded := berEncodeCounter64(tt.val)
+		if encoded == nil {
+			t.Errorf("Counter64(%s) = nil", tt.name)
+			continue
+		}
+		decoded := decodeCounter64(encoded)
+		if decoded != tt.val {
+			t.Errorf("Counter64 roundtrip %s: %d -> encoded %v -> %d",
+				tt.name, tt.val, encoded, decoded)
+		}
+	}
+}
+
+func TestCounter64Encoding_HighBitPrefix(t *testing.T) {
+	// Values with high bit set should get a leading zero byte
+	encoded := berEncodeCounter64(128)
+	if encoded[0] != 0 {
+		t.Errorf("Counter64(128) should have leading zero, got %v", encoded)
+	}
+	encoded = berEncodeCounter64(255)
+	if encoded[0] != 0 {
+		t.Errorf("Counter64(255) should have leading zero, got %v", encoded)
+	}
+}
+
+func TestIfXTable_MulticastBroadcastCounters(t *testing.T) {
+	a := NewAgent(&config.SNMPConfig{})
+	a.SetIfDataFn(testIfXData)
+
+	// ifInMulticastPkts.2 (col 2)
+	oid := append(append([]int{}, oidIfXTablePrefix...), 2, 2)
+	val, tag := a.getOIDValue(oid)
+	if tag != tagCounter32 {
+		t.Fatalf("ifInMulticastPkts tag = 0x%02x, want Counter32", tag)
+	}
+	decoded := decodeUint32(val)
+	if decoded != 500 {
+		t.Errorf("ifInMulticastPkts.2 = %d, want 500", decoded)
+	}
+
+	// ifOutBroadcastPkts.2 (col 5)
+	oid = append(append([]int{}, oidIfXTablePrefix...), 5, 2)
+	val, tag = a.getOIDValue(oid)
+	if tag != tagCounter32 {
+		t.Fatalf("ifOutBroadcastPkts tag = 0x%02x, want Counter32", tag)
+	}
+	decoded = decodeUint32(val)
+	if decoded != 50 {
+		t.Errorf("ifOutBroadcastPkts.2 = %d, want 50", decoded)
+	}
+}
+
+func TestIfXTable_HCUcastPkts(t *testing.T) {
+	a := NewAgent(&config.SNMPConfig{})
+	a.SetIfDataFn(testIfXData)
+
+	// ifHCInUcastPkts.3 (col 7)
+	oid := append(append([]int{}, oidIfXTablePrefix...), 7, 3)
+	val, tag := a.getOIDValue(oid)
+	if tag != tagCounter64 {
+		t.Fatalf("ifHCInUcastPkts tag = 0x%02x, want Counter64", tag)
+	}
+	decoded := decodeCounter64(val)
+	if decoded != 9876543210 {
+		t.Errorf("ifHCInUcastPkts.3 = %d, want 9876543210", decoded)
+	}
+
+	// ifHCOutUcastPkts.3 (col 11)
+	oid = append(append([]int{}, oidIfXTablePrefix...), 11, 3)
+	val, tag = a.getOIDValue(oid)
+	if tag != tagCounter64 {
+		t.Fatalf("ifHCOutUcastPkts tag = 0x%02x, want Counter64", tag)
+	}
+	decoded = decodeCounter64(val)
+	if decoded != 1234567890 {
+		t.Errorf("ifHCOutUcastPkts.3 = %d, want 1234567890", decoded)
+	}
+}
+
+// --- ifXTable test helpers ---
+
+// decodeCounter64 decodes a BER-encoded unsigned 64-bit value.
+func decodeCounter64(data []byte) uint64 {
+	// Strip leading zero (unsigned padding)
+	for len(data) > 1 && data[0] == 0 {
+		data = data[1:]
+	}
+	var val uint64
+	for _, b := range data {
+		val = (val << 8) | uint64(b)
+	}
+	return val
+}
+
+// decodeUint32 decodes a BER-encoded unsigned 32-bit value (Counter32/Gauge32).
+func decodeUint32(data []byte) uint32 {
+	for len(data) > 1 && data[0] == 0 {
+		data = data[1:]
+	}
+	var val uint32
+	for _, b := range data {
+		val = (val << 8) | uint32(b)
+	}
+	return val
 }

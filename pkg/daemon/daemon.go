@@ -312,10 +312,17 @@ func (d *Daemon) Run(ctx context.Context) error {
 					IfSpeed:     speed,
 					AdminStatus: admin,
 					OperStatus:  oper,
+					IfName:      attrs.Name,
+					IfHighSpeed: speed / 1_000_000, // bps -> Mbps
 				}
 				if stats != nil {
 					entry.InOctets = uint32(stats.RxBytes)
 					entry.OutOctets = uint32(stats.TxBytes)
+					entry.HCInOctets = stats.RxBytes
+					entry.HCInUcastPkts = stats.RxPackets
+					entry.HCOutOctets = stats.TxBytes
+					entry.HCOutUcastPkts = stats.TxPackets
+					entry.InMulticastPkts = uint32(stats.Multicast)
 				}
 				result = append(result, entry)
 			}

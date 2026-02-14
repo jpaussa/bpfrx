@@ -112,8 +112,19 @@ func (m *Manager) generateConfig(ipsecCfg *config.IPsecConfig) string {
 		}
 
 		// NAT traversal
-		if gw != nil && gw.NoNATTraversal {
-			b.WriteString("    encap = no\n")
+		if gw != nil {
+			switch gw.NATTraversal {
+			case "disable":
+				b.WriteString("    encap = no\n")
+			case "force":
+				b.WriteString("    encap = yes\n")
+				b.WriteString("    forceencaps = yes\n")
+			default:
+				// "enable" or empty = strongSwan default (auto-detect NAT)
+				if gw.NoNATTraversal {
+					b.WriteString("    encap = no\n")
+				}
+			}
 		}
 
 		// DPD

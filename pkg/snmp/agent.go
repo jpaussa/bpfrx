@@ -48,6 +48,9 @@ const tagCounter32 = 0x41
 // tagGauge32 is the ASN.1 application tag for Gauge32.
 const tagGauge32 = 0x42
 
+// tagCounter64 is the ASN.1 application tag for Counter64.
+const tagCounter64 = 0x46
+
 // OID constants for the system MIB group (1.3.6.1.2.1.1).
 var (
 	oidSysDescr    = []int{1, 3, 6, 1, 2, 1, 1, 1, 0}
@@ -65,6 +68,9 @@ var (
 	//          7=ifAdminStatus, 8=ifOperStatus, 10=ifInOctets, 16=ifOutOctets
 	oidIfTablePrefix = []int{1, 3, 6, 1, 2, 1, 2, 2, 1}
 
+	// ifXTable column OIDs: 1.3.6.1.2.1.31.1.1.1.<col>.<ifIndex>
+	oidIfXTablePrefix = []int{1, 3, 6, 1, 2, 1, 31, 1, 1, 1}
+
 	// Ordered list of static OIDs we serve, for GETNEXT walking.
 	staticOIDs = [][]int{
 		oidSysDescr,
@@ -78,9 +84,15 @@ var (
 
 	// ifTable columns we serve (sorted for GETNEXT).
 	ifTableColumns = []int{1, 2, 3, 4, 5, 7, 8, 10, 16}
+
+	// ifXTable columns we serve (sorted for GETNEXT).
+	// 1=ifName, 2=ifInMulticastPkts, 3=ifInBroadcastPkts, 4=ifOutMulticastPkts,
+	// 5=ifOutBroadcastPkts, 6=ifHCInOctets, 7=ifHCInUcastPkts,
+	// 10=ifHCOutOctets, 11=ifHCOutUcastPkts, 15=ifHighSpeed, 18=ifAlias
+	ifXTableColumns = []int{1, 2, 3, 4, 5, 6, 7, 10, 11, 15, 18}
 )
 
-// IfData represents a single network interface for the SNMP ifTable.
+// IfData represents a single network interface for the SNMP ifTable/ifXTable.
 type IfData struct {
 	IfIndex     int
 	IfDescr     string
@@ -91,6 +103,19 @@ type IfData struct {
 	OperStatus  int    // 1=up, 2=down
 	InOctets    uint32 // Counter32 (wraps at 2^32)
 	OutOctets   uint32 // Counter32 (wraps at 2^32)
+
+	// ifXTable fields (64-bit high-capacity counters).
+	IfName           string // interface name (ifXTable.1)
+	InMulticastPkts  uint32 // Counter32 (ifXTable.2)
+	InBroadcastPkts  uint32 // Counter32 (ifXTable.3)
+	OutMulticastPkts uint32 // Counter32 (ifXTable.4)
+	OutBroadcastPkts uint32 // Counter32 (ifXTable.5)
+	HCInOctets       uint64 // Counter64 (ifXTable.6)
+	HCInUcastPkts    uint64 // Counter64 (ifXTable.7)
+	HCOutOctets      uint64 // Counter64 (ifXTable.10)
+	HCOutUcastPkts   uint64 // Counter64 (ifXTable.11)
+	IfHighSpeed      uint32 // Gauge32 Mbps (ifXTable.15)
+	IfAlias          string // description (ifXTable.18)
 }
 
 // Agent is an SNMP v2c/v3 agent that serves the system MIB and ifTable.
@@ -439,6 +464,13 @@ func (a *Agent) getOIDValue(oid []int) ([]byte, byte) {
 		return a.getIfTableValue(col, ifIdx)
 	}
 
+	// ifXTable: 1.3.6.1.2.1.31.1.1.1.<col>.<ifIndex>
+	if len(oid) == len(oidIfXTablePrefix)+2 && oidHasPrefix(oid, oidIfXTablePrefix) {
+		col := oid[len(oidIfXTablePrefix)]
+		ifIdx := oid[len(oidIfXTablePrefix)+1]
+		return a.getIfXTableValue(col, ifIdx)
+	}
+
 	return nil, 0
 }
 
@@ -479,6 +511,51 @@ func (a *Agent) getIfTableValue(col, ifIdx int) ([]byte, byte) {
 	return nil, 0
 }
 
+// getIfXTableValue returns the value for a specific ifXTable column and ifIndex.
+func (a *Agent) getIfXTableValue(col, ifIdx int) ([]byte, byte) {
+	ifaces := a.getIfData()
+	var iface *IfData
+	for i := range ifaces {
+		if ifaces[i].IfIndex == ifIdx {
+			iface = &ifaces[i]
+			break
+		}
+	}
+	if iface == nil {
+		return nil, 0
+	}
+
+	switch col {
+	case 1: // ifName
+		name := iface.IfName
+		if name == "" {
+			name = iface.IfDescr
+		}
+		return []byte(name), tagOctetString
+	case 2: // ifInMulticastPkts
+		return berEncodeCounter32(iface.InMulticastPkts), tagCounter32
+	case 3: // ifInBroadcastPkts
+		return berEncodeCounter32(iface.InBroadcastPkts), tagCounter32
+	case 4: // ifOutMulticastPkts
+		return berEncodeCounter32(iface.OutMulticastPkts), tagCounter32
+	case 5: // ifOutBroadcastPkts
+		return berEncodeCounter32(iface.OutBroadcastPkts), tagCounter32
+	case 6: // ifHCInOctets
+		return berEncodeCounter64(iface.HCInOctets), tagCounter64
+	case 7: // ifHCInUcastPkts
+		return berEncodeCounter64(iface.HCInUcastPkts), tagCounter64
+	case 10: // ifHCOutOctets
+		return berEncodeCounter64(iface.HCOutOctets), tagCounter64
+	case 11: // ifHCOutUcastPkts
+		return berEncodeCounter64(iface.HCOutUcastPkts), tagCounter64
+	case 15: // ifHighSpeed
+		return berEncodeGauge32(iface.IfHighSpeed), tagGauge32
+	case 18: // ifAlias
+		return []byte(iface.IfAlias), tagOctetString
+	}
+	return nil, 0
+}
+
 // findNextOID returns the next OID in the tree after the given OID, or nil.
 func (a *Agent) findNextOID(oid []int) []int {
 	// Check static OIDs first.
@@ -501,6 +578,19 @@ func (a *Agent) findNextOID(oid []int) []int {
 			copy(candidate, oidIfTablePrefix)
 			candidate[len(oidIfTablePrefix)] = col
 			candidate[len(oidIfTablePrefix)+1] = iface.IfIndex
+			if oidCompare(candidate, oid) > 0 {
+				return candidate
+			}
+		}
+	}
+
+	// Walk ifXTable OIDs: 1.3.6.1.2.1.31.1.1.1.<col>.<ifIndex>
+	for _, col := range ifXTableColumns {
+		for _, iface := range ifaces {
+			candidate := make([]int, len(oidIfXTablePrefix)+2)
+			copy(candidate, oidIfXTablePrefix)
+			candidate[len(oidIfXTablePrefix)] = col
+			candidate[len(oidIfXTablePrefix)+1] = iface.IfIndex
 			if oidCompare(candidate, oid) > 0 {
 				return candidate
 			}
@@ -540,6 +630,21 @@ func berEncodeCounter32(val uint32) []byte {
 // berEncodeGauge32 encodes a Gauge32 value (unsigned 32-bit).
 func berEncodeGauge32(val uint32) []byte {
 	return berEncodeCounter32(val) // same encoding
+}
+
+// berEncodeCounter64 encodes a Counter64 value (unsigned 64-bit).
+func berEncodeCounter64(val uint64) []byte {
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, val)
+	// Strip leading zeros but keep at least one byte.
+	for len(buf) > 1 && buf[0] == 0 {
+		buf = buf[1:]
+	}
+	// If high bit set, prepend zero for unsigned representation.
+	if buf[0]&0x80 != 0 {
+		buf = append([]byte{0}, buf...)
+	}
+	return buf
 }
 
 // varbind holds a single OID-value binding.

@@ -460,3 +460,101 @@ func TestFormatIdentity(t *testing.T) {
 		}
 	}
 }
+
+func TestGenerateConfig_NATTraversal_Disable(t *testing.T) {
+	m := &Manager{configDir: "/tmp", configPath: "/tmp/bpfrx.conf"}
+	cfg := &config.IPsecConfig{
+		Gateways: map[string]*config.IPsecGateway{
+			"gw": {Name: "gw", Address: "10.0.0.1", NATTraversal: "disable", NoNATTraversal: true},
+		},
+		Proposals: map[string]*config.IPsecProposal{},
+		VPNs: map[string]*config.IPsecVPN{
+			"tun": {Gateway: "gw", PSK: "key"},
+		},
+	}
+	got := m.generateConfig(cfg)
+	if !strings.Contains(got, "encap = no") {
+		t.Errorf("disable NAT-T should produce 'encap = no': %s", got)
+	}
+	if strings.Contains(got, "forceencaps") {
+		t.Errorf("disable NAT-T should not have forceencaps: %s", got)
+	}
+}
+
+func TestGenerateConfig_NATTraversal_Force(t *testing.T) {
+	m := &Manager{configDir: "/tmp", configPath: "/tmp/bpfrx.conf"}
+	cfg := &config.IPsecConfig{
+		Gateways: map[string]*config.IPsecGateway{
+			"gw": {Name: "gw", Address: "10.0.0.1", NATTraversal: "force"},
+		},
+		Proposals: map[string]*config.IPsecProposal{},
+		VPNs: map[string]*config.IPsecVPN{
+			"tun": {Gateway: "gw", PSK: "key"},
+		},
+	}
+	got := m.generateConfig(cfg)
+	if !strings.Contains(got, "encap = yes") {
+		t.Errorf("force NAT-T should produce 'encap = yes': %s", got)
+	}
+	if !strings.Contains(got, "forceencaps = yes") {
+		t.Errorf("force NAT-T should produce 'forceencaps = yes': %s", got)
+	}
+}
+
+func TestGenerateConfig_NATTraversal_Enable(t *testing.T) {
+	m := &Manager{configDir: "/tmp", configPath: "/tmp/bpfrx.conf"}
+	cfg := &config.IPsecConfig{
+		Gateways: map[string]*config.IPsecGateway{
+			"gw": {Name: "gw", Address: "10.0.0.1", NATTraversal: "enable"},
+		},
+		Proposals: map[string]*config.IPsecProposal{},
+		VPNs: map[string]*config.IPsecVPN{
+			"tun": {Gateway: "gw", PSK: "key"},
+		},
+	}
+	got := m.generateConfig(cfg)
+	// Enable is the strongSwan default — no encap/forceencaps lines needed.
+	if strings.Contains(got, "encap = no") {
+		t.Errorf("enable NAT-T should not have 'encap = no': %s", got)
+	}
+	if strings.Contains(got, "forceencaps") {
+		t.Errorf("enable NAT-T should not have forceencaps: %s", got)
+	}
+}
+
+func TestGenerateConfig_NATTraversal_Default(t *testing.T) {
+	// When NATTraversal is empty (not set), and NoNATTraversal is false,
+	// strongSwan auto-detects NAT — no encap lines needed.
+	m := &Manager{configDir: "/tmp", configPath: "/tmp/bpfrx.conf"}
+	cfg := &config.IPsecConfig{
+		Gateways: map[string]*config.IPsecGateway{
+			"gw": {Name: "gw", Address: "10.0.0.1"},
+		},
+		Proposals: map[string]*config.IPsecProposal{},
+		VPNs: map[string]*config.IPsecVPN{
+			"tun": {Gateway: "gw", PSK: "key"},
+		},
+	}
+	got := m.generateConfig(cfg)
+	if strings.Contains(got, "encap") {
+		t.Errorf("default NAT-T should not have encap lines: %s", got)
+	}
+}
+
+func TestGenerateConfig_NoNATTraversal_Legacy(t *testing.T) {
+	// Legacy NoNATTraversal=true without NATTraversal field.
+	m := &Manager{configDir: "/tmp", configPath: "/tmp/bpfrx.conf"}
+	cfg := &config.IPsecConfig{
+		Gateways: map[string]*config.IPsecGateway{
+			"gw": {Name: "gw", Address: "10.0.0.1", NoNATTraversal: true},
+		},
+		Proposals: map[string]*config.IPsecProposal{},
+		VPNs: map[string]*config.IPsecVPN{
+			"tun": {Gateway: "gw", PSK: "key"},
+		},
+	}
+	got := m.generateConfig(cfg)
+	if !strings.Contains(got, "encap = no") {
+		t.Errorf("legacy NoNATTraversal should produce 'encap = no': %s", got)
+	}
+}

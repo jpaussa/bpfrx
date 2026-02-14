@@ -2942,6 +2942,14 @@ func compileIKE(node *Node, sec *SecurityConfig) error {
 				}
 			case "no-nat-traversal":
 				gw.NoNATTraversal = true
+				gw.NATTraversal = "disable"
+			case "nat-traversal":
+				if v != "" {
+					gw.NATTraversal = v
+				}
+				if v == "disable" {
+					gw.NoNATTraversal = true
+				}
 			case "dead-peer-detection":
 				if v != "" {
 					gw.DeadPeerDetect = v
@@ -3079,6 +3087,14 @@ func compileIPsec(node *Node, sec *SecurityConfig) error {
 				}
 			case "no-nat-traversal":
 				gw.NoNATTraversal = true
+				gw.NATTraversal = "disable"
+			case "nat-traversal":
+				if v != "" {
+					gw.NATTraversal = v
+				}
+				if v == "disable" {
+					gw.NoNATTraversal = true
+				}
 			case "dead-peer-detection":
 				if v != "" {
 					gw.DeadPeerDetect = v
