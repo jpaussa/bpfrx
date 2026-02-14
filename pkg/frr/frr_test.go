@@ -1234,3 +1234,32 @@ func TestGenerateProtocols_RIPAuthText(t *testing.T) {
 		}
 	}
 }
+
+func TestGenerateProtocols_OSPFReferenceBandwidth(t *testing.T) {
+	m := New()
+	ospf := &config.OSPFConfig{
+		ReferenceBandwidth: 10000,
+		Areas: []*config.OSPFArea{
+			{ID: "0.0.0.0", Interfaces: []*config.OSPFInterface{{Name: "trust0"}}},
+		},
+	}
+	got := m.generateProtocols(ospf, nil, nil, nil, "", 1)
+	if !strings.Contains(got, "auto-cost reference-bandwidth 10000\n") {
+		t.Errorf("missing reference-bandwidth in:\n%s", got)
+	}
+}
+
+func TestGenerateProtocols_BGPGracefulRestart(t *testing.T) {
+	m := New()
+	bgp := &config.BGPConfig{
+		LocalAS:         65001,
+		GracefulRestart: true,
+		Neighbors: []*config.BGPNeighbor{
+			{Address: "10.0.0.2", PeerAS: 65002},
+		},
+	}
+	got := m.generateProtocols(nil, bgp, nil, nil, "", 1)
+	if !strings.Contains(got, "bgp graceful-restart\n") {
+		t.Errorf("missing graceful-restart in:\n%s", got)
+	}
+}

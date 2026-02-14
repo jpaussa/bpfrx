@@ -442,6 +442,9 @@ func (m *Manager) generateProtocols(ospf *config.OSPFConfig, bgp *config.BGPConf
 		if ospf.RouterID != "" {
 			fmt.Fprintf(&b, " ospf router-id %s\n", ospf.RouterID)
 		}
+		if ospf.ReferenceBandwidth > 0 {
+			fmt.Fprintf(&b, " auto-cost reference-bandwidth %d\n", ospf.ReferenceBandwidth)
+		}
 		for _, area := range ospf.Areas {
 			for _, iface := range area.Interfaces {
 				fmt.Fprintf(&b, " network %s area %s\n",
@@ -501,6 +504,9 @@ func (m *Manager) generateProtocols(ospf *config.OSPFConfig, bgp *config.BGPConf
 		}
 		if bgp.ClusterID != "" {
 			fmt.Fprintf(&b, " bgp cluster-id %s\n", bgp.ClusterID)
+		}
+		if bgp.GracefulRestart {
+			b.WriteString(" bgp graceful-restart\n")
 		}
 		for _, n := range bgp.Neighbors {
 			fmt.Fprintf(&b, " neighbor %s remote-as %d\n", n.Address, n.PeerAS)

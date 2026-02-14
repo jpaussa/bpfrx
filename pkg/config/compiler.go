@@ -2276,6 +2276,12 @@ func compileProtocols(node *Node, proto *ProtocolsConfig) error {
 				if len(child.Keys) >= 2 {
 					proto.OSPF.RouterID = child.Keys[1]
 				}
+			case "reference-bandwidth":
+				if v := nodeVal(child); v != "" {
+					if n, err := strconv.Atoi(v); err == nil {
+						proto.OSPF.ReferenceBandwidth = n
+					}
+				}
 			case "export":
 				if len(child.Keys) >= 2 {
 					proto.OSPF.Export = append(proto.OSPF.Export, child.Keys[1])
@@ -2367,6 +2373,8 @@ func compileProtocols(node *Node, proto *ProtocolsConfig) error {
 				if len(child.Keys) >= 2 {
 					proto.BGP.ClusterID = child.Keys[1]
 				}
+			case "graceful-restart":
+				proto.BGP.GracefulRestart = true
 			case "export":
 				if len(child.Keys) >= 2 {
 					proto.BGP.Export = append(proto.BGP.Export, child.Keys[1])

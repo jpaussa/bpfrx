@@ -338,6 +338,19 @@ struct flood_state {
 	uint64_t window_start;
 };
 
+/* Per-source-IP tracking for port scan / IP sweep detection.
+ * Key: source IPv4 address + zone.  Stored in LRU hash for auto-eviction. */
+struct scan_track_key {
+	uint32_t src_ip;
+	uint16_t zone_id;
+	uint16_t pad;
+};
+
+struct scan_track_value {
+	uint32_t count;           /* unique attempts in current window */
+	uint32_t window_start;    /* ktime_ns / 1e9 (seconds) */
+};
+
 /* ============================================================
  * NAT (matches bpfrx_maps.h)
  * ============================================================ */
@@ -598,6 +611,10 @@ struct event {
 /* ============================================================
  * Packet metadata (mirrors struct pkt_meta in bpfrx_common.h)
  * Passed through the userspace pipeline by reference.
+ *
+ * DPDK-specific differences from BPF pkt_meta:
+ *   - ip_ihl: replaces BPF's pad_meta; DPDK stores IHL for screen/parse
+ *   - log_flags + meta_pad[3]: DPDK extension for pipeline log propagation
  * ============================================================ */
 
 struct pkt_meta {

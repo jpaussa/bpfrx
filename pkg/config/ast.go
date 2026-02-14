@@ -515,8 +515,9 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 	}},
 	"protocols": {children: map[string]*schemaNode{
 		"ospf": {children: map[string]*schemaNode{
-			"router-id": {args: 1, children: nil},
-			"export":    {args: 1, children: nil},
+			"router-id":           {args: 1, children: nil},
+			"reference-bandwidth": {args: 1, children: nil},
+			"export":              {args: 1, children: nil},
 			"area": {args: 1, children: map[string]*schemaNode{
 				"interface": {args: 1, valueHint: ValueHintInterfaceName, children: map[string]*schemaNode{
 					"passive": {children: nil},
@@ -542,10 +543,11 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 			}},
 		}},
 		"bgp": {children: map[string]*schemaNode{
-			"local-as":   {args: 1, children: nil},
-			"router-id":  {args: 1, children: nil},
-			"cluster-id": {args: 1, children: nil},
-			"export":     {args: 1, children: nil},
+			"local-as":        {args: 1, children: nil},
+			"router-id":       {args: 1, children: nil},
+			"cluster-id":      {args: 1, children: nil},
+			"graceful-restart": {children: nil},
+			"export":          {args: 1, children: nil},
 			"group": {args: 1, children: map[string]*schemaNode{
 				"peer-as":            {args: 1, children: nil},
 				"description":        {args: 1, children: nil},
@@ -863,6 +865,7 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 		}},
 		"protocols": {children: map[string]*schemaNode{
 			"ospf": {children: map[string]*schemaNode{
+				"reference-bandwidth": {args: 1, children: nil},
 				"area": {args: 1, children: map[string]*schemaNode{
 					"interface": {args: 1, valueHint: ValueHintInterfaceName, children: map[string]*schemaNode{
 						"passive": {children: nil},
@@ -888,7 +891,8 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 				}},
 			}},
 			"bgp": {children: map[string]*schemaNode{
-				"group": {args: 1, children: nil},
+				"graceful-restart": {children: nil},
+				"group":            {args: 1, children: nil},
 			}},
 		}},
 	}}},

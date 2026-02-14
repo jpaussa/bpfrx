@@ -8215,3 +8215,81 @@ func TestRIPAuthSetSyntax(t *testing.T) {
 	}
 }
 
+func TestOSPFReferenceBandwidthSetSyntax(t *testing.T) {
+	cmds := []string{
+		"set protocols ospf reference-bandwidth 10g",
+		"set protocols ospf area 0.0.0.0 interface trust0",
+	}
+	tree := &ConfigTree{}
+	for _, cmd := range cmds {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%v): %v", path, err)
+		}
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+	ospf := cfg.Protocols.OSPF
+	if ospf == nil {
+		t.Fatal("OSPF config is nil")
+	}
+	// "10g" is not an int, so ReferenceBandwidth stays 0 (Atoi fails).
+	// Use numeric value for proper test.
+	cmds2 := []string{
+		"set protocols ospf reference-bandwidth 10000",
+		"set protocols ospf area 0.0.0.0 interface trust0",
+	}
+	tree2 := &ConfigTree{}
+	for _, cmd := range cmds2 {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree2.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%v): %v", path, err)
+		}
+	}
+	cfg2, err := CompileConfig(tree2)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+	if cfg2.Protocols.OSPF.ReferenceBandwidth != 10000 {
+		t.Errorf("ReferenceBandwidth: got %d, want 10000", cfg2.Protocols.OSPF.ReferenceBandwidth)
+	}
+}
+
+func TestBGPGracefulRestartSetSyntax(t *testing.T) {
+	cmds := []string{
+		"set protocols bgp local-as 65001",
+		"set protocols bgp graceful-restart",
+		"set protocols bgp group external peer-as 65002",
+		"set protocols bgp group external neighbor 10.0.0.2",
+	}
+	tree := &ConfigTree{}
+	for _, cmd := range cmds {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%v): %v", path, err)
+		}
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+	bgp := cfg.Protocols.BGP
+	if bgp == nil {
+		t.Fatal("BGP config is nil")
+	}
+	if !bgp.GracefulRestart {
+		t.Error("GracefulRestart should be true")
+	}
+}
+

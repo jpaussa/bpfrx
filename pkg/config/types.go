@@ -980,9 +980,10 @@ type RAPrefix struct {
 
 // OSPFConfig holds OSPF routing configuration.
 type OSPFConfig struct {
-	RouterID string // e.g. "10.0.0.1"
-	Areas    []*OSPFArea
-	Export   []string // export policy names (future)
+	RouterID           string // e.g. "10.0.0.1"
+	ReferenceBandwidth int    // Mbps for auto-cost calculation (0 = FRR default 100)
+	Areas              []*OSPFArea
+	Export             []string // export policy names (future)
 }
 
 // OSPFArea defines an OSPF area.
@@ -1006,11 +1007,12 @@ type OSPFInterface struct {
 
 // BGPConfig holds BGP routing configuration.
 type BGPConfig struct {
-	LocalAS      uint32
-	RouterID     string
-	ClusterID    string // route reflector cluster ID
-	Neighbors    []*BGPNeighbor
-	Export       []string // "connected", "static", "ospf", etc.
+	LocalAS         uint32
+	RouterID        string
+	ClusterID       string // route reflector cluster ID
+	GracefulRestart bool   // enable graceful restart
+	Neighbors       []*BGPNeighbor
+	Export          []string // "connected", "static", "ospf", etc.
 }
 
 // BGPNeighbor defines a BGP peer.
