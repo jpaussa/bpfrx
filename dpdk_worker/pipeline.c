@@ -13,6 +13,7 @@
 #include "shared_mem.h"
 #include "tables.h"
 #include "counters.h"
+#include "events.h"
 
 /* Pipeline stage forward declarations */
 extern int  parse_packet(struct rte_mbuf *pkt, struct pkt_meta *meta);

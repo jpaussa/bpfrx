@@ -1,6 +1,6 @@
 project('dpdk_worker', 'c',
     version: '0.1',
-    default_options: ['c_std=c11', 'warning_level=2'])
+    default_options: ['c_std=gnu11', 'warning_level=2'])
 
 dpdk = dependency('libdpdk', required: true)
 

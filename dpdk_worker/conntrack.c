@@ -9,6 +9,7 @@
 
 #include <rte_mbuf.h>
 #include <rte_hash.h>
+#include <rte_ip.h>
 #include <rte_tcp.h>
 #include <rte_cycles.h>
 #include <rte_byteorder.h>

@@ -12,7 +12,7 @@
  */
 
 #include <stdio.h>
-#include <rte_power.h>
+#include <rte_power_cpufreq.h>
 #include <rte_lcore.h>
 
 /**

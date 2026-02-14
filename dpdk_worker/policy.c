@@ -40,7 +40,8 @@ lpm_lookup_addr_id(struct pipeline_ctx *ctx, struct pkt_meta *meta,
 		if (!ctx->shm->address_book_v6)
 			return 0;
 		uint8_t *addr = is_src ? meta->src_ip.v6 : meta->dst_ip.v6;
-		rc = rte_lpm6_lookup(ctx->shm->address_book_v6, addr, &next_hop);
+		rc = rte_lpm6_lookup(ctx->shm->address_book_v6,
+		                     (const struct rte_ipv6_addr *)addr, &next_hop);
 	}
 
 	if (rc != 0)

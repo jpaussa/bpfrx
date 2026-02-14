@@ -206,7 +206,8 @@ zone_lookup(struct rte_mbuf *pkt, struct pkt_meta *meta,
 		fib_rc = rte_lpm_lookup(ctx->shm->fib_v4, dst, &nexthop_id);
 	} else if (meta->addr_family == AF_INET6 && ctx->shm->fib_v6) {
 		/* IPv6 FIB lookup */
-		fib_rc = rte_lpm6_lookup(ctx->shm->fib_v6, meta->dst_ip.v6,
+		fib_rc = rte_lpm6_lookup(ctx->shm->fib_v6,
+		                         (const struct rte_ipv6_addr *)meta->dst_ip.v6,
 		                         &nexthop_id);
 	}
 
