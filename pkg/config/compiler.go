@@ -4236,6 +4236,7 @@ func compileSNMP(node *Node, sys *SystemConfig) error {
 	snmp := &SNMPConfig{
 		Communities: make(map[string]*SNMPCommunity),
 		TrapGroups:  make(map[string]*SNMPTrapGroup),
+		V3Users:     make(map[string]*SNMPv3User),
 	}
 
 	for _, child := range node.Children {
@@ -4287,11 +4288,71 @@ func compileSNMP(node *Node, sys *SystemConfig) error {
 				}
 				snmp.TrapGroups[tg.Name] = tg
 			}
+		case "v3":
+			compileSNMPv3(child, snmp)
 		}
 	}
 
 	sys.SNMP = snmp
 	return nil
+}
+
+// compileSNMPv3 parses the v3 { usm { local-engine { user <name> { ... } } } } hierarchy.
+func compileSNMPv3(node *Node, snmp *SNMPConfig) {
+	// Navigate: v3 -> usm -> local-engine -> user <name> { ... }
+	// Handle both hierarchical and flat forms.
+	usmNode := node.FindChild("usm")
+	if usmNode == nil {
+		return
+	}
+	engineNode := usmNode.FindChild("local-engine")
+	if engineNode == nil {
+		return
+	}
+	for _, child := range engineNode.Children {
+		if child.Name() != "user" {
+			continue
+		}
+		userName := nodeVal(child)
+		if userName == "" {
+			continue
+		}
+		user := &SNMPv3User{Name: userName}
+		userChildren := child.Children
+		if len(child.Keys) < 2 && len(child.Children) > 0 {
+			userChildren = child.Children[0].Children
+		}
+		for _, prop := range userChildren {
+			switch prop.Name() {
+			case "authentication-md5":
+				user.AuthProtocol = "md5"
+				if pw := prop.FindChild("authentication-password"); pw != nil {
+					user.AuthPassword = nodeVal(pw)
+				}
+			case "authentication-sha":
+				user.AuthProtocol = "sha"
+				if pw := prop.FindChild("authentication-password"); pw != nil {
+					user.AuthPassword = nodeVal(pw)
+				}
+			case "authentication-sha256":
+				user.AuthProtocol = "sha256"
+				if pw := prop.FindChild("authentication-password"); pw != nil {
+					user.AuthPassword = nodeVal(pw)
+				}
+			case "privacy-des":
+				user.PrivProtocol = "des"
+				if pw := prop.FindChild("privacy-password"); pw != nil {
+					user.PrivPassword = nodeVal(pw)
+				}
+			case "privacy-aes128":
+				user.PrivProtocol = "aes128"
+				if pw := prop.FindChild("privacy-password"); pw != nil {
+					user.PrivPassword = nodeVal(pw)
+				}
+			}
+		}
+		snmp.V3Users[user.Name] = user
+	}
 }
 
 func compileSchedulers(node *Node, cfg *Config) error {

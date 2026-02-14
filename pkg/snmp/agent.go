@@ -93,22 +93,46 @@ type IfData struct {
 	OutOctets   uint32 // Counter32 (wraps at 2^32)
 }
 
-// Agent is an SNMP v2c agent that serves the system MIB and ifTable.
+// Agent is an SNMP v2c/v3 agent that serves the system MIB and ifTable.
 type Agent struct {
-	cfg       *config.SNMPConfig
-	conn      *net.UDPConn
-	startTime time.Time
-	ifDataFn  func() []IfData // callback for live interface data
-	mu        sync.Mutex
-	stopped   bool
+	cfg         *config.SNMPConfig
+	conn        *net.UDPConn
+	startTime   time.Time
+	ifDataFn    func() []IfData // callback for live interface data
+	mu          sync.Mutex
+	stopped     bool
+	engineID    []byte               // SNMPv3 engine ID
+	engineBoots int                  // SNMPv3 engine boots counter
+	v3Users     map[string]*usmUser  // SNMPv3 USM users (keyed by name)
+	lastPacket  []byte               // raw packet for v3 auth verification
 }
 
 // NewAgent creates a new SNMP agent with the given configuration.
 func NewAgent(cfg *config.SNMPConfig) *Agent {
-	return &Agent{
+	a := &Agent{
 		cfg:       cfg,
 		startTime: time.Now(),
 	}
+	a.initEngine()
+	a.initV3Users()
+	return a
+}
+
+// initEngine generates a deterministic engine ID from the hostname.
+func (a *Agent) initEngine() {
+	hostname, _ := os.Hostname()
+	if hostname == "" {
+		hostname = "bpfrx"
+	}
+	// RFC 3411 format: enterprise(4) + text(3) = 0x80 | len, enterprise OID, format byte, text.
+	// Simplified: use 0x80 0x00 0x00 0x00 0x01 (enterprise=1) + 0x04 (text) + hostname bytes.
+	a.engineID = append([]byte{0x80, 0x00, 0x01, 0x86, 0xa3, 0x04}, []byte(hostname)...)
+	a.engineBoots = 1
+}
+
+// engineTime returns the number of seconds since agent start.
+func (a *Agent) engineTime() int {
+	return int(time.Since(a.startTime).Seconds())
 }
 
 // SetIfDataFn sets the callback for retrieving interface data.
@@ -185,8 +209,12 @@ func (a *Agent) Stop() {
 	slog.Info("SNMP agent stopped")
 }
 
-// handlePacket decodes an SNMP v2c request and produces a response.
+// handlePacket decodes an SNMP v2c or v3 request and produces a response.
 func (a *Agent) handlePacket(data []byte) []byte {
+	// Save raw packet for v3 auth verification.
+	a.lastPacket = make([]byte, len(data))
+	copy(a.lastPacket, data)
+
 	// Decode the outer SEQUENCE.
 	tag, msgBody, err := berDecodeHeader(data)
 	if err != nil || tag != tagSequence {
@@ -200,11 +228,24 @@ func (a *Agent) handlePacket(data []byte) []byte {
 		slog.Debug("SNMP: failed to decode version")
 		return nil
 	}
-	if version != snmpVersion2c {
+
+	switch version {
+	case snmpVersion2c:
+		return a.handleV2cPacket(rest)
+	case snmpVersion3:
+		if len(a.v3Users) == 0 {
+			slog.Debug("SNMP: v3 not configured")
+			return nil
+		}
+		return a.handleV3Packet(rest)
+	default:
 		slog.Debug("SNMP: unsupported version", "version", version)
 		return nil
 	}
+}
 
+// handleV2cPacket processes an SNMP v2c message (version already decoded).
+func (a *Agent) handleV2cPacket(rest []byte) []byte {
 	// Decode community string.
 	community, rest, err := berDecodeOctetString(rest)
 	if err != nil {

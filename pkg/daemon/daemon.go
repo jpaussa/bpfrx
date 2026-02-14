@@ -258,7 +258,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 
 	// Start SNMP agent if configured (unless system processes snmp disable).
-	if cfg := d.store.ActiveConfig(); cfg != nil && cfg.System.SNMP != nil && len(cfg.System.SNMP.Communities) > 0 && !isProcessDisabled(cfg, "snmpd") {
+	if cfg := d.store.ActiveConfig(); cfg != nil && cfg.System.SNMP != nil && (len(cfg.System.SNMP.Communities) > 0 || len(cfg.System.SNMP.V3Users) > 0) && !isProcessDisabled(cfg, "snmpd") {
 		d.snmpAgent = snmp.NewAgent(cfg.System.SNMP)
 		d.snmpAgent.SetIfDataFn(func() []snmp.IfData {
 			links, err := netlink.LinkList()
@@ -363,11 +363,26 @@ func (d *Daemon) Run(ctx context.Context) error {
 			DHCP:     d.dhcp,
 			ApplyFn:  d.applyConfig,
 		}
-		// Enable HTTPS if web-management https is configured
+		// Resolve interface bindings from web-management config
 		if cfg := d.store.ActiveConfig(); cfg != nil && cfg.System.Services != nil &&
-			cfg.System.Services.WebManagement != nil && cfg.System.Services.WebManagement.HTTPS {
-			apiCfg.TLS = true
-			apiCfg.HTTPSAddr = "127.0.0.1:8443"
+			cfg.System.Services.WebManagement != nil {
+			wm := cfg.System.Services.WebManagement
+			// Bind HTTP to configured interface
+			if wm.HTTPInterface != "" {
+				bindIP := resolveInterfaceAddr(wm.HTTPInterface, "127.0.0.1")
+				apiCfg.Addr = bindIP + ":8080"
+				slog.Info("HTTP API bound to interface", "interface", wm.HTTPInterface, "addr", apiCfg.Addr)
+			}
+			// Enable HTTPS if configured
+			if wm.HTTPS {
+				httpsBindIP := "127.0.0.1"
+				if wm.HTTPSInterface != "" {
+					httpsBindIP = resolveInterfaceAddr(wm.HTTPSInterface, "127.0.0.1")
+					slog.Info("HTTPS API bound to interface", "interface", wm.HTTPSInterface, "addr", httpsBindIP+":8443")
+				}
+				apiCfg.TLS = true
+				apiCfg.HTTPSAddr = httpsBindIP + ":8443"
+			}
 		}
 		srv := api.NewServer(apiCfg)
 		wg.Add(1)
@@ -513,6 +528,42 @@ func enableForwarding() {
 func isInteractive() bool {
 	_, err := unix.IoctlGetTermios(int(os.Stdin.Fd()), unix.TCGETS)
 	return err == nil
+}
+
+// resolveInterfaceAddr returns the first IPv4 address on the named interface.
+// If the interface is not found or has no IPv4 addresses, it returns fallback.
+func resolveInterfaceAddr(ifname, fallback string) string {
+	iface, err := net.InterfaceByName(ifname)
+	if err != nil {
+		slog.Warn("web-management interface not found, using fallback", "interface", ifname, "fallback", fallback)
+		return fallback
+	}
+	addrs, err := iface.Addrs()
+	if err != nil || len(addrs) == 0 {
+		slog.Warn("web-management interface has no addresses, using fallback", "interface", ifname, "fallback", fallback)
+		return fallback
+	}
+	for _, a := range addrs {
+		ipNet, ok := a.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		if ip4 := ipNet.IP.To4(); ip4 != nil {
+			return ip4.String()
+		}
+	}
+	// No IPv4, try IPv6
+	for _, a := range addrs {
+		ipNet, ok := a.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		if ipNet.IP.To4() == nil {
+			return ipNet.IP.String()
+		}
+	}
+	slog.Warn("web-management interface has no usable addresses, using fallback", "interface", ifname, "fallback", fallback)
+	return fallback
 }
 
 // applyConfig applies a compiled config in the correct order:

@@ -260,6 +260,7 @@ type SNMPConfig struct {
 	Description string
 	Communities map[string]*SNMPCommunity
 	TrapGroups  map[string]*SNMPTrapGroup
+	V3Users     map[string]*SNMPv3User
 }
 
 // SNMPCommunity defines an SNMP community string.
@@ -272,6 +273,15 @@ type SNMPCommunity struct {
 type SNMPTrapGroup struct {
 	Name    string
 	Targets []string // IP addresses
+}
+
+// SNMPv3User defines an SNMPv3 USM user with authentication and privacy.
+type SNMPv3User struct {
+	Name         string
+	AuthProtocol string // "md5", "sha", "sha256"
+	AuthPassword string
+	PrivProtocol string // "des", "aes128"
+	PrivPassword string
 }
 
 // LoginConfig holds user account definitions.

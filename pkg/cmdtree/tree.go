@@ -248,7 +248,9 @@ var OperationalTree = map[string]*Node{
 		"dhcp-server": {Desc: "Show DHCP server leases", Children: map[string]*Node{
 			"detail": {Desc: "Show detailed DHCP server information with pool utilization"},
 		}},
-		"snmp":              {Desc: "Show SNMP statistics"},
+		"snmp": {Desc: "Show SNMP statistics", Children: map[string]*Node{
+			"v3": {Desc: "Show SNMPv3 USM user information"},
+		}},
 		"system": {Desc: "Show system information", Children: map[string]*Node{
 			"alarms":        {Desc: "Show system alarms"},
 			"commit": {Desc: "Show commit history", Children: map[string]*Node{

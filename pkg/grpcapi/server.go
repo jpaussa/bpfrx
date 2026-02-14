@@ -3339,6 +3339,39 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 					fmt.Fprintf(&buf, "  %s: %s\n", name, strings.Join(tg.Targets, ", "))
 				}
 			}
+			if len(snmpCfg.V3Users) > 0 {
+				buf.WriteString("SNMPv3 USM users:\n")
+				for name, u := range snmpCfg.V3Users {
+					auth := u.AuthProtocol
+					if auth == "" {
+						auth = "none"
+					}
+					priv := u.PrivProtocol
+					if priv == "" {
+						priv = "none"
+					}
+					fmt.Fprintf(&buf, "  %s: auth=%s priv=%s\n", name, auth, priv)
+				}
+			}
+		}
+
+	case "snmp-v3":
+		if cfg == nil || cfg.System.SNMP == nil || len(cfg.System.SNMP.V3Users) == 0 {
+			buf.WriteString("No SNMPv3 users configured\n")
+		} else {
+			buf.WriteString("SNMPv3 USM Users:\n")
+			fmt.Fprintf(&buf, "  %-20s %-12s %-12s\n", "User", "Auth", "Privacy")
+			for _, u := range cfg.System.SNMP.V3Users {
+				auth := u.AuthProtocol
+				if auth == "" {
+					auth = "none"
+				}
+				priv := u.PrivProtocol
+				if priv == "" {
+					priv = "none"
+				}
+				fmt.Fprintf(&buf, "  %-20s %-12s %-12s\n", u.Name, auth, priv)
+			}
 		}
 
 	case "dhcp-server":

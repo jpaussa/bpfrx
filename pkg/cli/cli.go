@@ -771,6 +771,9 @@ func (c *CLI) handleShow(args []string) error {
 		return c.showDHCPServer(detail)
 
 	case "snmp":
+		if len(args) >= 2 && args[1] == "v3" {
+			return c.showSNMPv3()
+		}
 		return c.showSNMP()
 
 	case "arp":
@@ -7386,6 +7389,43 @@ func (c *CLI) showSNMP() error {
 		for name, tg := range snmpCfg.TrapGroups {
 			fmt.Printf("  %s: %s\n", name, strings.Join(tg.Targets, ", "))
 		}
+	}
+
+	if len(snmpCfg.V3Users) > 0 {
+		fmt.Println("SNMPv3 USM users:")
+		for name, u := range snmpCfg.V3Users {
+			auth := u.AuthProtocol
+			if auth == "" {
+				auth = "none"
+			}
+			priv := u.PrivProtocol
+			if priv == "" {
+				priv = "none"
+			}
+			fmt.Printf("  %s: auth=%s priv=%s\n", name, auth, priv)
+		}
+	}
+	return nil
+}
+
+func (c *CLI) showSNMPv3() error {
+	cfg := c.store.ActiveConfig()
+	if cfg == nil || cfg.System.SNMP == nil || len(cfg.System.SNMP.V3Users) == 0 {
+		fmt.Println("No SNMPv3 users configured")
+		return nil
+	}
+	fmt.Println("SNMPv3 USM Users:")
+	fmt.Printf("  %-20s %-12s %-12s\n", "User", "Auth", "Privacy")
+	for _, u := range cfg.System.SNMP.V3Users {
+		auth := u.AuthProtocol
+		if auth == "" {
+			auth = "none"
+		}
+		priv := u.PrivProtocol
+		if priv == "" {
+			priv = "none"
+		}
+		fmt.Printf("  %-20s %-12s %-12s\n", u.Name, auth, priv)
 	}
 	return nil
 }
