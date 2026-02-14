@@ -496,6 +496,19 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 			"authorization": {args: 1, children: nil},
 		}},
 		"trap-group": {args: 1, children: nil},
+		"v3": {children: map[string]*schemaNode{
+			"usm": {children: map[string]*schemaNode{
+				"local-engine": {children: map[string]*schemaNode{
+					"user": {args: 1, children: map[string]*schemaNode{
+						"authentication-md5":    {children: map[string]*schemaNode{"authentication-password": {args: 1, children: nil}}},
+						"authentication-sha":    {children: map[string]*schemaNode{"authentication-password": {args: 1, children: nil}}},
+						"authentication-sha256": {children: map[string]*schemaNode{"authentication-password": {args: 1, children: nil}}},
+						"privacy-des":           {children: map[string]*schemaNode{"privacy-password": {args: 1, children: nil}}},
+						"privacy-aes128":        {children: map[string]*schemaNode{"privacy-password": {args: 1, children: nil}}},
+					}},
+				}},
+			}},
+		}},
 	}},
 	"policy-options": {children: map[string]*schemaNode{
 		"prefix-list": {args: 1, children: nil},

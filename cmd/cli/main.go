@@ -501,6 +501,9 @@ func (c *ctl) handleShow(args []string) error {
 		return c.showText("schedulers")
 
 	case "snmp":
+		if len(args) >= 2 && args[1] == "v3" {
+			return c.showText("snmp-v3")
+		}
 		return c.showText("snmp")
 
 	case "dhcp-relay":

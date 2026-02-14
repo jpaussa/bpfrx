@@ -6879,6 +6879,110 @@ snmp {
 	}
 }
 
+func TestSNMPv3USMHierarchical(t *testing.T) {
+	input := `
+snmp {
+    v3 {
+        usm {
+            local-engine {
+                user monitor {
+                    authentication-sha {
+                        authentication-password "secret123";
+                    }
+                    privacy-aes128 {
+                        privacy-password "privpass";
+                    }
+                }
+                user readonly {
+                    authentication-md5 {
+                        authentication-password "md5pass";
+                    }
+                }
+            }
+        }
+    }
+}
+`
+	p := NewParser(input)
+	tree, errs := p.Parse()
+	if len(errs) > 0 {
+		t.Fatalf("parse errors: %v", errs)
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+
+	if cfg.System.SNMP == nil {
+		t.Fatal("SNMP is nil")
+	}
+	if len(cfg.System.SNMP.V3Users) != 2 {
+		t.Fatalf("V3Users count = %d, want 2", len(cfg.System.SNMP.V3Users))
+	}
+
+	monitor := cfg.System.SNMP.V3Users["monitor"]
+	if monitor == nil {
+		t.Fatal("user monitor not found")
+	}
+	if monitor.AuthProtocol != "sha" {
+		t.Errorf("monitor auth = %q, want sha", monitor.AuthProtocol)
+	}
+	if monitor.AuthPassword != "secret123" {
+		t.Errorf("monitor auth password = %q, want secret123", monitor.AuthPassword)
+	}
+	if monitor.PrivProtocol != "aes128" {
+		t.Errorf("monitor priv = %q, want aes128", monitor.PrivProtocol)
+	}
+	if monitor.PrivPassword != "privpass" {
+		t.Errorf("monitor priv password = %q, want privpass", monitor.PrivPassword)
+	}
+
+	readonly := cfg.System.SNMP.V3Users["readonly"]
+	if readonly == nil {
+		t.Fatal("user readonly not found")
+	}
+	if readonly.AuthProtocol != "md5" {
+		t.Errorf("readonly auth = %q, want md5", readonly.AuthProtocol)
+	}
+	if readonly.PrivProtocol != "" {
+		t.Errorf("readonly priv = %q, want empty", readonly.PrivProtocol)
+	}
+}
+
+func TestSNMPv3USMFlatSet(t *testing.T) {
+	lines := []string{
+		"set snmp v3 usm local-engine user admin authentication-sha256 authentication-password adminpass",
+		"set snmp v3 usm local-engine user admin privacy-des privacy-password despass",
+	}
+	tree := &ConfigTree{}
+	for _, line := range lines {
+		parts, err := ParseSetCommand(line)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", line, err)
+		}
+		if err := tree.SetPath(parts); err != nil {
+			t.Fatalf("SetPath(%v): %v", parts, err)
+		}
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+	if cfg.System.SNMP == nil {
+		t.Fatal("SNMP is nil")
+	}
+	admin := cfg.System.SNMP.V3Users["admin"]
+	if admin == nil {
+		t.Fatal("user admin not found")
+	}
+	if admin.AuthProtocol != "sha256" {
+		t.Errorf("admin auth = %q, want sha256", admin.AuthProtocol)
+	}
+	if admin.PrivProtocol != "des" {
+		t.Errorf("admin priv = %q, want des", admin.PrivProtocol)
+	}
+}
+
 func TestDHCPInetOptions(t *testing.T) {
 	input := `
 interfaces {
