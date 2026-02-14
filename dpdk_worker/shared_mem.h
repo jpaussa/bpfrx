@@ -639,6 +639,8 @@ struct pkt_meta {
  * Go control plane writes tables; DPDK worker reads them.
  * ============================================================ */
 
+struct lcore_counters;
+
 struct shared_memory {
 	/* Magic and version for validation */
 	uint32_t magic;
@@ -707,6 +709,9 @@ struct shared_memory {
 
 	/* Flood state (per-zone, per-lcore) */
 	struct flood_state *flood_states;  /* [MAX_LCORES][MAX_ZONES] */
+
+	/* Per-lcore counter pointers (for Go secondary process to aggregate) */
+	struct lcore_counters *counter_ptrs[64];  /* MAX_LCORES */
 };
 
 #endif /* DPDK_SHARED_MEM_H */

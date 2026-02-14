@@ -20,6 +20,7 @@
 #include <rte_jhash.h>
 #include <rte_lpm.h>
 #include <rte_lpm6.h>
+#include <rte_memzone.h>
 
 #include "shared_mem.h"
 #include "tables.h"
@@ -157,12 +158,19 @@ static struct shared_memory *
 shm_alloc(void)
 {
 	struct shared_memory *shm;
+	const struct rte_memzone *mz;
 
-	shm = rte_zmalloc("shared_memory", sizeof(*shm), RTE_CACHE_LINE_SIZE);
-	if (!shm) {
-		fprintf(stderr, "Failed to allocate shared memory structure\n");
+	/* Use rte_memzone_reserve so the Go secondary process can find it
+	 * via rte_memzone_lookup("bpfrx_shm"). */
+	mz = rte_memzone_reserve("bpfrx_shm", sizeof(*shm),
+	                          rte_socket_id(),
+	                          RTE_MEMZONE_2MB | RTE_MEMZONE_SIZE_HINT_ONLY);
+	if (!mz) {
+		fprintf(stderr, "Failed to reserve shared memory memzone\n");
 		return NULL;
 	}
+	shm = mz->addr;
+	memset(shm, 0, sizeof(*shm));
 
 	shm->magic = SHM_MAGIC;
 	shm->version = SHM_VERSION;
@@ -171,7 +179,7 @@ shm_alloc(void)
 	shm->shutdown = 0;
 
 	if (tables_init(shm) < 0) {
-		rte_free(shm);
+		rte_memzone_free(mz);
 		return NULL;
 	}
 
@@ -401,6 +409,7 @@ counters_alloc(struct pipeline_ctx *ctx)
 	ctx->flood_states       = lc->flood_states;
 
 	lcore_counter_array[ctx->lcore_id] = lc;
+	ctx->shm->counter_ptrs[ctx->lcore_id] = lc;
 
 	return 0;
 }
