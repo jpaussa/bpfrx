@@ -290,6 +290,22 @@ tables_init(struct shared_memory *shm)
 	};
 	shm->address_book_v6 = rte_lpm6_create("addr_v6", sid, &lpm6_cfg);
 
+	/* ---- FIB routing tables ---- */
+	struct rte_lpm_config fib_cfg = {
+		.max_rules   = MAX_NEXTHOPS,
+		.number_tbl8s = 256,
+	};
+	shm->fib_v4 = rte_lpm_create("fib_v4", sid, &fib_cfg);
+
+	struct rte_lpm6_config fib6_cfg = {
+		.max_rules    = MAX_NEXTHOPS,
+		.number_tbl8s = 256,
+	};
+	shm->fib_v6 = rte_lpm6_create("fib_v6", sid, &fib6_cfg);
+
+	shm->nexthops = rte_zmalloc("nexthops",
+		sizeof(struct fib_nexthop) * MAX_NEXTHOPS, RTE_CACHE_LINE_SIZE);
+
 	/* ---- Hash value arrays (indexed by rte_hash position) ---- */
 	shm->session_values_v4 = rte_zmalloc("session_values_v4",
 		sizeof(struct session_value) * MAX_SESSIONS, RTE_CACHE_LINE_SIZE);
@@ -367,6 +383,7 @@ tables_init(struct shared_memory *shm)
 	    !shm->address_membership || !shm->iface_filter_map ||
 	    !shm->nat64_prefix_map || !shm->nat64_state ||
 	    !shm->address_book_v4 || !shm->address_book_v6 ||
+	    !shm->fib_v4 || !shm->fib_v6 || !shm->nexthops ||
 	    !shm->session_values_v4 || !shm->session_values_v6 ||
 	    !shm->iface_zone_values || !shm->zone_pair_values ||
 	    !shm->app_values || !shm->dnat_values || !shm->dnat_values_v6 ||

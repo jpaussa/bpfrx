@@ -26,7 +26,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"sync/atomic"
+	"time"
 	"unsafe"
 
 	"github.com/psaab/bpfrx/pkg/config"
@@ -36,11 +40,33 @@ import (
 type platformState struct {
 	shm            *C.struct_shared_memory
 	ealInitialized bool
+	workerCmd      *exec.Cmd
 }
 
 // --- Lifecycle ---
 
+// workerPath returns the path to the dpdk_worker binary.
+// It checks next to the daemon binary first, then falls back to PATH.
+func workerPath() string {
+	self, err := os.Executable()
+	if err == nil {
+		candidate := filepath.Join(filepath.Dir(self), "dpdk_worker")
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	if p, err := exec.LookPath("dpdk_worker"); err == nil {
+		return p
+	}
+	return "dpdk_worker"
+}
+
 func (m *Manager) Load() error {
+	// Start the DPDK primary worker process if not already running.
+	if err := m.startWorker(); err != nil {
+		return fmt.Errorf("start dpdk_worker: %w", err)
+	}
+
 	// Initialize as DPDK secondary process.
 	args := []string{"bpfrxd", "--proc-type=secondary", "--no-pci"}
 	cArgs := make([]*C.char, len(args))
@@ -82,6 +108,38 @@ func (m *Manager) Load() error {
 	return nil
 }
 
+// startWorker launches the DPDK primary process and waits for it to be ready.
+func (m *Manager) startWorker() error {
+	path := workerPath()
+	slog.Info("starting DPDK worker", "path", path)
+
+	cmd := exec.Command(path)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("exec %s: %w", path, err)
+	}
+	m.platform.workerCmd = cmd
+
+	// Wait for the worker to create its shared memory (poll memzone).
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		// Check if worker exited prematurely.
+		select {
+		default:
+		}
+		if cmd.ProcessState != nil {
+			return fmt.Errorf("dpdk_worker exited prematurely: %v", cmd.ProcessState)
+		}
+
+		time.Sleep(100 * time.Millisecond)
+		// We can't probe memzone until rte_eal_init succeeds, so just wait a fixed amount.
+	}
+
+	slog.Info("DPDK worker started", "pid", cmd.Process.Pid)
+	return nil
+}
+
 func (m *Manager) Close() error {
 	m.loaded = false
 	if m.platform.ealInitialized {
@@ -93,7 +151,22 @@ func (m *Manager) Close() error {
 }
 
 func (m *Manager) Teardown() error {
-	return m.Close()
+	m.Close()
+	// Stop the worker process on full teardown.
+	if m.platform.workerCmd != nil && m.platform.workerCmd.Process != nil {
+		slog.Info("stopping DPDK worker", "pid", m.platform.workerCmd.Process.Pid)
+		m.platform.workerCmd.Process.Signal(os.Interrupt)
+		done := make(chan error, 1)
+		go func() { done <- m.platform.workerCmd.Wait() }()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			m.platform.workerCmd.Process.Kill()
+			<-done
+		}
+		m.platform.workerCmd = nil
+	}
+	return nil
 }
 
 // --- Program attachment (no-op for DPDK: ports are managed by the worker) ---
@@ -1128,6 +1201,76 @@ func (s *dpdkEventSource) Close() error {
 }
 
 // --- FIB ---
+
+// SetFIBRoute adds a route to the DPDK FIB table.
+// nexthopID must index into the nexthops array (set via SetFIBNexthop).
+func (m *Manager) SetFIBRoute(family uint8, dst net.IP, prefixLen int, nexthopID uint32) error {
+	shm := m.platform.shm
+	if shm == nil {
+		return fmt.Errorf("DPDK not initialized")
+	}
+	if family == 2 { // AF_INET
+		if shm.fib_v4 == nil {
+			return fmt.Errorf("fib_v4 not allocated")
+		}
+		ip := binary.BigEndian.Uint32(dst.To4())
+		rc := C.rte_lpm_add(shm.fib_v4, C.uint32_t(ip), C.uint8_t(prefixLen),
+			C.uint32_t(nexthopID))
+		if rc < 0 {
+			return fmt.Errorf("rte_lpm_add: %d", rc)
+		}
+	} else { // AF_INET6
+		if shm.fib_v6 == nil {
+			return fmt.Errorf("fib_v6 not allocated")
+		}
+		var ip6 [16]C.uint8_t
+		copy((*[16]byte)(unsafe.Pointer(&ip6[0]))[:], dst.To16())
+		rc := C.rte_lpm6_add(shm.fib_v6, &ip6[0], C.uint8_t(prefixLen),
+			C.uint32_t(nexthopID))
+		if rc < 0 {
+			return fmt.Errorf("rte_lpm6_add: %d", rc)
+		}
+	}
+	return nil
+}
+
+// SetFIBNexthop configures a next-hop entry in the shared nexthops table.
+func (m *Manager) SetFIBNexthop(id uint32, portID uint32, ifindex uint32,
+	vlanID uint16, dmac, smac [6]byte) error {
+	shm := m.platform.shm
+	if shm == nil {
+		return fmt.Errorf("DPDK not initialized")
+	}
+	if id >= C.MAX_NEXTHOPS {
+		return fmt.Errorf("nexthop ID %d exceeds max %d", id, C.MAX_NEXTHOPS)
+	}
+	if shm.nexthops == nil {
+		return fmt.Errorf("nexthops array not allocated")
+	}
+	nh := (*C.struct_fib_nexthop)(unsafe.Pointer(
+		uintptr(unsafe.Pointer(shm.nexthops)) +
+			uintptr(id)*unsafe.Sizeof(C.struct_fib_nexthop{})))
+	nh.port_id = C.uint32_t(portID)
+	nh.ifindex = C.uint32_t(ifindex)
+	nh.vlan_id = C.uint16_t(vlanID)
+	copy((*[6]byte)(unsafe.Pointer(&nh.dmac[0]))[:], dmac[:])
+	copy((*[6]byte)(unsafe.Pointer(&nh.smac[0]))[:], smac[:])
+	return nil
+}
+
+// ClearFIBRoutes removes all routes from the DPDK FIB tables.
+func (m *Manager) ClearFIBRoutes() {
+	shm := m.platform.shm
+	if shm == nil {
+		return
+	}
+	if shm.fib_v4 != nil {
+		C.rte_lpm_delete_all(shm.fib_v4)
+	}
+	if shm.fib_v6 != nil {
+		C.rte_lpm6_delete_all(shm.fib_v6)
+	}
+}
 
 func (m *Manager) BumpFIBGeneration() {
 	shm := m.platform.shm

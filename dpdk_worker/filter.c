@@ -14,6 +14,7 @@
 #include "shared_mem.h"
 #include "tables.h"
 #include "counters.h"
+#include "events.h"
 
 /**
  * addr_match — Check if an address matches a filter rule's address/mask.
@@ -62,14 +63,12 @@ evaluate_filter(struct rte_mbuf *pkt, struct pkt_meta *meta,
 		.direction = direction,
 	};
 
-	int pos = rte_hash_lookup(ctx->shm->iface_filter_map, &fk);
-	if (pos < 0)
+	void *data = NULL;
+	int rc = rte_hash_lookup_data(ctx->shm->iface_filter_map, &fk, &data);
+	if (rc < 0)
 		return FILTER_ACTION_ACCEPT;  /* No filter assigned */
 
-	/* The value stored at the hash position is the filter_id.
-	 * For now, assume filter_id = pos (need a value array). */
-	/* TODO: need iface_filter_values array — use pos as filter_id for now */
-	uint32_t filter_id = (uint32_t)pos;
+	uint32_t filter_id = (uint32_t)(uintptr_t)data;
 
 	if (filter_id >= MAX_FILTER_CONFIGS || !ctx->shm->filter_configs)
 		return FILTER_ACTION_ACCEPT;
@@ -151,6 +150,10 @@ evaluate_filter(struct rte_mbuf *pkt, struct pkt_meta *meta,
 
 		/* Rule matched */
 		ctr_filter_add(ctx, ridx, rte_pktmbuf_pkt_len(pkt));
+
+		/* Filter logging */
+		if (r->log_flag)
+			emit_event(ctx, meta, EVENT_TYPE_FILTER_LOG, r->action);
 
 		/* DSCP rewrite */
 		if (r->dscp_rewrite != 0xFF)

@@ -545,6 +545,22 @@ struct flow_config {
 };
 
 /* ============================================================
+ * FIB next-hop entry (populated by Go control plane)
+ * ============================================================ */
+
+#define MAX_NEXTHOPS        4096
+#define MAX_PORT_MAP        256   /* ifindex -> DPDK port_id mapping */
+
+struct fib_nexthop {
+	uint32_t port_id;     /* DPDK port ID for TX */
+	uint32_t ifindex;     /* kernel ifindex (for zone lookup) */
+	uint16_t vlan_id;     /* egress VLAN ID (0 = untagged) */
+	uint8_t  dmac[6];     /* next-hop destination MAC */
+	uint8_t  smac[6];     /* source MAC of egress port */
+	uint8_t  pad[2];
+};
+
+/* ============================================================
  * Event structure for ring buffer export
  * ============================================================ */
 
@@ -675,6 +691,13 @@ struct shared_memory {
 	/* LPM tries */
 	struct rte_lpm  *address_book_v4;
 	struct rte_lpm6 *address_book_v6;
+
+	/* FIB routing tables (populated by Go control plane) */
+	struct rte_lpm  *fib_v4;         /* IPv4 FIB: prefix -> nexthop_id */
+	struct rte_lpm6 *fib_v6;         /* IPv6 FIB: prefix -> nexthop_id */
+	struct fib_nexthop *nexthops;    /* [MAX_NEXTHOPS] next-hop entries */
+	volatile uint32_t  nexthop_count;
+	uint32_t pad_fib;
 
 	/* Array tables (direct pointers into hugepage) */
 	struct zone_config      *zone_configs;
