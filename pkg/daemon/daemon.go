@@ -636,6 +636,7 @@ func (d *Daemon) applyConfig(cfg *config.Config) {
 	if d.frr != nil {
 		fc := &frr.FullConfig{
 			OSPF:                  cfg.Protocols.OSPF,
+			OSPFv3:                cfg.Protocols.OSPFv3,
 			BGP:                   cfg.Protocols.BGP,
 			RIP:                   cfg.Protocols.RIP,
 			ISIS:                  cfg.Protocols.ISIS,
@@ -655,6 +656,7 @@ func (d *Daemon) applyConfig(cfg *config.Config) {
 			fc.Instances = append(fc.Instances, frr.InstanceConfig{
 				VRFName:      vrfName,
 				OSPF:         ri.OSPF,
+				OSPFv3:       ri.OSPFv3,
 				BGP:          ri.BGP,
 				RIP:          ri.RIP,
 				ISIS:         ri.ISIS,

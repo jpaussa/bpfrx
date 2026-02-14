@@ -41,6 +41,7 @@ func New() *Manager {
 type InstanceConfig struct {
 	VRFName      string
 	OSPF         *config.OSPFConfig
+	OSPFv3       *config.OSPFv3Config
 	BGP          *config.BGPConfig
 	RIP          *config.RIPConfig
 	ISIS         *config.ISISConfig
@@ -57,6 +58,7 @@ type DHCPRoute struct {
 // FullConfig holds the complete routing config for a single FRR apply.
 type FullConfig struct {
 	OSPF          *config.OSPFConfig
+	OSPFv3        *config.OSPFv3Config
 	BGP           *config.BGPConfig
 	RIP           *config.RIPConfig
 	ISIS          *config.ISISConfig
@@ -194,10 +196,10 @@ func (m *Manager) ApplyFull(fc *FullConfig) error {
 		return m.Clear()
 	}
 
-	hasContent := fc.OSPF != nil || fc.BGP != nil || fc.RIP != nil || fc.ISIS != nil ||
+	hasContent := fc.OSPF != nil || fc.OSPFv3 != nil || fc.BGP != nil || fc.RIP != nil || fc.ISIS != nil ||
 		len(fc.StaticRoutes) > 0 || len(fc.Inet6StaticRoutes) > 0 || len(fc.DHCPRoutes) > 0 || fc.BackupRouter != ""
 	for _, inst := range fc.Instances {
-		if inst.OSPF != nil || inst.BGP != nil || inst.RIP != nil || inst.ISIS != nil || len(inst.StaticRoutes) > 0 {
+		if inst.OSPF != nil || inst.OSPFv3 != nil || inst.BGP != nil || inst.RIP != nil || inst.ISIS != nil || len(inst.StaticRoutes) > 0 {
 			hasContent = true
 			break
 		}
@@ -291,14 +293,14 @@ func (m *Manager) ApplyFull(fc *FullConfig) error {
 	}
 
 	// Global dynamic protocols
-	if fc.OSPF != nil || fc.BGP != nil || fc.RIP != nil || fc.ISIS != nil {
-		b.WriteString(m.generateProtocols(fc.OSPF, fc.BGP, fc.RIP, fc.ISIS, "", ecmpMaxPaths))
+	if fc.OSPF != nil || fc.OSPFv3 != nil || fc.BGP != nil || fc.RIP != nil || fc.ISIS != nil {
+		b.WriteString(m.generateProtocols(fc.OSPF, fc.OSPFv3, fc.BGP, fc.RIP, fc.ISIS, "", ecmpMaxPaths, fc.PolicyOptions))
 	}
 
 	// Per-VRF dynamic protocols
 	for _, inst := range fc.Instances {
-		if inst.OSPF != nil || inst.BGP != nil || inst.RIP != nil || inst.ISIS != nil {
-			b.WriteString(m.generateProtocols(inst.OSPF, inst.BGP, inst.RIP, inst.ISIS, inst.VRFName, ecmpMaxPaths))
+		if inst.OSPF != nil || inst.OSPFv3 != nil || inst.BGP != nil || inst.RIP != nil || inst.ISIS != nil {
+			b.WriteString(m.generateProtocols(inst.OSPF, inst.OSPFv3, inst.BGP, inst.RIP, inst.ISIS, inst.VRFName, ecmpMaxPaths, fc.PolicyOptions))
 		}
 	}
 
@@ -426,10 +428,57 @@ func (m *Manager) writeManagedSection(section string) error {
 	return nil
 }
 
-// generateOSPFBGP generates FRR CLI config for OSPF and/or BGP.
+// knownRedistProtocols are the FRR redistribute protocol keywords.
+var knownRedistProtocols = map[string]bool{
+	"connected": true, "static": true, "ospf": true, "bgp": true,
+	"rip": true, "isis": true, "kernel": true,
+}
+
+// resolveRedistribute converts a Junos export value into FRR redistribute commands.
+// If the value is a known protocol name, it emits a bare "redistribute <proto>".
+// If it matches a policy-statement, it extracts protocols from the terms and emits
+// "redistribute <proto> route-map <name>" for each.
+func (m *Manager) resolveRedistribute(export string, po *config.PolicyOptionsConfig) string {
+	if knownRedistProtocols[export] {
+		return fmt.Sprintf(" redistribute %s\n", export)
+	}
+
+	if po != nil && po.PolicyStatements != nil {
+		if ps, ok := po.PolicyStatements[export]; ok {
+			protocols := make(map[string]bool)
+			for _, term := range ps.Terms {
+				if term.FromProtocol != "" {
+					proto := term.FromProtocol
+					if proto == "direct" {
+						proto = "connected"
+					}
+					protocols[proto] = true
+				}
+			}
+			if len(protocols) > 0 {
+				sorted := make([]string, 0, len(protocols))
+				for p := range protocols {
+					sorted = append(sorted, p)
+				}
+				sort.Strings(sorted)
+				var sb strings.Builder
+				for _, proto := range sorted {
+					fmt.Fprintf(&sb, " redistribute %s route-map %s\n", proto, export)
+				}
+				return sb.String()
+			}
+		}
+	}
+
+	// Fallback: treat as bare redistribute (best-effort)
+	return fmt.Sprintf(" redistribute %s\n", export)
+}
+
+// generateProtocols generates FRR CLI config for OSPF, BGP, RIP, and IS-IS.
 // If vrfName is non-empty, generates VRF-scoped commands.
 // ecmpMaxPaths > 1 enables ECMP with the given maximum equal-cost paths.
-func (m *Manager) generateProtocols(ospf *config.OSPFConfig, bgp *config.BGPConfig, rip *config.RIPConfig, isis *config.ISISConfig, vrfName string, ecmpMaxPaths int) string {
+// policyOptions is used to resolve export policy names to route-map references.
+func (m *Manager) generateProtocols(ospf *config.OSPFConfig, ospfv3 *config.OSPFv3Config, bgp *config.BGPConfig, rip *config.RIPConfig, isis *config.ISISConfig, vrfName string, ecmpMaxPaths int, policyOptions *config.PolicyOptionsConfig) string {
 	var b strings.Builder
 
 	vrfSuffix := ""
@@ -472,7 +521,7 @@ func (m *Manager) generateProtocols(ospf *config.OSPFConfig, bgp *config.BGPConf
 			fmt.Fprintf(&b, " maximum-paths %d\n", ecmpMaxPaths)
 		}
 		for _, export := range ospf.Export {
-			fmt.Fprintf(&b, " redistribute %s\n", export)
+			b.WriteString(m.resolveRedistribute(export, policyOptions))
 		}
 		b.WriteString("exit\n!\n")
 		// OSPF interface settings (cost, authentication, BFD)
@@ -501,6 +550,36 @@ func (m *Manager) generateProtocols(ospf *config.OSPFConfig, bgp *config.BGPConf
 						b.WriteString(" ip ospf bfd\n")
 					}
 					fmt.Fprintf(&b, " ip ospf area %s\n", area.ID)
+					b.WriteString("exit\n!\n")
+				}
+			}
+		}
+	}
+
+	if ospfv3 != nil {
+		fmt.Fprintf(&b, "router ospf6%s\n", vrfSuffix)
+		if ospfv3.RouterID != "" {
+			fmt.Fprintf(&b, " ospf6 router-id %s\n", ospfv3.RouterID)
+		}
+		for _, area := range ospfv3.Areas {
+			for _, iface := range area.Interfaces {
+				fmt.Fprintf(&b, " interface %s area %s\n", iface.Name, area.ID)
+			}
+		}
+		for _, export := range ospfv3.Export {
+			b.WriteString(m.resolveRedistribute(export, policyOptions))
+		}
+		b.WriteString("exit\n!\n")
+		for _, area := range ospfv3.Areas {
+			for _, iface := range area.Interfaces {
+				if iface.Cost > 0 || iface.Passive {
+					fmt.Fprintf(&b, "interface %s\n", iface.Name)
+					if iface.Passive {
+						b.WriteString(" ipv6 ospf6 passive\n")
+					}
+					if iface.Cost > 0 {
+						fmt.Fprintf(&b, " ipv6 ospf6 cost %d\n", iface.Cost)
+					}
 					b.WriteString("exit\n!\n")
 				}
 			}
@@ -541,9 +620,15 @@ func (m *Manager) generateProtocols(ospf *config.OSPFConfig, bgp *config.BGPConf
 			if n.RouteReflectorClient {
 				fmt.Fprintf(&b, " neighbor %s route-reflector-client\n", n.Address)
 			}
+			if n.AllowASIn > 0 {
+				fmt.Fprintf(&b, " neighbor %s allowas-in %d\n", n.Address, n.AllowASIn)
+			}
+			if n.RemovePrivateAS {
+				fmt.Fprintf(&b, " neighbor %s remove-private-AS\n", n.Address)
+			}
 		}
 		for _, export := range bgp.Export {
-			fmt.Fprintf(&b, " redistribute %s\n", export)
+			b.WriteString(m.resolveRedistribute(export, policyOptions))
 		}
 
 		// Address-family blocks for neighbors with family declarations
@@ -605,7 +690,7 @@ func (m *Manager) generateProtocols(ospf *config.OSPFConfig, bgp *config.BGPConf
 			fmt.Fprintf(&b, " passive-interface %s\n", iface)
 		}
 		for _, r := range rip.Redistribute {
-			fmt.Fprintf(&b, " redistribute %s\n", r)
+			b.WriteString(m.resolveRedistribute(r, policyOptions))
 		}
 		b.WriteString("exit\n!\n")
 		// RIP per-interface authentication
@@ -641,7 +726,7 @@ func (m *Manager) generateProtocols(ospf *config.OSPFConfig, bgp *config.BGPConf
 			b.WriteString(" is-type level-1-2\n")
 		}
 		for _, export := range isis.Export {
-			fmt.Fprintf(&b, " redistribute %s\n", export)
+			b.WriteString(m.resolveRedistribute(export, policyOptions))
 		}
 		if isis.WideMetricsOnly {
 			b.WriteString(" metric-style wide\n")
@@ -990,6 +1075,19 @@ func (m *Manager) generatePolicyOptions(po *config.PolicyOptionsConfig) string {
 			if term.LoadBalance != "" {
 				// FRR handles ECMP load balancing via forwarding-table export
 				// The route-map just needs to be a permit
+			}
+
+			if term.LocalPreference > 0 {
+				fmt.Fprintf(&b, " set local-preference %d\n", term.LocalPreference)
+			}
+			if term.Metric > 0 {
+				fmt.Fprintf(&b, " set metric %d\n", term.Metric)
+			}
+			if term.Community != "" {
+				fmt.Fprintf(&b, " set community %s\n", term.Community)
+			}
+			if term.Origin != "" {
+				fmt.Fprintf(&b, " set origin %s\n", term.Origin)
 			}
 
 			b.WriteString("exit\n")

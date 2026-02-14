@@ -504,10 +504,14 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 					"route-filter": {args: 2, children: nil},
 				}},
 				"then": {children: map[string]*schemaNode{
-					"accept":       {children: nil},
-					"reject":       {children: nil},
-					"next-hop":     {args: 1, children: nil},
-					"load-balance": {args: 1, children: nil},
+					"accept":           {children: nil},
+					"reject":           {children: nil},
+					"next-hop":         {args: 1, children: nil},
+					"load-balance":     {args: 1, children: nil},
+					"local-preference": {args: 1, children: nil},
+					"metric":           {args: 1, children: nil},
+					"community":        {args: 1, children: nil},
+					"origin":           {args: 1, children: nil},
 				}},
 			}},
 			"then": {children: nil},
@@ -545,6 +549,16 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 				}},
 			}},
 		}},
+		"ospf3": {children: map[string]*schemaNode{
+			"router-id": {args: 1, children: nil},
+			"export":    {args: 1, children: nil},
+			"area": {args: 1, children: map[string]*schemaNode{
+				"interface": {args: 1, valueHint: ValueHintInterfaceName, children: map[string]*schemaNode{
+					"passive": {children: nil},
+					"cost":    {args: 1, children: nil},
+				}},
+			}},
+		}},
 		"bgp": {children: map[string]*schemaNode{
 			"local-as":        {args: 1, children: nil},
 			"router-id":       {args: 1, children: nil},
@@ -562,6 +576,8 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 				"export":             {args: 1, children: nil},
 				"authentication-key": {args: 1, children: nil},
 				"default-originate":  {children: nil},
+				"loops":              {args: 1, children: nil},
+				"remove-private":     {children: nil},
 				"family": {children: map[string]*schemaNode{
 					"inet":  {children: nil},
 					"inet6": {children: nil},
@@ -576,6 +592,8 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 					"authentication-key":    {args: 1, children: nil},
 					"route-reflector-client": {children: nil},
 					"default-originate":      {children: nil},
+					"loops":                  {args: 1, children: nil},
+					"remove-private":         {children: nil},
 					"bfd-liveness-detection": {children: map[string]*schemaNode{
 						"minimum-interval": {args: 1, children: nil},
 					}},
@@ -907,6 +925,16 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 						"nssa": {children: map[string]*schemaNode{
 							"no-summaries": {children: nil},
 						}},
+					}},
+				}},
+			}},
+			"ospf3": {children: map[string]*schemaNode{
+				"router-id": {args: 1, children: nil},
+				"export":    {args: 1, children: nil},
+				"area": {args: 1, children: map[string]*schemaNode{
+					"interface": {args: 1, valueHint: ValueHintInterfaceName, children: map[string]*schemaNode{
+						"passive": {children: nil},
+						"cost":    {args: 1, children: nil},
 					}},
 				}},
 			}},

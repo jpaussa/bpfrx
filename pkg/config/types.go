@@ -85,9 +85,13 @@ type PolicyTerm struct {
 	FromProtocol string         // "direct", "static", "bgp", "ospf"
 	PrefixList   string         // from prefix-list <name>
 	RouteFilters []*RouteFilter // prefix matching
-	Action       string         // "accept", "reject"
-	NextHop      string         // then next-hop (e.g. "peer-address", "self", IP)
-	LoadBalance  string         // then load-balance (e.g. "consistent-hash", "per-packet")
+	Action          string         // "accept", "reject"
+	NextHop         string         // then next-hop (e.g. "peer-address", "self", IP)
+	LoadBalance     string         // then load-balance (e.g. "consistent-hash", "per-packet")
+	LocalPreference int            // BGP local-preference (0 = not set)
+	Metric          int            // BGP MED/metric (0 = not set)
+	Community       string         // BGP community to set (e.g. "65000:100")
+	Origin          string         // BGP origin: "igp", "egp", "incomplete"
 }
 
 // RouteFilter matches a prefix with a match type.
@@ -920,10 +924,31 @@ type StaticRoute struct {
 // ProtocolsConfig holds dynamic routing protocol configuration.
 type ProtocolsConfig struct {
 	OSPF                *OSPFConfig
+	OSPFv3              *OSPFv3Config
 	BGP                 *BGPConfig
 	RIP                 *RIPConfig
 	ISIS                *ISISConfig
 	RouterAdvertisement []*RAInterfaceConfig
+}
+
+// OSPFv3Config holds OSPFv3 (IPv6 OSPF) routing configuration.
+type OSPFv3Config struct {
+	RouterID string
+	Areas    []*OSPFv3Area
+	Export   []string
+}
+
+// OSPFv3Area defines an OSPFv3 area.
+type OSPFv3Area struct {
+	ID         string // "0.0.0.0" (backbone) or area number
+	Interfaces []*OSPFv3Interface
+}
+
+// OSPFv3Interface defines an interface participating in OSPFv3.
+type OSPFv3Interface struct {
+	Name    string
+	Passive bool
+	Cost    int
 }
 
 // RIPConfig holds RIP routing configuration.
@@ -1040,6 +1065,8 @@ type BGPNeighbor struct {
 	BFDInterval          int    // BFD minimum interval in ms (0 = default 300)
 	RouteReflectorClient bool   // mark as route-reflector client
 	DefaultOriginate     bool   // advertise default route to this neighbor
+	AllowASIn            int    // allow own AS in path N times (0 = disabled)
+	RemovePrivateAS      bool   // strip private AS numbers from updates
 }
 
 // TunnelConfig defines a GRE or other tunnel interface.
@@ -1141,6 +1168,7 @@ type RoutingInstanceConfig struct {
 	Interfaces              []string            // interfaces belonging to this instance
 	StaticRoutes            []*StaticRoute      // per-instance static routes
 	OSPF                    *OSPFConfig         // per-instance OSPF (optional)
+	OSPFv3                  *OSPFv3Config       // per-instance OSPFv3 (optional)
 	BGP                     *BGPConfig          // per-instance BGP (optional)
 	RIP                     *RIPConfig          // per-instance RIP (optional)
 	ISIS                    *ISISConfig         // per-instance IS-IS (optional)

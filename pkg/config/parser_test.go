@@ -6143,6 +6143,58 @@ func TestPolicyStatementSetSyntax(t *testing.T) {
 	}
 }
 
+func TestPolicyStatementRouteMapAttributesSetSyntax(t *testing.T) {
+	cmds := []string{
+		"set policy-options policy-statement PREFER-LOCAL term 10 from protocol bgp",
+		"set policy-options policy-statement PREFER-LOCAL term 10 then local-preference 200",
+		"set policy-options policy-statement PREFER-LOCAL term 10 then metric 100",
+		"set policy-options policy-statement PREFER-LOCAL term 10 then community 65000:100",
+		"set policy-options policy-statement PREFER-LOCAL term 10 then origin igp",
+		"set policy-options policy-statement PREFER-LOCAL term 10 then accept",
+	}
+	tree := &ConfigTree{}
+	for _, cmd := range cmds {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%q): %v", cmd, err)
+		}
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+
+	ps := cfg.PolicyOptions.PolicyStatements["PREFER-LOCAL"]
+	if ps == nil {
+		t.Fatal("PREFER-LOCAL not found")
+	}
+	if len(ps.Terms) != 1 {
+		t.Fatalf("got %d terms, want 1", len(ps.Terms))
+	}
+	term := ps.Terms[0]
+	if term.FromProtocol != "bgp" {
+		t.Errorf("from protocol = %q, want bgp", term.FromProtocol)
+	}
+	if term.LocalPreference != 200 {
+		t.Errorf("local-preference = %d, want 200", term.LocalPreference)
+	}
+	if term.Metric != 100 {
+		t.Errorf("metric = %d, want 100", term.Metric)
+	}
+	if term.Community != "65000:100" {
+		t.Errorf("community = %q, want 65000:100", term.Community)
+	}
+	if term.Origin != "igp" {
+		t.Errorf("origin = %q, want igp", term.Origin)
+	}
+	if term.Action != "accept" {
+		t.Errorf("action = %q, want accept", term.Action)
+	}
+}
+
 func TestInterfaceDescriptionSetSyntax(t *testing.T) {
 	cmds := []string{
 		"set interfaces ge-0/0/0 description \"Uplink to core\"",
@@ -8599,3 +8651,201 @@ func TestBGPLogUpdownSetSyntax(t *testing.T) {
 	}
 }
 
+
+func TestBGPAllowASInSetSyntax(t *testing.T) {
+	cmds := []string{
+		"set protocols bgp local-as 65001",
+		"set protocols bgp group external peer-as 65002",
+		"set protocols bgp group external loops 2",
+		"set protocols bgp group external family inet",
+		"set protocols bgp group external neighbor 10.0.0.2",
+	}
+	tree := &ConfigTree{}
+	for _, cmd := range cmds {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%v): %v", path, err)
+		}
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+	bgp := cfg.Protocols.BGP
+	if bgp == nil {
+		t.Fatal("BGP config is nil")
+	}
+	if len(bgp.Neighbors) != 1 {
+		t.Fatalf("expected 1 neighbor, got %d", len(bgp.Neighbors))
+	}
+	if bgp.Neighbors[0].AllowASIn != 2 {
+		t.Errorf("AllowASIn = %d, want 2", bgp.Neighbors[0].AllowASIn)
+	}
+}
+
+func TestBGPAllowASInPerNeighborSetSyntax(t *testing.T) {
+	cmds := []string{
+		"set protocols bgp local-as 65001",
+		"set protocols bgp group external peer-as 65002",
+		"set protocols bgp group external family inet",
+		"set protocols bgp group external neighbor 10.0.0.2 loops 3",
+	}
+	tree := &ConfigTree{}
+	for _, cmd := range cmds {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%v): %v", path, err)
+		}
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+	bgp := cfg.Protocols.BGP
+	if bgp == nil {
+		t.Fatal("BGP config is nil")
+	}
+	if len(bgp.Neighbors) != 1 {
+		t.Fatalf("expected 1 neighbor, got %d", len(bgp.Neighbors))
+	}
+	if bgp.Neighbors[0].AllowASIn != 3 {
+		t.Errorf("AllowASIn = %d, want 3", bgp.Neighbors[0].AllowASIn)
+	}
+}
+
+func TestBGPRemovePrivateASSetSyntax(t *testing.T) {
+	cmds := []string{
+		"set protocols bgp local-as 65001",
+		"set protocols bgp group external peer-as 65002",
+		"set protocols bgp group external remove-private",
+		"set protocols bgp group external family inet",
+		"set protocols bgp group external neighbor 10.0.0.2",
+	}
+	tree := &ConfigTree{}
+	for _, cmd := range cmds {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%v): %v", path, err)
+		}
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+	bgp := cfg.Protocols.BGP
+	if bgp == nil {
+		t.Fatal("BGP config is nil")
+	}
+	if len(bgp.Neighbors) != 1 {
+		t.Fatalf("expected 1 neighbor, got %d", len(bgp.Neighbors))
+	}
+	if !bgp.Neighbors[0].RemovePrivateAS {
+		t.Error("RemovePrivateAS should be true (inherited from group)")
+	}
+}
+
+func TestBGPRemovePrivateASPerNeighborSetSyntax(t *testing.T) {
+	cmds := []string{
+		"set protocols bgp local-as 65001",
+		"set protocols bgp group external peer-as 65002",
+		"set protocols bgp group external family inet",
+		"set protocols bgp group external neighbor 10.0.0.2 remove-private",
+	}
+	tree := &ConfigTree{}
+	for _, cmd := range cmds {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%v): %v", path, err)
+		}
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+	bgp := cfg.Protocols.BGP
+	if bgp == nil {
+		t.Fatal("BGP config is nil")
+	}
+	if len(bgp.Neighbors) != 1 {
+		t.Fatalf("expected 1 neighbor, got %d", len(bgp.Neighbors))
+	}
+	if !bgp.Neighbors[0].RemovePrivateAS {
+		t.Error("RemovePrivateAS should be true (per-neighbor override)")
+	}
+}
+
+func TestOSPFv3SetSyntax(t *testing.T) {
+	cmds := []string{
+		"set protocols ospf3 router-id 10.0.0.1",
+		"set protocols ospf3 area 0.0.0.0 interface trust0 passive",
+		"set protocols ospf3 area 0.0.0.0 interface trust0 cost 10",
+		"set protocols ospf3 area 0.0.0.0 interface dmz0 cost 1",
+		"set protocols ospf3 export connected",
+	}
+	tree := &ConfigTree{}
+	for _, cmd := range cmds {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%v): %v", path, err)
+		}
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+	ospfv3 := cfg.Protocols.OSPFv3
+	if ospfv3 == nil {
+		t.Fatal("OSPFv3 config is nil")
+	}
+	if ospfv3.RouterID != "10.0.0.1" {
+		t.Errorf("RouterID = %q, want %q", ospfv3.RouterID, "10.0.0.1")
+	}
+	if len(ospfv3.Areas) != 1 {
+		t.Fatalf("expected 1 area, got %d", len(ospfv3.Areas))
+	}
+	area := ospfv3.Areas[0]
+	if area.ID != "0.0.0.0" {
+		t.Errorf("area ID = %q, want %q", area.ID, "0.0.0.0")
+	}
+	if len(area.Interfaces) != 2 {
+		t.Fatalf("expected 2 interfaces, got %d", len(area.Interfaces))
+	}
+	trust := area.Interfaces[0]
+	if trust.Name != "trust0" {
+		t.Errorf("iface name = %q, want %q", trust.Name, "trust0")
+	}
+	if !trust.Passive {
+		t.Error("trust0 should be passive")
+	}
+	if trust.Cost != 10 {
+		t.Errorf("trust0 cost = %d, want 10", trust.Cost)
+	}
+	dmz := area.Interfaces[1]
+	if dmz.Name != "dmz0" {
+		t.Errorf("iface name = %q, want %q", dmz.Name, "dmz0")
+	}
+	if dmz.Passive {
+		t.Error("dmz0 should not be passive")
+	}
+	if dmz.Cost != 1 {
+		t.Errorf("dmz0 cost = %d, want 1", dmz.Cost)
+	}
+	if len(ospfv3.Export) != 1 || ospfv3.Export[0] != "connected" {
+		t.Errorf("Export = %v, want [connected]", ospfv3.Export)
+	}
+}

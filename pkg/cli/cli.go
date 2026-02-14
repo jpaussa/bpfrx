@@ -1986,6 +1986,7 @@ func (c *CLI) applyToDataplane(cfg *config.Config) error {
 	if c.frr != nil {
 		fc := &frr.FullConfig{
 			OSPF:         cfg.Protocols.OSPF,
+			OSPFv3:       cfg.Protocols.OSPFv3,
 			BGP:          cfg.Protocols.BGP,
 			StaticRoutes: cfg.RoutingOptions.StaticRoutes,
 		}
@@ -2005,6 +2006,7 @@ func (c *CLI) applyToDataplane(cfg *config.Config) error {
 			fc.Instances = append(fc.Instances, frr.InstanceConfig{
 				VRFName:      "vrf-" + ri.Name,
 				OSPF:         ri.OSPF,
+				OSPFv3:       ri.OSPFv3,
 				BGP:          ri.BGP,
 				StaticRoutes: ri.StaticRoutes,
 			})

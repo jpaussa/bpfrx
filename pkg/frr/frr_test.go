@@ -132,7 +132,7 @@ func TestGenerateProtocols_OSPF(t *testing.T) {
 			},
 		},
 	}
-	got := m.generateProtocols(ospf, nil, nil, nil, "", 0)
+	got := m.generateProtocols(ospf, nil, nil, nil, nil, "", 0, nil)
 	if !strings.Contains(got, "router ospf\n") {
 		t.Error("missing 'router ospf'")
 	}
@@ -165,7 +165,7 @@ func TestGenerateProtocols_OSPFExportAndCost(t *testing.T) {
 			},
 		},
 	}
-	got := m.generateProtocols(ospf, nil, nil, nil, "", 0)
+	got := m.generateProtocols(ospf, nil, nil, nil, nil, "", 0, nil)
 	if !strings.Contains(got, "redistribute connected\n") {
 		t.Error("missing redistribute connected")
 	}
@@ -190,7 +190,7 @@ func TestGenerateProtocols_BGP(t *testing.T) {
 			{Address: "10.0.3.1", PeerAS: 65003, MultihopTTL: 5},
 		},
 	}
-	got := m.generateProtocols(nil, bgp, nil, nil, "", 0)
+	got := m.generateProtocols(nil, nil, bgp, nil, nil, "", 0, nil)
 	if !strings.Contains(got, "router bgp 65001\n") {
 		t.Error("missing 'router bgp 65001'")
 	}
@@ -215,7 +215,7 @@ func TestGenerateProtocols_RIP(t *testing.T) {
 		Passive:      []string{"dmz0"},
 		Redistribute: []string{"connected", "static"},
 	}
-	got := m.generateProtocols(nil, nil, rip, nil, "", 0)
+	got := m.generateProtocols(nil, nil, nil, rip, nil, "", 0, nil)
 	if !strings.Contains(got, "router rip\n") {
 		t.Error("missing 'router rip'")
 	}
@@ -240,7 +240,7 @@ func TestGenerateProtocols_ISIS(t *testing.T) {
 			{Name: "dmz0", Passive: true},
 		},
 	}
-	got := m.generateProtocols(nil, nil, nil, isis, "", 0)
+	got := m.generateProtocols(nil, nil, nil, nil, isis, "", 0, nil)
 	if !strings.Contains(got, "router isis bpfrx\n") {
 		t.Error("missing 'router isis bpfrx'")
 	}
@@ -268,7 +268,7 @@ func TestGenerateProtocols_BGPExport(t *testing.T) {
 			{Address: "10.0.2.1", PeerAS: 65002},
 		},
 	}
-	got := m.generateProtocols(nil, bgp, nil, nil, "", 0)
+	got := m.generateProtocols(nil, nil, bgp, nil, nil, "", 0, nil)
 	if !strings.Contains(got, "redistribute connected\n") {
 		t.Errorf("missing redistribute connected, got:\n%s", got)
 	}
@@ -287,7 +287,7 @@ func TestGenerateProtocols_ISISExport(t *testing.T) {
 			{Name: "trust0"},
 		},
 	}
-	got := m.generateProtocols(nil, nil, nil, isis, "", 0)
+	got := m.generateProtocols(nil, nil, nil, nil, isis, "", 0, nil)
 	if !strings.Contains(got, "redistribute connected\n") {
 		t.Errorf("missing redistribute connected, got:\n%s", got)
 	}
@@ -299,7 +299,7 @@ func TestGenerateProtocols_VRF(t *testing.T) {
 		RouterID: "2.2.2.2",
 		Areas:    []*config.OSPFArea{{ID: "0.0.0.0", Interfaces: []*config.OSPFInterface{{Name: "trust0"}}}},
 	}
-	got := m.generateProtocols(ospf, nil, nil, nil, "cust-a", 0)
+	got := m.generateProtocols(ospf, nil, nil, nil, nil, "cust-a", 0, nil)
 	if !strings.Contains(got, "router ospf vrf cust-a\n") {
 		t.Error("missing VRF suffix in OSPF")
 	}
@@ -453,6 +453,46 @@ func TestGeneratePolicyOptions(t *testing.T) {
 	}
 }
 
+func TestGeneratePolicyOptionsRouteMapAttributes(t *testing.T) {
+	m := &Manager{frrConf: "/dev/null"}
+	po := &config.PolicyOptionsConfig{
+		PolicyStatements: map[string]*config.PolicyStatement{
+			"SET-ATTRS": {
+				Name: "SET-ATTRS",
+				Terms: []*config.PolicyTerm{
+					{
+						Name:            "t1",
+						FromProtocol:    "bgp",
+						Action:          "accept",
+						LocalPreference: 200,
+						Metric:          100,
+						Community:       "65000:100",
+						Origin:          "igp",
+					},
+				},
+				DefaultAction: "reject",
+			},
+		},
+	}
+
+	got := m.generatePolicyOptions(po)
+
+	checks := []string{
+		"route-map SET-ATTRS permit 10",
+		"match source-protocol bgp",
+		"set local-preference 200",
+		"set metric 100",
+		"set community 65000:100",
+		"set origin igp",
+		"route-map SET-ATTRS deny 20",
+	}
+	for _, want := range checks {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+}
+
 func TestBGPAddressFamily(t *testing.T) {
 	m := New()
 
@@ -474,7 +514,7 @@ func TestBGPAddressFamily(t *testing.T) {
 		},
 	}
 
-	got := m.generateProtocols(nil, bgp, nil, nil, "", 0)
+	got := m.generateProtocols(nil, nil, bgp, nil, nil, "", 0, nil)
 
 	checks := []string{
 		"router bgp 64701",
@@ -518,7 +558,7 @@ func TestGenerateProtocols_ECMPMaxPaths(t *testing.T) {
 			{Address: "10.0.2.1", PeerAS: 65002, FamilyInet: true},
 		},
 	}
-	got := m.generateProtocols(nil, bgp, nil, nil, "", 64)
+	got := m.generateProtocols(nil, nil, bgp, nil, nil, "", 64, nil)
 	if !strings.Contains(got, "maximum-paths 64") {
 		t.Errorf("missing maximum-paths in BGP, got:\n%s", got)
 	}
@@ -530,13 +570,13 @@ func TestGenerateProtocols_ECMPMaxPaths(t *testing.T) {
 			{ID: "0.0.0.0", Interfaces: []*config.OSPFInterface{{Name: "trust0"}}},
 		},
 	}
-	got = m.generateProtocols(ospf, nil, nil, nil, "", 64)
+	got = m.generateProtocols(ospf, nil, nil, nil, nil, "", 64, nil)
 	if !strings.Contains(got, "maximum-paths 64") {
 		t.Errorf("missing maximum-paths in OSPF, got:\n%s", got)
 	}
 
 	// Without ECMP
-	got = m.generateProtocols(ospf, nil, nil, nil, "", 0)
+	got = m.generateProtocols(ospf, nil, nil, nil, nil, "", 0, nil)
 	if strings.Contains(got, "maximum-paths") {
 		t.Errorf("should not have maximum-paths when ecmp=0, got:\n%s", got)
 	}
@@ -625,7 +665,7 @@ func TestFRRMultiVRF(t *testing.T) {
 	}
 	for _, inst := range fc.Instances {
 		if inst.OSPF != nil || inst.BGP != nil || inst.RIP != nil || inst.ISIS != nil {
-			b.WriteString(m.generateProtocols(inst.OSPF, inst.BGP, inst.RIP, inst.ISIS, inst.VRFName, 0))
+			b.WriteString(m.generateProtocols(inst.OSPF, inst.OSPFv3, inst.BGP, inst.RIP, inst.ISIS, inst.VRFName, 0, nil))
 		}
 	}
 
@@ -957,7 +997,7 @@ func TestGenerateProtocols_OSPFMD5Auth(t *testing.T) {
 			},
 		},
 	}
-	got := m.generateProtocols(ospf, nil, nil, nil, "", 0)
+	got := m.generateProtocols(ospf, nil, nil, nil, nil, "", 0, nil)
 
 	checks := []string{
 		"interface trust0\n",
@@ -986,7 +1026,7 @@ func TestGenerateProtocols_OSPFMD5AuthDefaultKeyID(t *testing.T) {
 			},
 		},
 	}
-	got := m.generateProtocols(ospf, nil, nil, nil, "", 0)
+	got := m.generateProtocols(ospf, nil, nil, nil, nil, "", 0, nil)
 	if !strings.Contains(got, "message-digest-key 1 md5 key1") {
 		t.Errorf("default key-id should be 1, got:\n%s", got)
 	}
@@ -1001,7 +1041,7 @@ func TestGenerateProtocols_BGPPassword(t *testing.T) {
 			{Address: "10.0.3.1", PeerAS: 65003},
 		},
 	}
-	got := m.generateProtocols(nil, bgp, nil, nil, "", 0)
+	got := m.generateProtocols(nil, nil, bgp, nil, nil, "", 0, nil)
 	if !strings.Contains(got, "neighbor 10.0.2.1 password bgpSecret\n") {
 		t.Errorf("missing BGP password, got:\n%s", got)
 	}
@@ -1023,7 +1063,7 @@ func TestGenerateProtocols_OSPFBFD(t *testing.T) {
 			},
 		},
 	}
-	got := m.generateProtocols(ospf, nil, nil, nil, "", 0)
+	got := m.generateProtocols(ospf, nil, nil, nil, nil, "", 0, nil)
 	if !strings.Contains(got, "ip ospf bfd\n") {
 		t.Errorf("missing OSPF BFD, got:\n%s", got)
 	}
@@ -1038,7 +1078,7 @@ func TestGenerateProtocols_BGPBFD(t *testing.T) {
 			{Address: "10.0.3.1", PeerAS: 65003},
 		},
 	}
-	got := m.generateProtocols(nil, bgp, nil, nil, "", 0)
+	got := m.generateProtocols(nil, nil, bgp, nil, nil, "", 0, nil)
 
 	checks := []string{
 		"neighbor 10.0.2.1 bfd\n",
@@ -1071,7 +1111,7 @@ func TestGenerateProtocols_OSPFStubArea(t *testing.T) {
 			},
 		},
 	}
-	got := m.generateProtocols(ospf, nil, nil, nil, "", 0)
+	got := m.generateProtocols(ospf, nil, nil, nil, nil, "", 0, nil)
 	if !strings.Contains(got, "area 0.0.0.1 stub\n") {
 		t.Errorf("missing stub area, got:\n%s", got)
 	}
@@ -1094,7 +1134,7 @@ func TestGenerateProtocols_OSPFStubNoSummary(t *testing.T) {
 			},
 		},
 	}
-	got := m.generateProtocols(ospf, nil, nil, nil, "", 0)
+	got := m.generateProtocols(ospf, nil, nil, nil, nil, "", 0, nil)
 	if !strings.Contains(got, "area 0.0.0.1 stub no-summary\n") {
 		t.Errorf("missing stub no-summary, got:\n%s", got)
 	}
@@ -1113,7 +1153,7 @@ func TestGenerateProtocols_OSPFNSSAArea(t *testing.T) {
 			},
 		},
 	}
-	got := m.generateProtocols(ospf, nil, nil, nil, "", 0)
+	got := m.generateProtocols(ospf, nil, nil, nil, nil, "", 0, nil)
 	if !strings.Contains(got, "area 0.0.0.2 nssa\n") {
 		t.Errorf("missing nssa area, got:\n%s", got)
 	}
@@ -1129,7 +1169,7 @@ func TestGenerateProtocols_BGPRouteReflector(t *testing.T) {
 			{Address: "10.0.0.3", PeerAS: 65001},
 		},
 	}
-	got := m.generateProtocols(nil, bgp, nil, nil, "", 0)
+	got := m.generateProtocols(nil, nil, bgp, nil, nil, "", 0, nil)
 
 	checks := []string{
 		"bgp cluster-id 10.0.0.1\n",
@@ -1156,7 +1196,7 @@ func TestGenerateProtocols_ISISAuth(t *testing.T) {
 			{Name: "trust0"},
 		},
 	}
-	got := m.generateProtocols(nil, nil, nil, isis, "", 0)
+	got := m.generateProtocols(nil, nil, nil, nil, isis, "", 0, nil)
 
 	checks := []string{
 		"area-password md5 isisSecret\n",
@@ -1180,7 +1220,7 @@ func TestGenerateProtocols_ISISAuthClear(t *testing.T) {
 			{Name: "trust0"},
 		},
 	}
-	got := m.generateProtocols(nil, nil, nil, isis, "", 0)
+	got := m.generateProtocols(nil, nil, nil, nil, isis, "", 0, nil)
 
 	checks := []string{
 		"area-password clear plainpw\n",
@@ -1203,7 +1243,7 @@ func TestGenerateProtocols_ISISWideMetrics(t *testing.T) {
 			{Name: "trust0"},
 		},
 	}
-	got := m.generateProtocols(nil, nil, nil, isis, "", 0)
+	got := m.generateProtocols(nil, nil, nil, nil, isis, "", 0, nil)
 	if !strings.Contains(got, " metric-style wide\n") {
 		t.Errorf("missing metric-style wide in:\n%s", got)
 	}
@@ -1219,7 +1259,7 @@ func TestGenerateProtocols_ISISOverload(t *testing.T) {
 			{Name: "trust0"},
 		},
 	}
-	got := m.generateProtocols(nil, nil, nil, isis, "", 0)
+	got := m.generateProtocols(nil, nil, nil, nil, isis, "", 0, nil)
 	if !strings.Contains(got, " set-overload-bit\n") {
 		t.Errorf("missing set-overload-bit in:\n%s", got)
 	}
@@ -1235,7 +1275,7 @@ func TestGenerateProtocols_ISISInterfaceAuth(t *testing.T) {
 			{Name: "dmz0", AuthType: "simple", AuthKey: "plainpw"},
 		},
 	}
-	got := m.generateProtocols(nil, nil, nil, isis, "", 0)
+	got := m.generateProtocols(nil, nil, nil, nil, isis, "", 0, nil)
 	checks := []string{
 		"isis password md5 ifaceSecret\n",
 		"isis password clear plainpw\n",
@@ -1254,7 +1294,7 @@ func TestGenerateProtocols_RIPAuth(t *testing.T) {
 		AuthType:   "md5",
 		AuthKey:    "ripSecret",
 	}
-	got := m.generateProtocols(nil, nil, rip, nil, "", 0)
+	got := m.generateProtocols(nil, nil, nil, rip, nil, "", 0, nil)
 
 	checks := []string{
 		"interface trust0\n",
@@ -1276,7 +1316,7 @@ func TestGenerateProtocols_RIPAuthText(t *testing.T) {
 		AuthType:   "simple",
 		AuthKey:    "plainpw",
 	}
-	got := m.generateProtocols(nil, nil, rip, nil, "", 0)
+	got := m.generateProtocols(nil, nil, nil, rip, nil, "", 0, nil)
 
 	checks := []string{
 		"ip rip authentication mode text\n",
@@ -1297,7 +1337,7 @@ func TestGenerateProtocols_OSPFReferenceBandwidth(t *testing.T) {
 			{ID: "0.0.0.0", Interfaces: []*config.OSPFInterface{{Name: "trust0"}}},
 		},
 	}
-	got := m.generateProtocols(ospf, nil, nil, nil, "", 1)
+	got := m.generateProtocols(ospf, nil, nil, nil, nil, "", 1, nil)
 	if !strings.Contains(got, "auto-cost reference-bandwidth 10000\n") {
 		t.Errorf("missing reference-bandwidth in:\n%s", got)
 	}
@@ -1318,7 +1358,7 @@ func TestGenerateProtocols_OSPFPassiveDefault(t *testing.T) {
 			},
 		},
 	}
-	got := m.generateProtocols(ospf, nil, nil, nil, "", 0)
+	got := m.generateProtocols(ospf, nil, nil, nil, nil, "", 0, nil)
 	if !strings.Contains(got, "passive-interface default\n") {
 		t.Errorf("missing passive-interface default in:\n%s", got)
 	}
@@ -1348,7 +1388,7 @@ func TestGenerateProtocols_OSPFNetworkType(t *testing.T) {
 			},
 		},
 	}
-	got := m.generateProtocols(ospf, nil, nil, nil, "", 0)
+	got := m.generateProtocols(ospf, nil, nil, nil, nil, "", 0, nil)
 	if !strings.Contains(got, "ip ospf network point-to-point\n") {
 		t.Errorf("missing 'ip ospf network point-to-point' in:\n%s", got)
 	}
@@ -1367,7 +1407,7 @@ func TestGenerateProtocols_BGPGracefulRestart(t *testing.T) {
 			{Address: "10.0.0.2", PeerAS: 65002},
 		},
 	}
-	got := m.generateProtocols(nil, bgp, nil, nil, "", 1)
+	got := m.generateProtocols(nil, nil, bgp, nil, nil, "", 1, nil)
 	if !strings.Contains(got, "bgp graceful-restart\n") {
 		t.Errorf("missing graceful-restart in:\n%s", got)
 	}
@@ -1383,7 +1423,7 @@ func TestGenerateProtocols_BGPMultipath(t *testing.T) {
 			{Address: "10.0.0.2", PeerAS: 65002},
 		},
 	}
-	got := m.generateProtocols(nil, bgp, nil, nil, "", 1)
+	got := m.generateProtocols(nil, nil, bgp, nil, nil, "", 1, nil)
 	if !strings.Contains(got, "bgp bestpath as-path multipath-relax\n") {
 		t.Errorf("missing multipath-relax in:\n%s", got)
 	}
@@ -1400,7 +1440,7 @@ func TestGenerateProtocols_BGPDefaultOriginate(t *testing.T) {
 			{Address: "10.0.0.2", PeerAS: 65002, FamilyInet: true, DefaultOriginate: true},
 		},
 	}
-	got := m.generateProtocols(nil, bgp, nil, nil, "", 1)
+	got := m.generateProtocols(nil, nil, bgp, nil, nil, "", 1, nil)
 	if !strings.Contains(got, "neighbor 10.0.0.2 default-originate\n") {
 		t.Errorf("missing default-originate in:\n%s", got)
 	}
@@ -1415,8 +1455,246 @@ func TestGenerateProtocols_BGPLogNeighborChanges(t *testing.T) {
 			{Address: "10.0.0.2", PeerAS: 65002},
 		},
 	}
-	got := m.generateProtocols(nil, bgp, nil, nil, "", 1)
+	got := m.generateProtocols(nil, nil, bgp, nil, nil, "", 1, nil)
 	if !strings.Contains(got, "bgp log-neighbor-changes\n") {
 		t.Errorf("missing log-neighbor-changes in:\n%s", got)
+	}
+}
+
+func TestResolveRedistribute_BareProtocol(t *testing.T) {
+	m := New()
+	for _, proto := range []string{"connected", "static", "ospf", "bgp", "rip", "isis", "kernel"} {
+		got := m.resolveRedistribute(proto, nil)
+		want := " redistribute " + proto + "\n"
+		if got != want {
+			t.Errorf("resolveRedistribute(%q, nil) = %q, want %q", proto, got, want)
+		}
+	}
+}
+
+func TestResolveRedistribute_PolicyStatement(t *testing.T) {
+	m := New()
+	po := &config.PolicyOptionsConfig{
+		PrefixLists: map[string]*config.PrefixList{
+			"internal": {Name: "internal", Prefixes: []string{"10.0.0.0/8", "172.16.0.0/12"}},
+		},
+		PolicyStatements: map[string]*config.PolicyStatement{
+			"export-connected": {
+				Name: "export-connected",
+				Terms: []*config.PolicyTerm{
+					{Name: "t1", FromProtocol: "direct", Action: "accept", PrefixList: "internal"},
+				},
+			},
+		},
+	}
+	got := m.resolveRedistribute("export-connected", po)
+	want := " redistribute connected route-map export-connected\n"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestResolveRedistribute_MultiProtocol(t *testing.T) {
+	m := New()
+	po := &config.PolicyOptionsConfig{
+		PolicyStatements: map[string]*config.PolicyStatement{
+			"export-all": {
+				Name: "export-all",
+				Terms: []*config.PolicyTerm{
+					{Name: "connected", FromProtocol: "direct", Action: "accept"},
+					{Name: "static", FromProtocol: "static", Action: "accept"},
+				},
+			},
+		},
+	}
+	got := m.resolveRedistribute("export-all", po)
+	// Should have both protocols, sorted alphabetically
+	if !strings.Contains(got, "redistribute connected route-map export-all\n") {
+		t.Errorf("missing connected route-map in:\n%s", got)
+	}
+	if !strings.Contains(got, "redistribute static route-map export-all\n") {
+		t.Errorf("missing static route-map in:\n%s", got)
+	}
+}
+
+func TestGenerateProtocols_OSPFExportRouteMap(t *testing.T) {
+	m := New()
+	po := &config.PolicyOptionsConfig{
+		PrefixLists: map[string]*config.PrefixList{
+			"trusted-nets": {Name: "trusted-nets", Prefixes: []string{"10.0.1.0/24", "10.0.2.0/24"}},
+		},
+		PolicyStatements: map[string]*config.PolicyStatement{
+			"export-direct": {
+				Name: "export-direct",
+				Terms: []*config.PolicyTerm{
+					{Name: "t1", FromProtocol: "direct", PrefixList: "trusted-nets", Action: "accept"},
+				},
+				DefaultAction: "reject",
+			},
+		},
+	}
+	ospf := &config.OSPFConfig{
+		RouterID: "1.1.1.1",
+		Export:   []string{"export-direct"},
+		Areas: []*config.OSPFArea{
+			{ID: "0.0.0.0", Interfaces: []*config.OSPFInterface{{Name: "trust0"}}},
+		},
+	}
+	got := m.generateProtocols(ospf, nil, nil, nil, nil, "", 0, po)
+	if !strings.Contains(got, "redistribute connected route-map export-direct\n") {
+		t.Errorf("missing route-map redistribute, got:\n%s", got)
+	}
+	// Should NOT have bare "redistribute export-direct"
+	if strings.Contains(got, "redistribute export-direct\n") {
+		t.Errorf("should not have bare redistribute with policy name, got:\n%s", got)
+	}
+}
+
+func TestGenerateProtocols_BGPExportRouteMap(t *testing.T) {
+	m := New()
+	po := &config.PolicyOptionsConfig{
+		PolicyStatements: map[string]*config.PolicyStatement{
+			"bgp-export": {
+				Name: "bgp-export",
+				Terms: []*config.PolicyTerm{
+					{Name: "connected", FromProtocol: "direct", Action: "accept"},
+					{Name: "static", FromProtocol: "static", Action: "accept"},
+				},
+			},
+		},
+	}
+	bgp := &config.BGPConfig{
+		LocalAS:  65001,
+		RouterID: "1.1.1.1",
+		Export:   []string{"bgp-export"},
+		Neighbors: []*config.BGPNeighbor{
+			{Address: "10.0.2.1", PeerAS: 65002},
+		},
+	}
+	got := m.generateProtocols(nil, nil, bgp, nil, nil, "", 0, po)
+	if !strings.Contains(got, "redistribute connected route-map bgp-export\n") {
+		t.Errorf("missing connected route-map, got:\n%s", got)
+	}
+	if !strings.Contains(got, "redistribute static route-map bgp-export\n") {
+		t.Errorf("missing static route-map, got:\n%s", got)
+	}
+}
+
+func TestGenerateProtocols_MixedBareAndRouteMap(t *testing.T) {
+	m := New()
+	po := &config.PolicyOptionsConfig{
+		PolicyStatements: map[string]*config.PolicyStatement{
+			"filter-connected": {
+				Name: "filter-connected",
+				Terms: []*config.PolicyTerm{
+					{Name: "t1", FromProtocol: "direct", Action: "accept"},
+				},
+			},
+		},
+	}
+	bgp := &config.BGPConfig{
+		LocalAS: 65001,
+		Export:  []string{"filter-connected", "static"},
+		Neighbors: []*config.BGPNeighbor{
+			{Address: "10.0.2.1", PeerAS: 65002},
+		},
+	}
+	got := m.generateProtocols(nil, nil, bgp, nil, nil, "", 0, po)
+	// Policy-based export should use route-map
+	if !strings.Contains(got, "redistribute connected route-map filter-connected\n") {
+		t.Errorf("missing route-map, got:\n%s", got)
+	}
+	// Bare protocol should be plain redistribute
+	if !strings.Contains(got, "redistribute static\n") {
+		t.Errorf("missing bare redistribute static, got:\n%s", got)
+	}
+}
+
+func TestGenerateProtocols_BGPAllowASIn(t *testing.T) {
+	m := New()
+	bgp := &config.BGPConfig{
+		LocalAS: 65001,
+		Neighbors: []*config.BGPNeighbor{
+			{Address: "10.0.0.2", PeerAS: 65002, AllowASIn: 2},
+		},
+	}
+	got := m.generateProtocols(nil, nil, bgp, nil, nil, "", 1, nil)
+	if !strings.Contains(got, "neighbor 10.0.0.2 allowas-in 2\n") {
+		t.Errorf("missing allowas-in in:\n%s", got)
+	}
+}
+
+func TestGenerateProtocols_BGPRemovePrivateAS(t *testing.T) {
+	m := New()
+	bgp := &config.BGPConfig{
+		LocalAS: 65001,
+		Neighbors: []*config.BGPNeighbor{
+			{Address: "10.0.0.2", PeerAS: 65002, RemovePrivateAS: true},
+		},
+	}
+	got := m.generateProtocols(nil, nil, bgp, nil, nil, "", 1, nil)
+	if !strings.Contains(got, "neighbor 10.0.0.2 remove-private-AS\n") {
+		t.Errorf("missing remove-private-AS in:\n%s", got)
+	}
+}
+
+func TestGenerateProtocols_OSPFv3(t *testing.T) {
+	m := New()
+	ospfv3 := &config.OSPFv3Config{
+		RouterID: "10.0.0.1",
+		Areas: []*config.OSPFv3Area{
+			{
+				ID: "0.0.0.0",
+				Interfaces: []*config.OSPFv3Interface{
+					{Name: "trust0", Passive: true, Cost: 10},
+					{Name: "dmz0"},
+				},
+			},
+		},
+		Export: []string{"connected"},
+	}
+	got := m.generateProtocols(nil, ospfv3, nil, nil, nil, "", 0, nil)
+	if !strings.Contains(got, "router ospf6\n") {
+		t.Errorf("missing router ospf6 in:\n%s", got)
+	}
+	if !strings.Contains(got, "ospf6 router-id 10.0.0.1\n") {
+		t.Errorf("missing router-id in:\n%s", got)
+	}
+	if !strings.Contains(got, "interface trust0 area 0.0.0.0\n") {
+		t.Errorf("missing interface trust0 area in:\n%s", got)
+	}
+	if !strings.Contains(got, "interface dmz0 area 0.0.0.0\n") {
+		t.Errorf("missing interface dmz0 area in:\n%s", got)
+	}
+	if !strings.Contains(got, "ipv6 ospf6 passive\n") {
+		t.Errorf("missing passive in:\n%s", got)
+	}
+	if !strings.Contains(got, "ipv6 ospf6 cost 10\n") {
+		t.Errorf("missing cost in:\n%s", got)
+	}
+	if !strings.Contains(got, "redistribute connected\n") {
+		t.Errorf("missing redistribute in:\n%s", got)
+	}
+}
+
+func TestGenerateProtocols_OSPFv3VRF(t *testing.T) {
+	m := New()
+	ospfv3 := &config.OSPFv3Config{
+		RouterID: "10.0.0.2",
+		Areas: []*config.OSPFv3Area{
+			{
+				ID: "0.0.0.1",
+				Interfaces: []*config.OSPFv3Interface{
+					{Name: "vrf-eth0"},
+				},
+			},
+		},
+	}
+	got := m.generateProtocols(nil, ospfv3, nil, nil, nil, "cust-a", 0, nil)
+	if !strings.Contains(got, "router ospf6 vrf cust-a\n") {
+		t.Errorf("missing VRF-scoped ospf6 in:\n%s", got)
+	}
+	if !strings.Contains(got, "ospf6 router-id 10.0.0.2\n") {
+		t.Errorf("missing router-id in:\n%s", got)
 	}
 }

@@ -550,6 +550,14 @@ struct iface_counter_value {
 };
 
 /* ============================================================
+ * NAT port allocation counter (matches bpfrx_common.h)
+ * ============================================================ */
+
+struct nat_port_counter {
+	uint64_t counter;   /* atomic port allocation counter */
+};
+
+/* ============================================================
  * Flow configuration (matches bpfrx_common.h)
  * ============================================================ */
 
@@ -752,6 +760,18 @@ struct shared_memory {
 	struct dnat_value_v6    *dnat_values_v6;
 	struct snat_value       *snat_values_v4;
 	struct snat_value_v6    *snat_values_v6;
+
+	/* Scan tracking (LRU hash equivalents — DPDK uses rte_hash) */
+	struct rte_hash         *port_scan_track;
+	struct scan_track_value *port_scan_values;
+	struct rte_hash         *ip_sweep_track;
+	struct scan_track_value *ip_sweep_values;
+
+	/* NAT port allocation counters (per-pool atomic counter) */
+	struct nat_port_counter *nat_port_counters;
+
+	/* Per-interface redirect capability flag (1 = can use rte_eth_tx) */
+	uint8_t                 *redirect_capable;
 
 	/* NAT64 state value array (indexed by rte_hash position) */
 	struct nat64_state_value *nat64_state_values;

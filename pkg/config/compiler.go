@@ -2407,6 +2407,8 @@ func compileProtocols(node *Node, proto *ProtocolsConfig) error {
 			var groupBFD bool
 			var groupBFDInterval int
 			var groupDefaultOriginate bool
+			var groupAllowASIn int
+			var groupRemovePrivateAS bool
 			for _, child := range groupInst.node.Children {
 				switch child.Name() {
 				case "peer-as":
@@ -2451,6 +2453,14 @@ func compileProtocols(node *Node, proto *ProtocolsConfig) error {
 					}
 				case "default-originate":
 					groupDefaultOriginate = true
+				case "loops":
+					if v := nodeVal(child); v != "" {
+						if n, err := strconv.Atoi(v); err == nil {
+							groupAllowASIn = n
+						}
+					}
+				case "remove-private":
+					groupRemovePrivateAS = true
 				case "authentication-key":
 					groupAuthKey = nodeVal(child)
 				case "bfd-liveness-detection":
@@ -2480,6 +2490,8 @@ func compileProtocols(node *Node, proto *ProtocolsConfig) error {
 							BFD:              groupBFD,
 							BFDInterval:      groupBFDInterval,
 							DefaultOriginate: groupDefaultOriginate,
+							AllowASIn:        groupAllowASIn,
+							RemovePrivateAS:  groupRemovePrivateAS,
 						}
 						// Per-neighbor overrides
 						for _, prop := range child.Children {
@@ -2515,12 +2527,62 @@ func compileProtocols(node *Node, proto *ProtocolsConfig) error {
 										}
 									}
 								}
+							case "loops":
+								if v := nodeVal(prop); v != "" {
+									if n, err := strconv.Atoi(v); err == nil {
+										neighbor.AllowASIn = n
+									}
+								}
+							case "remove-private":
+								neighbor.RemovePrivateAS = true
 							}
 						}
 						proto.BGP.Neighbors = append(proto.BGP.Neighbors, neighbor)
 					}
 				}
 			}
+		}
+	}
+
+
+	ospf3Node := node.FindChild("ospf3")
+	if ospf3Node != nil {
+		proto.OSPFv3 = &OSPFv3Config{}
+
+		for _, child := range ospf3Node.Children {
+			switch child.Name() {
+			case "router-id":
+				if len(child.Keys) >= 2 {
+					proto.OSPFv3.RouterID = child.Keys[1]
+				}
+			case "export":
+				if len(child.Keys) >= 2 {
+					proto.OSPFv3.Export = append(proto.OSPFv3.Export, child.Keys[1])
+				}
+			}
+		}
+
+		for _, areaInst := range namedInstances(ospf3Node.FindChildren("area")) {
+			area := &OSPFv3Area{ID: areaInst.name}
+
+			for _, ifInst := range namedInstances(areaInst.node.FindChildren("interface")) {
+				iface := &OSPFv3Interface{Name: ifInst.name}
+				for _, prop := range ifInst.node.Children {
+					switch prop.Name() {
+					case "passive":
+						iface.Passive = true
+					case "cost":
+						if v := nodeVal(prop); v != "" {
+							if n, err := strconv.Atoi(v); err == nil {
+								iface.Cost = n
+							}
+						}
+					}
+				}
+				area.Interfaces = append(area.Interfaces, iface)
+			}
+
+			proto.OSPFv3.Areas = append(proto.OSPFv3.Areas, area)
 		}
 	}
 
@@ -3057,6 +3119,7 @@ func compileRoutingInstances(node *Node, cfg *Config) error {
 					return fmt.Errorf("instance %s protocols: %w", instanceName, err)
 				}
 				ri.OSPF = proto.OSPF
+				ri.OSPFv3 = proto.OSPFv3
 				ri.BGP = proto.BGP
 				ri.RIP = proto.RIP
 				ri.ISIS = proto.ISIS
@@ -4252,6 +4315,22 @@ func parsePolicyTermChildren(term *PolicyTerm, children []*Node) {
 					term.NextHop = nodeVal(ac)
 				case "load-balance":
 					term.LoadBalance = nodeVal(ac)
+				case "local-preference":
+					if v := nodeVal(ac); v != "" {
+						if n, err := strconv.Atoi(v); err == nil {
+							term.LocalPreference = n
+						}
+					}
+				case "metric":
+					if v := nodeVal(ac); v != "" {
+						if n, err := strconv.Atoi(v); err == nil {
+							term.Metric = n
+						}
+					}
+				case "community":
+					term.Community = nodeVal(ac)
+				case "origin":
+					term.Origin = nodeVal(ac)
 				}
 			}
 			if len(tc.Keys) >= 2 {
@@ -4303,6 +4382,30 @@ func parsePolicyTermInlineKeys(term *PolicyTerm, keys []string) {
 			if i+1 < len(keys) {
 				i++
 				term.LoadBalance = keys[i]
+			}
+		case "local-preference":
+			if i+1 < len(keys) {
+				i++
+				if n, err := strconv.Atoi(keys[i]); err == nil {
+					term.LocalPreference = n
+				}
+			}
+		case "metric":
+			if i+1 < len(keys) {
+				i++
+				if n, err := strconv.Atoi(keys[i]); err == nil {
+					term.Metric = n
+				}
+			}
+		case "community":
+			if i+1 < len(keys) {
+				i++
+				term.Community = keys[i]
+			}
+		case "origin":
+			if i+1 < len(keys) {
+				i++
+				term.Origin = keys[i]
 			}
 		case "accept":
 			term.Action = "accept"
