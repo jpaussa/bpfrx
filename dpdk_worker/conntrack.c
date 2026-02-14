@@ -567,7 +567,14 @@ conntrack_lookup(struct rte_mbuf *pkt, struct pkt_meta *meta,
 			meta->ct_state = sv->state;
 			meta->ct_direction = sv->is_reverse ? 1 : 0;
 			meta->policy_id = sv->policy_id;
-			meta->nat_flags = sv->flags;
+			meta->ingress_zone = sv->ingress_zone;
+			meta->egress_zone = sv->egress_zone;
+
+			meta->nat_flags = sv->flags & (SESS_FLAG_SNAT | SESS_FLAG_DNAT | SESS_FLAG_STATIC_NAT | SESS_FLAG_NAT64);
+			memcpy(meta->nat_src_ip.v6, sv->nat_src_ip, 16);
+			memcpy(meta->nat_dst_ip.v6, sv->nat_dst_ip, 16);
+			meta->nat_src_port = sv->nat_src_port;
+			meta->nat_dst_port = sv->nat_dst_port;
 
 			if (sv->fib_ifindex != 0 && ctx->shm->fib_gen &&
 			    sv->fib_gen == *ctx->shm->fib_gen) {
@@ -611,7 +618,15 @@ conntrack_lookup(struct rte_mbuf *pkt, struct pkt_meta *meta,
 			meta->ct_state = sv->state;
 			meta->ct_direction = 1;
 			meta->policy_id = sv->policy_id;
-			meta->nat_flags = sv->flags;
+			meta->ingress_zone = sv->egress_zone;  /* Swap for reverse */
+			meta->egress_zone = sv->ingress_zone;
+
+			meta->nat_flags = sv->flags & (SESS_FLAG_SNAT | SESS_FLAG_DNAT | SESS_FLAG_STATIC_NAT | SESS_FLAG_NAT64);
+			/* For reverse direction, swap NAT src/dst */
+			memcpy(meta->nat_src_ip.v6, sv->nat_dst_ip, 16);
+			memcpy(meta->nat_dst_ip.v6, sv->nat_src_ip, 16);
+			meta->nat_src_port = sv->nat_dst_port;
+			meta->nat_dst_port = sv->nat_src_port;
 			return CT_ESTABLISHED;
 		}
 	}
@@ -746,6 +761,10 @@ conntrack_create(struct rte_mbuf *pkt, struct pkt_meta *meta,
 		fwd_val6.policy_id = meta->policy_id;
 		fwd_val6.ingress_zone = meta->ingress_zone;
 		fwd_val6.egress_zone = meta->egress_zone;
+		memcpy(fwd_val6.nat_src_ip, meta->nat_src_ip.v6, 16);
+		memcpy(fwd_val6.nat_dst_ip, meta->nat_dst_ip.v6, 16);
+		fwd_val6.nat_src_port = meta->nat_src_port;
+		fwd_val6.nat_dst_port = meta->nat_dst_port;
 		fwd_val6.is_reverse = 0;
 
 		/* FIB cache: store forwarding result from zone_lookup */
