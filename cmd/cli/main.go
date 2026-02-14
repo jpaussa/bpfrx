@@ -772,6 +772,7 @@ func (c *ctl) showScreen() error {
 
 func (c *ctl) showFlowSession(args []string) error {
 	req := &pb.GetSessionsRequest{Limit: 100}
+	brief := false
 	// Parse filter arguments (matches local CLI's session filter syntax)
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -827,12 +828,55 @@ func (c *ctl) showFlowSession(args []string) error {
 			}
 		case "summary":
 			return c.showSessionSummary()
+		case "brief":
+			brief = true
+		case "interface":
+			if i+1 < len(args) {
+				i++ // consume value; interface filter handled locally only
+			}
 		}
 	}
 
 	resp, err := c.client.GetSessions(context.Background(), req)
 	if err != nil {
 		return fmt.Errorf("%v", err)
+	}
+
+	if brief {
+		fmt.Printf("%-5s %-22s %-22s %-5s %-20s %-3s %-5s %5s %s\n",
+			"ID", "Source", "Destination", "Proto", "Zone", "NAT", "State", "Age", "Pkts(f/r)")
+		for i, se := range resp.Sessions {
+			inZone := se.IngressZoneName
+			if inZone == "" {
+				inZone = fmt.Sprintf("%d", se.IngressZone)
+			}
+			outZone := se.EgressZoneName
+			if outZone == "" {
+				outZone = fmt.Sprintf("%d", se.EgressZone)
+			}
+			natFlag := " "
+			if se.Nat != "" {
+				if strings.Contains(se.Nat, "SNAT") {
+					natFlag = "S"
+				}
+				if strings.Contains(se.Nat, "DNAT") || strings.HasPrefix(se.Nat, "dst") {
+					natFlag = "D"
+				}
+			}
+			st := se.State
+			if len(st) > 5 {
+				st = st[:5]
+			}
+			fmt.Printf("%-5d %-22s %-22s %-5s %-20s %-3s %-5s %5d %d/%d\n",
+				i+1,
+				fmt.Sprintf("%s:%d", se.SrcAddr, se.SrcPort),
+				fmt.Sprintf("%s:%d", se.DstAddr, se.DstPort),
+				se.Protocol, inZone+"->"+outZone, natFlag,
+				st, se.AgeSeconds,
+				se.FwdPackets, se.RevPackets)
+		}
+		fmt.Printf("Total sessions: %d\n", resp.Total)
+		return nil
 	}
 
 	for i, se := range resp.Sessions {

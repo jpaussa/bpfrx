@@ -149,7 +149,9 @@ var OperationalTree = map[string]*Node{
 			"flow": {Desc: "Show flow information", Children: map[string]*Node{
 				"session": {Desc: "Show active sessions", Children: map[string]*Node{
 					"summary":     {Desc: "Show session count summary"},
+					"brief":       {Desc: "Show sessions in compact table"},
 					"application": {Desc: "Filter sessions by application name"},
+					"interface":   {Desc: "Filter sessions by interface"},
 				}},
 				"statistics":   {Desc: "Show flow statistics"},
 				"traceoptions": {Desc: "Show flow trace configuration"},

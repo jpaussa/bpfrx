@@ -2101,6 +2101,7 @@ type sessionFilter struct {
 	natOnly bool     // show only NAT sessions
 	iface   string   // ingress interface name filter
 	summary bool           // only show count
+	brief   bool           // compact tabular view
 	appName string         // application name filter
 	cfg     *config.Config // for application resolution
 }
@@ -2185,6 +2186,20 @@ func (c *CLI) parseSessionFilter(args []string) sessionFilter {
 			if i+1 < len(args) {
 				i++
 				f.iface = args[i]
+				// Resolve interface name to zone ID for session filtering.
+				if f.cfg != nil && c.dp != nil {
+					if cr := c.dp.LastCompileResult(); cr != nil {
+						for zname, zone := range f.cfg.Security.Zones {
+							for _, ifRef := range zone.Interfaces {
+								if ifRef == f.iface || strings.HasPrefix(ifRef, f.iface+".") {
+									if zid, ok := cr.ZoneIDs[zname]; ok && f.zoneID == 0 {
+										f.zoneID = zid
+									}
+								}
+							}
+						}
+					}
+				}
 			}
 		case "application":
 			if i+1 < len(args) {
@@ -2193,6 +2208,8 @@ func (c *CLI) parseSessionFilter(args []string) sessionFilter {
 			}
 		case "summary":
 			f.summary = true
+		case "brief":
+			f.brief = true
 		}
 	}
 	return f
@@ -2281,6 +2298,11 @@ func (c *CLI) showFlowSession(args []string) error {
 		byZonePair = make(map[string]int)
 	}
 
+	if f.brief {
+		fmt.Printf("%-5s %-22s %-22s %-5s %-20s %-3s %-5s %5s %s\n",
+			"ID", "Source", "Destination", "Proto", "Zone", "NAT", "State", "Age", "Pkts(f/r)")
+	}
+
 	// Build reverse zone ID → name map
 	zoneNames := make(map[uint16]string)
 	if cr := c.dp.LastCompileResult(); cr != nil {
@@ -2326,6 +2348,40 @@ func (c *CLI) showFlowSession(args []string) error {
 		protoName := protoNameFromNum(key.Protocol)
 		stateName := sessionStateName(val.State)
 
+		inZone := zoneNames[val.IngressZone]
+		outZone := zoneNames[val.EgressZone]
+		if inZone == "" {
+			inZone = fmt.Sprintf("%d", val.IngressZone)
+		}
+		if outZone == "" {
+			outZone = fmt.Sprintf("%d", val.EgressZone)
+		}
+
+		if f.brief {
+			natFlag := " "
+			if val.Flags&dataplane.SessFlagSNAT != 0 {
+				natFlag = "S"
+			}
+			if val.Flags&dataplane.SessFlagDNAT != 0 {
+				natFlag = "D"
+			}
+			if val.Flags&(dataplane.SessFlagSNAT|dataplane.SessFlagDNAT) == (dataplane.SessFlagSNAT | dataplane.SessFlagDNAT) {
+				natFlag = "B"
+			}
+			var age uint64
+			if now > val.Created {
+				age = now - val.Created
+			}
+			fmt.Printf("%-5d %-22s %-22s %-5s %-20s %-3s %-5s %5d %d/%d\n",
+				count,
+				fmt.Sprintf("%s:%d", srcIP, srcPort),
+				fmt.Sprintf("%s:%d", dstIP, dstPort),
+				protoName, inZone+"->"+outZone, natFlag,
+				stateName[:min(5, len(stateName))], age,
+				val.FwdPackets, val.RevPackets)
+			return true
+		}
+
 		var age, idle uint64
 		if now > val.Created {
 			age = now - val.Created
@@ -2337,14 +2393,6 @@ func (c *CLI) showFlowSession(args []string) error {
 			count, val.PolicyID, stateName, val.Timeout, age, idle)
 		fmt.Printf("  In: %s:%d --> %s:%d;%s,",
 			srcIP, srcPort, dstIP, dstPort, protoName)
-		inZone := zoneNames[val.IngressZone]
-		outZone := zoneNames[val.EgressZone]
-		if inZone == "" {
-			inZone = fmt.Sprintf("%d", val.IngressZone)
-		}
-		if outZone == "" {
-			outZone = fmt.Sprintf("%d", val.EgressZone)
-		}
 		fmt.Printf(" Zone: %s -> %s\n", inZone, outZone)
 
 		if val.Flags&dataplane.SessFlagSNAT != 0 {
@@ -2406,6 +2454,40 @@ func (c *CLI) showFlowSession(args []string) error {
 		protoName := protoNameFromNum(key.Protocol)
 		stateName := sessionStateName(val.State)
 
+		inZone := zoneNames[val.IngressZone]
+		outZone := zoneNames[val.EgressZone]
+		if inZone == "" {
+			inZone = fmt.Sprintf("%d", val.IngressZone)
+		}
+		if outZone == "" {
+			outZone = fmt.Sprintf("%d", val.EgressZone)
+		}
+
+		if f.brief {
+			natFlag := " "
+			if val.Flags&dataplane.SessFlagSNAT != 0 {
+				natFlag = "S"
+			}
+			if val.Flags&dataplane.SessFlagDNAT != 0 {
+				natFlag = "D"
+			}
+			if val.Flags&(dataplane.SessFlagSNAT|dataplane.SessFlagDNAT) == (dataplane.SessFlagSNAT | dataplane.SessFlagDNAT) {
+				natFlag = "B"
+			}
+			var age uint64
+			if now > val.Created {
+				age = now - val.Created
+			}
+			fmt.Printf("%-5d %-22s %-22s %-5s %-20s %-3s %-5s %5d %d/%d\n",
+				count,
+				fmt.Sprintf("[%s]:%d", srcIP, srcPort),
+				fmt.Sprintf("[%s]:%d", dstIP, dstPort),
+				protoName, inZone+"->"+outZone, natFlag,
+				stateName[:min(5, len(stateName))], age,
+				val.FwdPackets, val.RevPackets)
+			return true
+		}
+
 		var age, idle uint64
 		if now > val.Created {
 			age = now - val.Created
@@ -2417,14 +2499,6 @@ func (c *CLI) showFlowSession(args []string) error {
 			count, val.PolicyID, stateName, val.Timeout, age, idle)
 		fmt.Printf("  In: [%s]:%d --> [%s]:%d;%s,",
 			srcIP, srcPort, dstIP, dstPort, protoName)
-		inZone := zoneNames[val.IngressZone]
-		outZone := zoneNames[val.EgressZone]
-		if inZone == "" {
-			inZone = fmt.Sprintf("%d", val.IngressZone)
-		}
-		if outZone == "" {
-			outZone = fmt.Sprintf("%d", val.EgressZone)
-		}
 		fmt.Printf(" Zone: %s -> %s\n", inZone, outZone)
 
 		if val.Flags&dataplane.SessFlagSNAT != 0 {
