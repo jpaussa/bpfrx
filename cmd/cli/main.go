@@ -544,6 +544,9 @@ func (c *ctl) handleShow(args []string) error {
 	case "policy-options":
 		return c.showText("policy-options")
 
+	case "route-map":
+		return c.showText("route-map")
+
 	case "event-options":
 		return c.showText("event-options")
 
@@ -1512,6 +1515,14 @@ func (c *ctl) showDHCPLeases() error {
 		}
 		fmt.Printf("    Lease:     %s\n", l.LeaseTime)
 		fmt.Printf("    Obtained:  %s\n", l.Obtained)
+		if len(l.DelegatedPrefixes) > 0 {
+			fmt.Println("    Delegated prefixes:")
+			for _, dp := range l.DelegatedPrefixes {
+				fmt.Printf("      Prefix:    %s\n", dp.Prefix)
+				fmt.Printf("      Preferred: %s\n", dp.PreferredLifetime)
+				fmt.Printf("      Valid:     %s\n", dp.ValidLifetime)
+			}
+		}
 		fmt.Println()
 	}
 	return nil

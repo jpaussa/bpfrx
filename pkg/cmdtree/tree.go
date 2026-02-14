@@ -273,6 +273,7 @@ var OperationalTree = map[string]*Node{
 			"uptime":             {Desc: "Show system uptime"},
 			"users":              {Desc: "Show configured login users"},
 		}},
+		"route-map":          {Desc: "Show route-map information"},
 		"routing-options":    {Desc: "Show routing options"},
 		"routing-instances": {Desc: "Show routing instances", Children: map[string]*Node{
 			"detail": {Desc: "Show detailed routing instance information"},

@@ -1356,6 +1356,11 @@ func (m *Manager) GetBFDPeers() (string, error) {
 	return vtyshCmd("show bfd peers")
 }
 
+// GetRouteMapList returns the route-map configuration from FRR.
+func (m *Manager) GetRouteMapList() (string, error) {
+	return vtyshCmd("show route-map")
+}
+
 func vtyshCmd(command string) (string, error) {
 	cmd := exec.Command("vtysh", "-c", command)
 	var stdout, stderr bytes.Buffer

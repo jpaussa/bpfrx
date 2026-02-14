@@ -365,6 +365,14 @@ message DHCPLeaseInfo {
   repeated string dns = 5;
   string lease_time = 6;
   string obtained = 7;
+  repeated DHCPDelegatedPrefix delegated_prefixes = 8;
+}
+message DHCPDelegatedPrefix {
+  string interface = 1;
+  string prefix = 2;
+  string preferred_lifetime = 3;
+  string valid_lifetime = 4;
+  string obtained = 5;
 }
 
 message GetDHCPClientIdentifiersRequest {}

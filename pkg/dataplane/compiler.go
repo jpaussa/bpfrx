@@ -550,6 +550,10 @@ func compileZones(dp DataPlane,cfg *config.Config, result *CompileResult) error 
 
 				// Bring the interface UP so XDP can process traffic,
 				// unless the interface is administratively disabled.
+				// Note: For DPDK-bound ports, LinkSetDown has no effect because
+				// DPDK takes over the NIC via VFIO/UIO, bypassing the kernel
+				// driver. DPDK ports are disabled by not including them in the
+				// worker's poll set (the zone map lookup will miss, causing drop).
 				isDisabled := false
 				if ifCfg, ok := cfg.Interfaces.Interfaces[physName]; ok && ifCfg.Disable {
 					isDisabled = true

@@ -836,6 +836,16 @@ func (d *Daemon) startDHCPClients(ctx context.Context, cfg *config.Config) {
 				} else {
 					dm.SetDUIDType(dhcpIface, "duid-ll") // default
 				}
+				// Configure DHCPv6 PD and other options
+				if unit.DHCPv6Client != nil && (len(unit.DHCPv6Client.ClientIATypes) > 0 || len(unit.DHCPv6Client.ReqOptions) > 0) {
+					dm.SetDHCPv6Options(dhcpIface, &dhcp.DHCPv6Options{
+						IATypes:    unit.DHCPv6Client.ClientIATypes,
+						PDPrefLen:  unit.DHCPv6Client.PrefixDelegatingPrefixLen,
+						PDSubLen:   unit.DHCPv6Client.PrefixDelegatingSubPrefLen,
+						ReqOptions: unit.DHCPv6Client.ReqOptions,
+						RAIface:    unit.DHCPv6Client.UpdateRAInterface,
+					})
+				}
 				slog.Info("starting DHCPv6 client", "interface", dhcpIface)
 				dm.Start(ctx, dhcpIface, dhcp.AFInet6)
 			}

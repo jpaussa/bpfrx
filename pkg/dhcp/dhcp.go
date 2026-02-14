@@ -60,14 +60,34 @@ type DHCPv4Options struct {
 	ForceDiscover          bool // always start with DISCOVER (skip REQUEST for renewal)
 }
 
+// DHCPv6Options holds client behavior options for DHCPv6.
+type DHCPv6Options struct {
+	IATypes    []string // "ia-na", "ia-pd" — which IA types to request
+	PDPrefLen  int      // preferred prefix length hint for IA_PD (0 = no hint)
+	PDSubLen   int      // sub-prefix length for deriving /64s (0 = not set)
+	ReqOptions []string // additional options to request: "dns-server", "domain-name"
+	RAIface    string   // interface to update with RA prefix from delegated prefix
+}
+
+// DelegatedPrefix holds a prefix received via DHCPv6 Prefix Delegation.
+type DelegatedPrefix struct {
+	Interface         string
+	Prefix            netip.Prefix
+	PreferredLifetime time.Duration
+	ValidLifetime     time.Duration
+	Obtained          time.Time
+}
+
 // Manager manages DHCP clients for multiple interfaces.
 type Manager struct {
 	mu              sync.Mutex
 	clients         map[clientKey]*dhcpClient
 	leases          map[clientKey]*Lease
-	duids           map[string]dhcpv6.DUID // interface name -> cached DUID
-	duidTypes       map[string]string      // interface name -> "duid-ll" or "duid-llt"
-	v4opts          map[string]*DHCPv4Options // interface name -> DHCPv4 options
+	delegatedPDs    map[string][]DelegatedPrefix // interface name -> delegated prefixes
+	duids           map[string]dhcpv6.DUID       // interface name -> cached DUID
+	duidTypes       map[string]string            // interface name -> "duid-ll" or "duid-llt"
+	v4opts          map[string]*DHCPv4Options    // interface name -> DHCPv4 options
+	v6opts          map[string]*DHCPv6Options    // interface name -> DHCPv6 options
 	onAddressChange func()
 	nlHandle        *netlink.Handle
 	recompileTimer  *time.Timer
@@ -85,9 +105,11 @@ func New(stateDir string, onAddressChange func()) (*Manager, error) {
 	return &Manager{
 		clients:         make(map[clientKey]*dhcpClient),
 		leases:          make(map[clientKey]*Lease),
+		delegatedPDs:    make(map[string][]DelegatedPrefix),
 		duids:           make(map[string]dhcpv6.DUID),
 		duidTypes:       make(map[string]string),
 		v4opts:          make(map[string]*DHCPv4Options),
+		v6opts:          make(map[string]*DHCPv6Options),
 		onAddressChange: onAddressChange,
 		nlHandle:        nlh,
 		stateDir:        stateDir,
@@ -108,6 +130,26 @@ func (m *Manager) SetDHCPv4Options(ifaceName string, opts *DHCPv4Options) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.v4opts[ifaceName] = opts
+}
+
+// SetDHCPv6Options configures DHCPv6 client behavior for an interface.
+// Must be called before Start().
+func (m *Manager) SetDHCPv6Options(ifaceName string, opts *DHCPv6Options) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.v6opts[ifaceName] = opts
+}
+
+// DelegatedPrefixes returns a snapshot of all delegated prefixes from DHCPv6 PD.
+func (m *Manager) DelegatedPrefixes() []DelegatedPrefix {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var result []DelegatedPrefix
+	for _, pds := range m.delegatedPDs {
+		result = append(result, pds...)
+	}
+	return result
 }
 
 // Start begins a DHCP client for the given interface and address family.
@@ -561,7 +603,7 @@ func (m *Manager) runDHCPv6(ctx context.Context, ifaceName string) {
 
 		slog.Info("DHCPv6: starting solicit", "interface", ifaceName)
 
-		lease, err := m.doDHCPv6(ctx, ifaceName)
+		result, err := m.doDHCPv6(ctx, ifaceName)
 		if err != nil {
 			if ctx.Err() != nil {
 				return
@@ -578,15 +620,21 @@ func (m *Manager) runDHCPv6(ctx context.Context, ifaceName string) {
 		}
 
 		backoff = time.Second
+		lease := result.lease
 
-		if err := m.applyAddress(ifaceName, lease); err != nil {
-			slog.Warn("DHCPv6: failed to apply address",
-				"interface", ifaceName, "err", err)
-			continue
+		if lease.Address.IsValid() {
+			if err := m.applyAddress(ifaceName, lease); err != nil {
+				slog.Warn("DHCPv6: failed to apply address",
+					"interface", ifaceName, "err", err)
+				continue
+			}
 		}
 
 		m.mu.Lock()
 		m.leases[key] = lease
+		if len(result.prefixes) > 0 {
+			m.delegatedPDs[ifaceName] = result.prefixes
+		}
 		m.mu.Unlock()
 
 		m.scheduleRecompile()
@@ -594,6 +642,7 @@ func (m *Manager) runDHCPv6(ctx context.Context, ifaceName string) {
 		slog.Info("DHCPv6: lease obtained",
 			"interface", ifaceName,
 			"address", lease.Address,
+			"delegated_prefixes", len(result.prefixes),
 			"lease_time", lease.LeaseTime)
 
 		// Wait for T1
@@ -606,17 +655,26 @@ func (m *Manager) runDHCPv6(ctx context.Context, ifaceName string) {
 		case <-time.After(t1):
 			slog.Info("DHCPv6: T1 expired, renewing", "interface", ifaceName)
 		case <-ctx.Done():
-			m.removeAddress(ifaceName, lease)
+			if lease.Address.IsValid() {
+				m.removeAddress(ifaceName, lease)
+			}
 			m.mu.Lock()
 			delete(m.leases, key)
+			delete(m.delegatedPDs, ifaceName)
 			m.mu.Unlock()
 			return
 		}
 	}
 }
 
+// dhcpv6Result holds results from a DHCPv6 exchange including both IA_NA and IA_PD.
+type dhcpv6Result struct {
+	lease      *Lease
+	prefixes   []DelegatedPrefix
+}
+
 // doDHCPv6 performs a single DHCPv6 solicit/request exchange.
-func (m *Manager) doDHCPv6(ctx context.Context, ifaceName string) (*Lease, error) {
+func (m *Manager) doDHCPv6(ctx context.Context, ifaceName string) (*dhcpv6Result, error) {
 	client, err := nclient6.New(ifaceName)
 	if err != nil {
 		return nil, fmt.Errorf("create DHCPv6 client: %w", err)
@@ -626,44 +684,87 @@ func (m *Manager) doDHCPv6(ctx context.Context, ifaceName string) (*Lease, error
 	exCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
+	m.mu.Lock()
+	v6opts := m.v6opts[ifaceName]
+	m.mu.Unlock()
+
 	// Build modifiers — use persistent DUID if configured
-	var mods []dhcpv6.Modifier
-	if duid, err := m.getDUID(ifaceName); err == nil {
-		mods = append(mods, dhcpv6.WithClientID(duid))
-	}
+	mods := m.buildDHCPv6Modifiers(ifaceName, v6opts)
 
 	adv, err := client.RapidSolicit(exCtx, mods...)
 	if err != nil {
 		return nil, fmt.Errorf("DHCPv6 solicit: %w", err)
 	}
 
+	result := &dhcpv6Result{}
+	now := time.Now()
+
+	// Determine which IA types to look for
+	wantNA := true
+	wantPD := false
+	if v6opts != nil && len(v6opts.IATypes) > 0 {
+		wantNA = false
+		for _, t := range v6opts.IATypes {
+			switch t {
+			case "ia-na":
+				wantNA = true
+			case "ia-pd":
+				wantPD = true
+			}
+		}
+	}
+
 	// Extract IA_NA addresses
 	var addr netip.Addr
 	var validLT time.Duration
 
-	for _, opt := range adv.Options.Options {
-		if ianaOpt, ok := opt.(*dhcpv6.OptIANA); ok {
-			for _, subOpt := range ianaOpt.Options.Options {
-				if iaaddr, ok := subOpt.(*dhcpv6.OptIAAddress); ok {
-					if a, ok2 := netip.AddrFromSlice(iaaddr.IPv6Addr); ok2 {
-						addr = a
-						validLT = iaaddr.ValidLifetime
+	if wantNA {
+		for _, opt := range adv.Options.Options {
+			if ianaOpt, ok := opt.(*dhcpv6.OptIANA); ok {
+				for _, subOpt := range ianaOpt.Options.Options {
+					if iaaddr, ok := subOpt.(*dhcpv6.OptIAAddress); ok {
+						if a, ok2 := netip.AddrFromSlice(iaaddr.IPv6Addr); ok2 {
+							addr = a
+							validLT = iaaddr.ValidLifetime
+						}
 					}
 				}
 			}
 		}
 	}
 
-	if !addr.IsValid() {
+	// Extract IA_PD delegated prefixes
+	if wantPD {
+		result.prefixes = extractDelegatedPrefixes(adv, ifaceName, now)
+		for _, dp := range result.prefixes {
+			slog.Info("DHCPv6: received delegated prefix",
+				"interface", ifaceName,
+				"prefix", dp.Prefix,
+				"preferred", dp.PreferredLifetime,
+				"valid", dp.ValidLifetime)
+		}
+	}
+
+	// If we wanted IA_NA but didn't get an address, check if PD-only is OK
+	if wantNA && !addr.IsValid() && !wantPD {
 		return nil, fmt.Errorf("no IA_NA address in DHCPv6 reply")
+	}
+	if wantNA && !addr.IsValid() && wantPD && len(result.prefixes) == 0 {
+		return nil, fmt.Errorf("no IA_NA address or IA_PD prefix in DHCPv6 reply")
 	}
 
 	lease := &Lease{
 		Interface: ifaceName,
 		Family:    AFInet6,
-		Address:   netip.PrefixFrom(addr, 128),
-		Obtained:  time.Now(),
-		LeaseTime: validLT,
+		Obtained:  now,
+	}
+
+	if addr.IsValid() {
+		lease.Address = netip.PrefixFrom(addr, 128)
+		lease.LeaseTime = validLT
+	} else if len(result.prefixes) > 0 {
+		// PD-only mode: use the first prefix's lifetime for renewal
+		lease.LeaseTime = result.prefixes[0].ValidLifetime
 	}
 
 	if lease.LeaseTime == 0 {
@@ -685,7 +786,88 @@ func (m *Manager) doDHCPv6(ctx context.Context, ifaceName string) (*Lease, error
 		lease.Gateway = gw
 	}
 
-	return lease, nil
+	result.lease = lease
+	return result, nil
+}
+
+// buildDHCPv6Modifiers constructs DHCPv6 message modifiers from interface options.
+func (m *Manager) buildDHCPv6Modifiers(ifaceName string, opts *DHCPv6Options) []dhcpv6.Modifier {
+	var mods []dhcpv6.Modifier
+
+	// Use persistent DUID if configured
+	if duid, err := m.getDUID(ifaceName); err == nil {
+		mods = append(mods, dhcpv6.WithClientID(duid))
+	}
+
+	if opts == nil {
+		return mods
+	}
+
+	// Add IA_PD if requested
+	for _, iaType := range opts.IATypes {
+		if iaType == "ia-pd" {
+			var hintPrefix *dhcpv6.OptIAPrefix
+			if opts.PDPrefLen > 0 {
+				hintPrefix = &dhcpv6.OptIAPrefix{
+					Prefix: &net.IPNet{
+						IP:   net.IPv6zero,
+						Mask: net.CIDRMask(opts.PDPrefLen, 128),
+					},
+				}
+			}
+			iaid := [4]byte{0, 0, 0, 1} // default IAID for PD
+			if hintPrefix != nil {
+				mods = append(mods, dhcpv6.WithIAPD(iaid, hintPrefix))
+			} else {
+				mods = append(mods, dhcpv6.WithIAPD(iaid))
+			}
+		}
+	}
+
+	// Add requested options (ORO)
+	var oroCodes []dhcpv6.OptionCode
+	for _, opt := range opts.ReqOptions {
+		switch opt {
+		case "dns-server":
+			oroCodes = append(oroCodes, dhcpv6.OptionDNSRecursiveNameServer)
+		case "domain-name":
+			oroCodes = append(oroCodes, dhcpv6.OptionDomainSearchList)
+		}
+	}
+	if len(oroCodes) > 0 {
+		mods = append(mods, dhcpv6.WithRequestedOptions(oroCodes...))
+	}
+
+	return mods
+}
+
+// extractDelegatedPrefixes parses IA_PD options from a DHCPv6 reply.
+func extractDelegatedPrefixes(msg *dhcpv6.Message, ifaceName string, now time.Time) []DelegatedPrefix {
+	var result []DelegatedPrefix
+	for _, opt := range msg.Options.Options {
+		iapdOpt, ok := opt.(*dhcpv6.OptIAPD)
+		if !ok {
+			continue
+		}
+		for _, prefix := range iapdOpt.Options.Prefixes() {
+			if prefix.Prefix == nil {
+				continue
+			}
+			ones, _ := prefix.Prefix.Mask.Size()
+			ip, ok := netip.AddrFromSlice(prefix.Prefix.IP)
+			if !ok {
+				continue
+			}
+			result = append(result, DelegatedPrefix{
+				Interface:         ifaceName,
+				Prefix:            netip.PrefixFrom(ip, ones),
+				PreferredLifetime: prefix.PreferredLifetime,
+				ValidLifetime:     prefix.ValidLifetime,
+				Obtained:          now,
+			})
+		}
+	}
+	return result
 }
 
 // discoverIPv6Router finds the link-local address of an IPv6 router on the

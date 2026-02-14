@@ -1414,6 +1414,36 @@ func (s *Server) GetDHCPLeases(_ context.Context, _ *pb.GetDHCPLeasesRequest) (*
 		}
 		resp.Leases = append(resp.Leases, info)
 	}
+
+	// Add delegated prefixes
+	for _, dp := range s.dhcp.DelegatedPrefixes() {
+		pdInfo := &pb.DHCPDelegatedPrefix{
+			Interface:         dp.Interface,
+			Prefix:            dp.Prefix.String(),
+			PreferredLifetime: dp.PreferredLifetime.String(),
+			ValidLifetime:     dp.ValidLifetime.String(),
+			Obtained:          dp.Obtained.Format(time.RFC3339),
+		}
+		// Attach PD to the matching lease, or add to first inet6 lease
+		attached := false
+		for _, lease := range resp.Leases {
+			if lease.Interface == dp.Interface && lease.Family == "inet6" {
+				lease.DelegatedPrefixes = append(lease.DelegatedPrefixes, pdInfo)
+				attached = true
+				break
+			}
+		}
+		if !attached && len(resp.Leases) > 0 {
+			// Create a standalone lease entry for PD-only
+			resp.Leases = append(resp.Leases, &pb.DHCPLeaseInfo{
+				Interface:         dp.Interface,
+				Family:            "inet6",
+				Dns:               []string{},
+				DelegatedPrefixes: []*pb.DHCPDelegatedPrefix{pdInfo},
+			})
+		}
+	}
+
 	return resp, nil
 }
 
@@ -5464,6 +5494,21 @@ func (s *Server) ShowText(_ context.Context, req *pb.ShowTextRequest) (*pb.ShowT
 			}
 			if output == "" {
 				buf.WriteString("No BFD peers\n")
+			} else {
+				buf.WriteString(output)
+			}
+		}
+
+	case "route-map":
+		if s.frr == nil {
+			buf.WriteString("FRR not available\n")
+		} else {
+			output, err := s.frr.GetRouteMapList()
+			if err != nil {
+				return nil, status.Errorf(codes.Internal, "route-map: %v", err)
+			}
+			if output == "" {
+				buf.WriteString("No route-maps configured\n")
 			} else {
 				buf.WriteString(output)
 			}

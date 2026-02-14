@@ -782,6 +782,9 @@ func (c *CLI) handleShow(args []string) error {
 	case "policy-options":
 		return c.showPolicyOptions()
 
+	case "route-map":
+		return c.showRouteMap()
+
 	case "event-options":
 		return c.showEventOptions()
 
@@ -6300,6 +6303,26 @@ func (c *CLI) showDHCPLeases() error {
 		fmt.Printf("    Obtained:  %s\n", l.Obtained.Format("2006-01-02 15:04:05"))
 		fmt.Println()
 	}
+
+	// Show delegated prefixes
+	pds := c.dhcp.DelegatedPrefixes()
+	if len(pds) > 0 {
+		fmt.Println("Delegated prefixes (DHCPv6 PD):")
+		for _, dp := range pds {
+			elapsed := time.Since(dp.Obtained).Round(time.Second)
+			remaining := dp.ValidLifetime - elapsed
+			if remaining < 0 {
+				remaining = 0
+			}
+			fmt.Printf("  Interface: %s\n", dp.Interface)
+			fmt.Printf("    Prefix:    %s\n", dp.Prefix)
+			fmt.Printf("    Preferred: %s\n", dp.PreferredLifetime.Round(time.Second))
+			fmt.Printf("    Valid:     %s (remaining: %s)\n", dp.ValidLifetime.Round(time.Second), remaining.Round(time.Second))
+			fmt.Printf("    Obtained:  %s\n", dp.Obtained.Format("2006-01-02 15:04:05"))
+			fmt.Println()
+		}
+	}
+
 	return nil
 }
 
@@ -8295,6 +8318,24 @@ func (c *CLI) showChassisHardware() error {
 			fmt.Printf("  %-16s %-8s %-10s %s\n", attrs.Name, state, driver, attrs.HardwareAddr)
 		}
 	}
+	return nil
+}
+
+// showRouteMap displays FRR route-map information via vtysh.
+func (c *CLI) showRouteMap() error {
+	if c.frr == nil {
+		fmt.Println("FRR manager not available")
+		return nil
+	}
+	output, err := c.frr.GetRouteMapList()
+	if err != nil {
+		return fmt.Errorf("get route-map: %w", err)
+	}
+	if output == "" {
+		fmt.Println("No route-maps configured")
+		return nil
+	}
+	fmt.Print(output)
 	return nil
 }
 
