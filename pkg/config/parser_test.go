@@ -3345,6 +3345,8 @@ func TestScreenCompilation(t *testing.T) {
 		"set security screen ids-option wan-screen ip source-route-option",
 		"set security screen ids-option wan-screen ip tear-drop",
 		"set security screen ids-option wan-screen udp flood threshold 1000",
+		"set security screen ids-option wan-screen tcp port-scan threshold 5000",
+		"set security screen ids-option wan-screen ip ip-sweep threshold 3000",
 	}
 
 	for _, cmd := range setCommands {
@@ -3406,6 +3408,16 @@ func TestScreenCompilation(t *testing.T) {
 	// UDP checks
 	if screen.UDP.FloodThreshold != 1000 {
 		t.Errorf("udp flood threshold: got %d, want 1000", screen.UDP.FloodThreshold)
+	}
+
+	// Port scan check
+	if screen.TCP.PortScanThreshold != 5000 {
+		t.Errorf("tcp port-scan threshold: got %d, want 5000", screen.TCP.PortScanThreshold)
+	}
+
+	// IP sweep check
+	if screen.IP.IPSweepThreshold != 3000 {
+		t.Errorf("ip ip-sweep threshold: got %d, want 3000", screen.IP.IPSweepThreshold)
 	}
 }
 
@@ -7848,6 +7860,198 @@ func TestDPDKConfig(t *testing.T) {
 	}
 	if dp.Ports[1].Interface != "trust0" {
 		t.Errorf("Port[1].Interface = %q, want trust0", dp.Ports[1].Interface)
+	}
+}
+
+func TestOSPFAuthSetSyntax(t *testing.T) {
+	cmds := []string{
+		"set protocols ospf area 0.0.0.0 interface trust0 authentication md5 1 key secret123",
+		"set protocols ospf area 0.0.0.0 interface dmz0 authentication simple-password plainpw",
+	}
+	tree := &ConfigTree{}
+	for _, cmd := range cmds {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%v): %v", path, err)
+		}
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+	ospf := cfg.Protocols.OSPF
+	if ospf == nil {
+		t.Fatal("OSPF config is nil")
+	}
+	if len(ospf.Areas) != 1 {
+		t.Fatalf("area count: got %d, want 1", len(ospf.Areas))
+	}
+	ifaces := ospf.Areas[0].Interfaces
+	if len(ifaces) != 2 {
+		t.Fatalf("interface count: got %d, want 2", len(ifaces))
+	}
+	if ifaces[0].AuthType != "md5" {
+		t.Errorf("trust0 AuthType: got %q, want md5", ifaces[0].AuthType)
+	}
+	if ifaces[0].AuthKeyID != 1 {
+		t.Errorf("trust0 AuthKeyID: got %d, want 1", ifaces[0].AuthKeyID)
+	}
+	if ifaces[0].AuthKey != "secret123" {
+		t.Errorf("trust0 AuthKey: got %q, want secret123", ifaces[0].AuthKey)
+	}
+	if ifaces[1].AuthType != "simple" {
+		t.Errorf("dmz0 AuthType: got %q, want simple", ifaces[1].AuthType)
+	}
+	if ifaces[1].AuthKey != "plainpw" {
+		t.Errorf("dmz0 AuthKey: got %q, want plainpw", ifaces[1].AuthKey)
+	}
+}
+
+func TestBGPAuthSetSyntax(t *testing.T) {
+	cmds := []string{
+		"set protocols bgp local-as 65001",
+		"set protocols bgp group external peer-as 65002",
+		"set protocols bgp group external authentication-key bgpSecret",
+		"set protocols bgp group external neighbor 10.0.2.1",
+	}
+	tree := &ConfigTree{}
+	for _, cmd := range cmds {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%v): %v", path, err)
+		}
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+	bgp := cfg.Protocols.BGP
+	if bgp == nil {
+		t.Fatal("BGP config is nil")
+	}
+	if len(bgp.Neighbors) != 1 {
+		t.Fatalf("neighbors: got %d, want 1", len(bgp.Neighbors))
+	}
+	if bgp.Neighbors[0].AuthPassword != "bgpSecret" {
+		t.Errorf("AuthPassword: got %q, want bgpSecret", bgp.Neighbors[0].AuthPassword)
+	}
+}
+
+func TestBGPNeighborAuthOverride(t *testing.T) {
+	cmds := []string{
+		"set protocols bgp local-as 65001",
+		"set protocols bgp group external peer-as 65002",
+		"set protocols bgp group external authentication-key groupKey",
+		"set protocols bgp group external neighbor 10.0.2.1 authentication-key neighborKey",
+		"set protocols bgp group external neighbor 10.0.3.1",
+	}
+	tree := &ConfigTree{}
+	for _, cmd := range cmds {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%v): %v", path, err)
+		}
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+	bgp := cfg.Protocols.BGP
+	if bgp == nil {
+		t.Fatal("BGP config is nil")
+	}
+	if len(bgp.Neighbors) != 2 {
+		t.Fatalf("neighbors: got %d, want 2", len(bgp.Neighbors))
+	}
+	// Per-neighbor override
+	if bgp.Neighbors[0].AuthPassword != "neighborKey" {
+		t.Errorf("neighbor[0] AuthPassword: got %q, want neighborKey", bgp.Neighbors[0].AuthPassword)
+	}
+	// Inherited from group
+	if bgp.Neighbors[1].AuthPassword != "groupKey" {
+		t.Errorf("neighbor[1] AuthPassword: got %q, want groupKey", bgp.Neighbors[1].AuthPassword)
+	}
+}
+
+func TestOSPFBFDSetSyntax(t *testing.T) {
+	cmds := []string{
+		"set protocols ospf area 0.0.0.0 interface trust0 bfd-liveness-detection minimum-interval 100",
+	}
+	tree := &ConfigTree{}
+	for _, cmd := range cmds {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%v): %v", path, err)
+		}
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+	ospf := cfg.Protocols.OSPF
+	if ospf == nil {
+		t.Fatal("OSPF config is nil")
+	}
+	iface := ospf.Areas[0].Interfaces[0]
+	if !iface.BFD {
+		t.Error("OSPF interface BFD should be true")
+	}
+}
+
+func TestBGPBFDSetSyntax(t *testing.T) {
+	cmds := []string{
+		"set protocols bgp local-as 65001",
+		"set protocols bgp group external peer-as 65002",
+		"set protocols bgp group external bfd-liveness-detection minimum-interval 200",
+		"set protocols bgp group external neighbor 10.0.2.1",
+		"set protocols bgp group external neighbor 10.0.3.1 bfd-liveness-detection minimum-interval 100",
+	}
+	tree := &ConfigTree{}
+	for _, cmd := range cmds {
+		path, err := ParseSetCommand(cmd)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", cmd, err)
+		}
+		if err := tree.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%v): %v", path, err)
+		}
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatalf("CompileConfig: %v", err)
+	}
+	bgp := cfg.Protocols.BGP
+	if bgp == nil {
+		t.Fatal("BGP config is nil")
+	}
+	if len(bgp.Neighbors) != 2 {
+		t.Fatalf("neighbors: got %d, want 2", len(bgp.Neighbors))
+	}
+	// Inherited from group
+	if !bgp.Neighbors[0].BFD {
+		t.Error("neighbor[0] should have BFD enabled (inherited)")
+	}
+	if bgp.Neighbors[0].BFDInterval != 200 {
+		t.Errorf("neighbor[0] BFDInterval: got %d, want 200", bgp.Neighbors[0].BFDInterval)
+	}
+	// Per-neighbor override
+	if !bgp.Neighbors[1].BFD {
+		t.Error("neighbor[1] should have BFD enabled")
+	}
+	if bgp.Neighbors[1].BFDInterval != 100 {
+		t.Errorf("neighbor[1] BFDInterval: got %d, want 100", bgp.Neighbors[1].BFDInterval)
 	}
 }
 

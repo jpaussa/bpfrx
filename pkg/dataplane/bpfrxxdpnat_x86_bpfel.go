@@ -304,6 +304,19 @@ type bpfrxXdpNatPolicySet struct {
 	DefaultAction uint16
 }
 
+type bpfrxXdpNatScanTrackKey struct {
+	_      structs.HostLayout
+	SrcIp  uint32
+	ZoneId uint16
+	Pad    uint16
+}
+
+type bpfrxXdpNatScanTrackValue struct {
+	_           structs.HostLayout
+	Count       uint32
+	WindowStart uint32
+}
+
 type bpfrxXdpNatScreenConfig struct {
 	_                 structs.HostLayout
 	Flags             uint32
@@ -313,6 +326,8 @@ type bpfrxXdpNatScreenConfig struct {
 	SynFloodSrcThresh uint32
 	SynFloodDstThresh uint32
 	SynFloodTimeout   uint32
+	PortScanThresh    uint32
+	IpSweepThresh     uint32
 }
 
 type bpfrxXdpNatSessionKey struct {
@@ -538,6 +553,7 @@ type bpfrxXdpNatMapSpecs struct {
 	IfaceFilterMap    *ebpf.MapSpec `ebpf:"iface_filter_map"`
 	IfaceZoneMap      *ebpf.MapSpec `ebpf:"iface_zone_map"`
 	InterfaceCounters *ebpf.MapSpec `ebpf:"interface_counters"`
+	IpSweepTrack      *ebpf.MapSpec `ebpf:"ip_sweep_track"`
 	Nat64Configs      *ebpf.MapSpec `ebpf:"nat64_configs"`
 	Nat64Count        *ebpf.MapSpec `ebpf:"nat64_count"`
 	Nat64PrefixMap    *ebpf.MapSpec `ebpf:"nat64_prefix_map"`
@@ -545,6 +561,7 @@ type bpfrxXdpNatMapSpecs struct {
 	PktMetaScratch    *ebpf.MapSpec `ebpf:"pkt_meta_scratch"`
 	PolicyCounters    *ebpf.MapSpec `ebpf:"policy_counters"`
 	PolicyRules       *ebpf.MapSpec `ebpf:"policy_rules"`
+	PortScanTrack     *ebpf.MapSpec `ebpf:"port_scan_track"`
 	RedirectCapable   *ebpf.MapSpec `ebpf:"redirect_capable"`
 	ScreenConfigs     *ebpf.MapSpec `ebpf:"screen_configs"`
 	SessionV4Scratch  *ebpf.MapSpec `ebpf:"session_v4_scratch"`
@@ -611,6 +628,7 @@ type bpfrxXdpNatMaps struct {
 	IfaceFilterMap    *ebpf.Map `ebpf:"iface_filter_map"`
 	IfaceZoneMap      *ebpf.Map `ebpf:"iface_zone_map"`
 	InterfaceCounters *ebpf.Map `ebpf:"interface_counters"`
+	IpSweepTrack      *ebpf.Map `ebpf:"ip_sweep_track"`
 	Nat64Configs      *ebpf.Map `ebpf:"nat64_configs"`
 	Nat64Count        *ebpf.Map `ebpf:"nat64_count"`
 	Nat64PrefixMap    *ebpf.Map `ebpf:"nat64_prefix_map"`
@@ -618,6 +636,7 @@ type bpfrxXdpNatMaps struct {
 	PktMetaScratch    *ebpf.Map `ebpf:"pkt_meta_scratch"`
 	PolicyCounters    *ebpf.Map `ebpf:"policy_counters"`
 	PolicyRules       *ebpf.Map `ebpf:"policy_rules"`
+	PortScanTrack     *ebpf.Map `ebpf:"port_scan_track"`
 	RedirectCapable   *ebpf.Map `ebpf:"redirect_capable"`
 	ScreenConfigs     *ebpf.Map `ebpf:"screen_configs"`
 	SessionV4Scratch  *ebpf.Map `ebpf:"session_v4_scratch"`
@@ -660,6 +679,7 @@ func (m *bpfrxXdpNatMaps) Close() error {
 		m.IfaceFilterMap,
 		m.IfaceZoneMap,
 		m.InterfaceCounters,
+		m.IpSweepTrack,
 		m.Nat64Configs,
 		m.Nat64Count,
 		m.Nat64PrefixMap,
@@ -667,6 +687,7 @@ func (m *bpfrxXdpNatMaps) Close() error {
 		m.PktMetaScratch,
 		m.PolicyCounters,
 		m.PolicyRules,
+		m.PortScanTrack,
 		m.RedirectCapable,
 		m.ScreenConfigs,
 		m.SessionV4Scratch,

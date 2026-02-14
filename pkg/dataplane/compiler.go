@@ -1943,6 +1943,18 @@ func compileScreenProfiles(dp DataPlane,cfg *config.Config, result *CompileResul
 			sc.UDPFloodThresh = uint32(profile.UDP.FloodThreshold)
 		}
 
+		// Port scan detection
+		if profile.TCP.PortScanThreshold > 0 {
+			flags |= ScreenPortScan
+			sc.PortScanThresh = uint32(profile.TCP.PortScanThreshold)
+		}
+
+		// IP sweep detection
+		if profile.IP.IPSweepThreshold > 0 {
+			flags |= ScreenIPSweep
+			sc.IPSweepThresh = uint32(profile.IP.IPSweepThreshold)
+		}
+
 		sc.Flags = flags
 
 		if err := dp.SetScreenConfig(uint32(sid), sc); err != nil {

@@ -475,6 +475,8 @@ struct screen_config {
 	__u32 syn_flood_src_thresh;  /* per-source-IP threshold (future) */
 	__u32 syn_flood_dst_thresh;  /* per-dest-IP threshold (future) */
 	__u32 syn_flood_timeout;     /* flood window duration in seconds (0=1s) */
+	__u32 port_scan_thresh;      /* TCP SYN attempts per source IP in window */
+	__u32 ip_sweep_thresh;       /* unique dest IPs per source IP in window */
 };
 
 struct flood_state {
@@ -482,6 +484,19 @@ struct flood_state {
 	__u64 icmp_count;
 	__u64 udp_count;
 	__u64 window_start;       /* ktime_ns / 1e9 (seconds) */
+};
+
+/* Per-source-IP tracking for port scan / IP sweep detection.
+ * Key: source IPv4 address.  Stored in LRU_HASH for auto-eviction. */
+struct scan_track_key {
+	__u32 src_ip;
+	__u16 zone_id;
+	__u16 pad;
+};
+
+struct scan_track_value {
+	__u32 count;           /* unique attempts in current window */
+	__u32 window_start;    /* ktime_ns / 1e9 (seconds) */
 };
 
 /* ============================================================

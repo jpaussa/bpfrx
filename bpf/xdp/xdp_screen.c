@@ -218,6 +218,86 @@ int xdp_screen_prog(struct xdp_md *ctx)
 	if (flood_flag)
 		return screen_drop(meta, flood_flag);
 
+	/* ============================================================
+	 * Per-source-IP scan/sweep detection
+	 * ============================================================ */
+
+	/* Port scan: count TCP SYN attempts per source IP */
+	if ((sc->flags & SCREEN_PORT_SCAN) && sc->port_scan_thresh > 0 &&
+	    meta->protocol == PROTO_TCP &&
+	    (meta->tcp_flags & 0x02) && !(meta->tcp_flags & 0x10)) {
+		__u32 src = (meta->addr_family == AF_INET) ?
+			meta->src_ip.v4 :
+			(meta->src_ip.v6[0] ^ meta->src_ip.v6[4] ^
+			 meta->src_ip.v6[8] ^ meta->src_ip.v6[12]);
+
+		struct scan_track_key sk = {
+			.src_ip = src,
+			.zone_id = meta->ingress_zone,
+		};
+		struct scan_track_value *sv =
+			bpf_map_lookup_elem(&port_scan_track, &sk);
+		__u64 now_sec = bpf_ktime_get_ns() / 1000000000ULL;
+
+		if (sv) {
+			__u32 window_dur = sc->syn_flood_timeout;
+			if (window_dur == 0)
+				window_dur = 1;
+			if (now_sec - sv->window_start >= window_dur) {
+				sv->count = 1;
+				sv->window_start = (__u32)now_sec;
+			} else {
+				sv->count++;
+				if (sv->count > sc->port_scan_thresh)
+					return screen_drop(meta, SCREEN_PORT_SCAN);
+			}
+		} else {
+			struct scan_track_value new_sv = {
+				.count = 1,
+				.window_start = (__u32)now_sec,
+			};
+			bpf_map_update_elem(&port_scan_track, &sk,
+					    &new_sv, BPF_ANY);
+		}
+	}
+
+	/* IP sweep: count unique destination IPs per source IP */
+	if ((sc->flags & SCREEN_IP_SWEEP) && sc->ip_sweep_thresh > 0) {
+		__u32 src = (meta->addr_family == AF_INET) ?
+			meta->src_ip.v4 :
+			(meta->src_ip.v6[0] ^ meta->src_ip.v6[4] ^
+			 meta->src_ip.v6[8] ^ meta->src_ip.v6[12]);
+
+		struct scan_track_key sk = {
+			.src_ip = src,
+			.zone_id = meta->ingress_zone,
+		};
+		struct scan_track_value *sv =
+			bpf_map_lookup_elem(&ip_sweep_track, &sk);
+		__u64 now_sec = bpf_ktime_get_ns() / 1000000000ULL;
+
+		if (sv) {
+			__u32 window_dur = sc->syn_flood_timeout;
+			if (window_dur == 0)
+				window_dur = 1;
+			if (now_sec - sv->window_start >= window_dur) {
+				sv->count = 1;
+				sv->window_start = (__u32)now_sec;
+			} else {
+				sv->count++;
+				if (sv->count > sc->ip_sweep_thresh)
+					return screen_drop(meta, SCREEN_IP_SWEEP);
+			}
+		} else {
+			struct scan_track_value new_sv = {
+				.count = 1,
+				.window_start = (__u32)now_sec,
+			};
+			bpf_map_update_elem(&ip_sweep_track, &sk,
+					    &new_sv, BPF_ANY);
+		}
+	}
+
 	/* All checks passed -- proceed to zone classification */
 	bpf_tail_call(ctx, &xdp_progs, XDP_PROG_ZONE);
 

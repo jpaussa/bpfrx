@@ -469,6 +469,8 @@ type ScreenConfig struct {
 	SynFloodSrcThresh uint32
 	SynFloodDstThresh uint32
 	SynFloodTimeout   uint32
+	PortScanThresh    uint32
+	IPSweepThresh     uint32
 }
 
 // FloodState mirrors the C struct flood_state.

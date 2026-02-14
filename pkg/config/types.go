@@ -736,19 +736,21 @@ type ICMPScreen struct {
 
 // IPScreen configures IP screening.
 type IPScreen struct {
-	SourceRouteOption bool
-	TearDrop          bool
+	SourceRouteOption  bool
+	TearDrop           bool
+	IPSweepThreshold   int // unique destination IPs per source (0 = disabled)
 }
 
 // TCPScreen configures TCP screening.
 type TCPScreen struct {
-	SynFlood *SynFloodConfig
-	Land     bool
-	WinNuke  bool
-	SynFrag  bool
-	SynFin   bool
-	NoFlag   bool
-	FinNoAck bool
+	SynFlood           *SynFloodConfig
+	Land               bool
+	WinNuke            bool
+	SynFrag            bool
+	SynFin             bool
+	NoFlag             bool
+	FinNoAck           bool
+	PortScanThreshold  int // TCP SYN count per source IP (0 = disabled)
 }
 
 // UDPScreen configures UDP screening.
@@ -987,9 +989,13 @@ type OSPFArea struct {
 
 // OSPFInterface defines an interface participating in OSPF.
 type OSPFInterface struct {
-	Name    string
-	Passive bool // passive interface (no hello)
-	Cost    int  // OSPF cost, 0 = default
+	Name      string
+	Passive   bool   // passive interface (no hello)
+	Cost      int    // OSPF cost, 0 = default
+	AuthType  string // "md5", "simple", "" (none)
+	AuthKey   string // authentication key/password
+	AuthKeyID int    // key-id for MD5 (1-255)
+	BFD       bool   // enable BFD on this interface
 }
 
 // BGPConfig holds BGP routing configuration.
@@ -1002,14 +1008,17 @@ type BGPConfig struct {
 
 // BGPNeighbor defines a BGP peer.
 type BGPNeighbor struct {
-	Address     string   // peer IP
-	PeerAS      uint32
-	Description string
-	MultihopTTL int      // 0 = directly connected
-	Export      []string // per-group export policies (route-map out)
-	FamilyInet  bool     // activate under address-family ipv4 unicast
-	FamilyInet6 bool     // activate under address-family ipv6 unicast
-	GroupName   string   // BGP group name (for display)
+	Address      string   // peer IP
+	PeerAS       uint32
+	Description  string
+	MultihopTTL  int      // 0 = directly connected
+	Export       []string // per-group export policies (route-map out)
+	FamilyInet   bool     // activate under address-family ipv4 unicast
+	FamilyInet6  bool     // activate under address-family ipv6 unicast
+	GroupName    string   // BGP group name (for display)
+	AuthPassword string   // TCP MD5 password for BGP session
+	BFD          bool     // enable BFD for this neighbor
+	BFDInterval  int      // BFD minimum interval in ms (0 = default 300)
 }
 
 // TunnelConfig defines a GRE or other tunnel interface.

@@ -327,6 +327,8 @@ struct screen_config {
 	uint32_t syn_flood_src_thresh;
 	uint32_t syn_flood_dst_thresh;
 	uint32_t syn_flood_timeout;
+	uint32_t port_scan_thresh;
+	uint32_t ip_sweep_thresh;
 };
 
 struct flood_state {

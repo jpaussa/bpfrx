@@ -345,6 +345,22 @@ struct {
 	__type(value, struct flood_state);
 } flood_counters SEC(".maps");
 
+/* Per-source-IP tracking for port scan / IP sweep detection.
+ * LRU_HASH auto-evicts oldest entries when full. */
+struct {
+	__uint(type, BPF_MAP_TYPE_LRU_HASH);
+	__uint(max_entries, MAX_PORT_SCAN_TRACK);
+	__type(key, struct scan_track_key);
+	__type(value, struct scan_track_value);
+} port_scan_track SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_LRU_HASH);
+	__uint(max_entries, MAX_PORT_SCAN_TRACK);
+	__type(key, struct scan_track_key);
+	__type(value, struct scan_track_value);
+} ip_sweep_track SEC(".maps");
+
 /* ============================================================
  * NAT pool configuration & port allocation
  * Only included in programs that define BPFRX_NAT_POOLS

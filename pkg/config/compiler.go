@@ -638,6 +638,18 @@ func compileScreen(node *Node, sec *SecurityConfig) error {
 					profile.IP.SourceRouteOption = true
 				case "tear-drop":
 					profile.IP.TearDrop = true
+				case "ip-sweep":
+					for _, swOpt := range opt.Children {
+						if swOpt.Name() == "threshold" {
+							val := nodeVal(swOpt)
+							if val == "" && len(swOpt.Keys) >= 2 {
+								val = swOpt.Keys[1]
+							}
+							if n, err := strconv.Atoi(val); err == nil {
+								profile.IP.IPSweepThreshold = n
+							}
+						}
+					}
 				}
 			}
 		}
@@ -682,6 +694,18 @@ func compileScreen(node *Node, sec *SecurityConfig) error {
 						}
 					}
 					profile.TCP.SynFlood = sf
+				case "port-scan":
+					for _, psOpt := range opt.Children {
+						if psOpt.Name() == "threshold" {
+							val := nodeVal(psOpt)
+							if val == "" && len(psOpt.Keys) >= 2 {
+								val = psOpt.Keys[1]
+							}
+							if n, err := strconv.Atoi(val); err == nil {
+								profile.TCP.PortScanThreshold = n
+							}
+						}
+					}
 				}
 			}
 		}
@@ -2274,6 +2298,28 @@ func compileProtocols(node *Node, proto *ProtocolsConfig) error {
 								iface.Cost = n
 							}
 						}
+					case "authentication":
+						for _, authChild := range prop.Children {
+							switch authChild.Name() {
+							case "md5":
+								iface.AuthType = "md5"
+								if v := nodeVal(authChild); v != "" {
+									if n, err := strconv.Atoi(v); err == nil {
+										iface.AuthKeyID = n
+									}
+								}
+								for _, kc := range authChild.Children {
+									if kc.Name() == "key" {
+										iface.AuthKey = nodeVal(kc)
+									}
+								}
+							case "simple-password":
+								iface.AuthType = "simple"
+								iface.AuthKey = nodeVal(authChild)
+							}
+						}
+					case "bfd-liveness-detection":
+						iface.BFD = true
 					}
 				}
 				area.Interfaces = append(area.Interfaces, iface)
@@ -2312,6 +2358,9 @@ func compileProtocols(node *Node, proto *ProtocolsConfig) error {
 			var groupMultihop int
 			var groupExport []string
 			var familyInet, familyInet6 bool
+			var groupAuthKey string
+			var groupBFD bool
+			var groupBFDInterval int
 			for _, child := range groupInst.node.Children {
 				switch child.Name() {
 				case "peer-as":
@@ -2354,18 +2403,34 @@ func compileProtocols(node *Node, proto *ProtocolsConfig) error {
 							}
 						}
 					}
+				case "authentication-key":
+					groupAuthKey = nodeVal(child)
+				case "bfd-liveness-detection":
+					groupBFD = true
+					for _, bc := range child.Children {
+						if bc.Name() == "minimum-interval" {
+							if v := nodeVal(bc); v != "" {
+								if n, err := strconv.Atoi(v); err == nil {
+									groupBFDInterval = n
+								}
+							}
+						}
+					}
 				case "neighbor":
 					nAddr := nodeVal(child)
 					if nAddr != "" {
 						neighbor := &BGPNeighbor{
-							Address:     nAddr,
-							PeerAS:      peerAS,
-							Description: groupDesc,
-							MultihopTTL: groupMultihop,
-							Export:      groupExport,
-							FamilyInet:  familyInet,
-							FamilyInet6: familyInet6,
-							GroupName:   groupInst.name,
+							Address:      nAddr,
+							PeerAS:       peerAS,
+							Description:  groupDesc,
+							MultihopTTL:  groupMultihop,
+							Export:       groupExport,
+							FamilyInet:   familyInet,
+							FamilyInet6:  familyInet6,
+							GroupName:    groupInst.name,
+							AuthPassword: groupAuthKey,
+							BFD:          groupBFD,
+							BFDInterval:  groupBFDInterval,
 						}
 						// Per-neighbor overrides
 						for _, prop := range child.Children {
@@ -2382,6 +2447,19 @@ func compileProtocols(node *Node, proto *ProtocolsConfig) error {
 								if v := nodeVal(prop); v != "" {
 									if n, err := strconv.Atoi(v); err == nil {
 										neighbor.PeerAS = uint32(n)
+									}
+								}
+							case "authentication-key":
+								neighbor.AuthPassword = nodeVal(prop)
+							case "bfd-liveness-detection":
+								neighbor.BFD = true
+								for _, bc := range prop.Children {
+									if bc.Name() == "minimum-interval" {
+										if v := nodeVal(bc); v != "" {
+											if n, err := strconv.Atoi(v); err == nil {
+												neighbor.BFDInterval = n
+											}
+										}
 									}
 								}
 							}

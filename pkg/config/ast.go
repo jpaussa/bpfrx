@@ -174,10 +174,14 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 			"ids-option": {args: 1, valueHint: ValueHintScreenProfile, children: map[string]*schemaNode{
 				"icmp": {children: nil},
 				"tcp": {children: map[string]*schemaNode{
-					"syn-flood": {children: nil},
-					// land, winnuke, syn-frag → leaf
+					"syn-flood":  {children: nil},
+					"port-scan":  {children: nil},
+					// land, winnuke, syn-frag -> leaf
 				}},
-				"ip":  {children: nil},
+				"ip": {children: map[string]*schemaNode{
+					"ip-sweep": {children: nil},
+					// source-route-option, tear-drop -> leaf
+				}},
 				"udp": {children: nil},
 			}},
 		}},
@@ -517,6 +521,15 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 				"interface": {args: 1, valueHint: ValueHintInterfaceName, children: map[string]*schemaNode{
 					"passive": {children: nil},
 					"cost":    {args: 1, children: nil},
+					"authentication": {children: map[string]*schemaNode{
+						"md5": {args: 1, children: map[string]*schemaNode{
+							"key": {args: 1, children: nil},
+						}},
+						"simple-password": {args: 1, children: nil},
+					}},
+					"bfd-liveness-detection": {children: map[string]*schemaNode{
+						"minimum-interval": {args: 1, children: nil},
+					}},
 				}},
 			}},
 		}},
@@ -525,18 +538,26 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 			"router-id": {args: 1, children: nil},
 			"export":    {args: 1, children: nil},
 			"group": {args: 1, children: map[string]*schemaNode{
-				"peer-as":     {args: 1, children: nil},
-				"description": {args: 1, children: nil},
-				"multihop":    {args: 1, children: nil},
-				"export":      {args: 1, children: nil},
+				"peer-as":            {args: 1, children: nil},
+				"description":        {args: 1, children: nil},
+				"multihop":           {args: 1, children: nil},
+				"export":             {args: 1, children: nil},
+				"authentication-key": {args: 1, children: nil},
 				"family": {children: map[string]*schemaNode{
 					"inet":  {children: nil},
 					"inet6": {children: nil},
 				}},
+				"bfd-liveness-detection": {children: map[string]*schemaNode{
+					"minimum-interval": {args: 1, children: nil},
+				}},
 				"neighbor": {args: 1, children: map[string]*schemaNode{
-					"description": {args: 1, children: nil},
-					"peer-as":     {args: 1, children: nil},
-					"multihop":    {args: 1, children: nil},
+					"description":        {args: 1, children: nil},
+					"peer-as":            {args: 1, children: nil},
+					"multihop":           {args: 1, children: nil},
+					"authentication-key": {args: 1, children: nil},
+					"bfd-liveness-detection": {children: map[string]*schemaNode{
+						"minimum-interval": {args: 1, children: nil},
+					}},
 				}},
 			}},
 		}},
@@ -832,6 +853,15 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 					"interface": {args: 1, valueHint: ValueHintInterfaceName, children: map[string]*schemaNode{
 						"passive": {children: nil},
 						"cost":    {args: 1, children: nil},
+						"authentication": {children: map[string]*schemaNode{
+							"md5": {args: 1, children: map[string]*schemaNode{
+								"key": {args: 1, children: nil},
+							}},
+							"simple-password": {args: 1, children: nil},
+						}},
+						"bfd-liveness-detection": {children: map[string]*schemaNode{
+							"minimum-interval": {args: 1, children: nil},
+						}},
 					}},
 				}},
 			}},
