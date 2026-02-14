@@ -16,15 +16,25 @@ const (
 	TypeDPDK = "dpdk"
 )
 
+// backendRegistry holds constructors for non-eBPF dataplane backends.
+// Sub-packages register themselves via RegisterBackend in their init().
+var backendRegistry = map[string]func() DataPlane{}
+
+// RegisterBackend registers a dataplane constructor for the given type.
+func RegisterBackend(dpType string, ctor func() DataPlane) {
+	backendRegistry[dpType] = ctor
+}
+
 // NewDataPlane creates a DataPlane backend based on the given type string.
 // An empty string defaults to eBPF.
 func NewDataPlane(dpType string) (DataPlane, error) {
 	switch dpType {
 	case "", TypeEBPF:
 		return New(), nil
-	case TypeDPDK:
-		return nil, fmt.Errorf("DPDK dataplane not yet implemented")
 	default:
+		if ctor, ok := backendRegistry[dpType]; ok {
+			return ctor(), nil
+		}
 		return nil, fmt.Errorf("unknown dataplane type %q (valid: ebpf, dpdk)", dpType)
 	}
 }

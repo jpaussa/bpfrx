@@ -1,0 +1,161 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later
+ * counters.h — Per-lcore counter arrays and aggregation functions.
+ *
+ * Each lcore maintains its own counter arrays (no locks needed for updates).
+ * The Go control plane aggregates across lcores via CGo calls.
+ */
+
+#ifndef DPDK_COUNTERS_H
+#define DPDK_COUNTERS_H
+
+#include <stdint.h>
+#include "tables.h"
+#include "shared_mem.h"
+
+/* ============================================================
+ * Per-lcore counter storage
+ *
+ * Allocated per-lcore in NUMA-local memory. Each lcore's pipeline_ctx
+ * points to its own instance. Cache-line aligned to avoid false sharing.
+ * ============================================================ */
+
+struct lcore_counters {
+	struct counter_value       policy_counters[MAX_POLICIES]
+		__attribute__((aligned(64)));
+	struct counter_value       zone_counters[MAX_ZONES * 2]
+		__attribute__((aligned(64)));
+	struct iface_counter_value interface_counters[MAX_INTERFACES]
+		__attribute__((aligned(64)));
+	uint64_t                   global_counters[GLOBAL_CTR_MAX]
+		__attribute__((aligned(64)));
+	struct counter_value       filter_counters[MAX_FILTER_RULES]
+		__attribute__((aligned(64)));
+	struct counter_value       nat_rule_counters[MAX_NAT_RULE_COUNTERS]
+		__attribute__((aligned(64)));
+	struct flood_state         flood_states[MAX_ZONES]
+		__attribute__((aligned(64)));
+};
+
+/* Global array of per-lcore counters (indexed by lcore_id) */
+extern struct lcore_counters *lcore_counter_array[MAX_LCORES];
+
+/* ============================================================
+ * Counter increment helpers (called from pipeline hot path)
+ * ============================================================ */
+
+static inline void
+ctr_global_inc(struct pipeline_ctx *ctx, uint32_t idx)
+{
+	ctx->global_counters[idx]++;
+}
+
+static inline void
+ctr_policy_add(struct pipeline_ctx *ctx, uint32_t policy_id,
+               uint64_t bytes)
+{
+	if (policy_id < MAX_POLICIES) {
+		ctx->policy_counters[policy_id].packets++;
+		ctx->policy_counters[policy_id].bytes += bytes;
+	}
+}
+
+static inline void
+ctr_zone_add(struct pipeline_ctx *ctx, uint32_t zone_id,
+             uint8_t direction, uint64_t bytes)
+{
+	uint32_t idx = zone_id * 2 + direction;
+	if (idx < MAX_ZONES * 2) {
+		ctx->zone_counters[idx].packets++;
+		ctx->zone_counters[idx].bytes += bytes;
+	}
+}
+
+static inline void
+ctr_iface_rx_add(struct pipeline_ctx *ctx, uint32_t ifindex,
+                 uint64_t bytes)
+{
+	if (ifindex < MAX_INTERFACES) {
+		ctx->interface_counters[ifindex].rx_packets++;
+		ctx->interface_counters[ifindex].rx_bytes += bytes;
+	}
+}
+
+static inline void
+ctr_iface_tx_add(struct pipeline_ctx *ctx, uint32_t ifindex,
+                 uint64_t bytes)
+{
+	if (ifindex < MAX_INTERFACES) {
+		ctx->interface_counters[ifindex].tx_packets++;
+		ctx->interface_counters[ifindex].tx_bytes += bytes;
+	}
+}
+
+static inline void
+ctr_filter_add(struct pipeline_ctx *ctx, uint32_t rule_idx,
+               uint64_t bytes)
+{
+	if (rule_idx < MAX_FILTER_RULES) {
+		ctx->filter_counters[rule_idx].packets++;
+		ctx->filter_counters[rule_idx].bytes += bytes;
+	}
+}
+
+static inline void
+ctr_nat_rule_add(struct pipeline_ctx *ctx, uint32_t counter_id,
+                 uint64_t bytes)
+{
+	if (counter_id < MAX_NAT_RULE_COUNTERS) {
+		ctx->nat_rule_counters[counter_id].packets++;
+		ctx->nat_rule_counters[counter_id].bytes += bytes;
+	}
+}
+
+/* ============================================================
+ * Aggregation functions (called from Go via CGo)
+ *
+ * These sum counters across all lcores. Safe to call while workers
+ * are running — individual reads are atomic on x86_64.
+ * ============================================================ */
+
+/**
+ * Aggregate global counter across all lcores.
+ */
+uint64_t counters_aggregate_global(uint32_t idx);
+
+/**
+ * Aggregate policy counter across all lcores.
+ */
+void counters_aggregate_policy(uint32_t policy_id,
+                               uint64_t *packets, uint64_t *bytes);
+
+/**
+ * Aggregate zone counter across all lcores.
+ */
+void counters_aggregate_zone(uint32_t zone_id, uint8_t direction,
+                             uint64_t *packets, uint64_t *bytes);
+
+/**
+ * Aggregate interface counter across all lcores.
+ */
+void counters_aggregate_iface(uint32_t ifindex,
+                              uint64_t *rx_pkts, uint64_t *rx_bytes,
+                              uint64_t *tx_pkts, uint64_t *tx_bytes);
+
+/**
+ * Aggregate filter rule counter across all lcores.
+ */
+void counters_aggregate_filter(uint32_t rule_idx,
+                               uint64_t *packets, uint64_t *bytes);
+
+/**
+ * Aggregate NAT rule counter across all lcores.
+ */
+void counters_aggregate_nat_rule(uint32_t counter_id,
+                                 uint64_t *packets, uint64_t *bytes);
+
+/**
+ * Clear all counters on all lcores.
+ */
+void counters_clear_all(void);
+
+#endif /* DPDK_COUNTERS_H */

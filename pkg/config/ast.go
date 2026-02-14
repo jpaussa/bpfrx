@@ -710,6 +710,22 @@ var setSchema = &schemaNode{children: map[string]*schemaNode{
 				"authentication": {children: nil},
 			}},
 		}},
+		"dataplane-type": {args: 1, children: nil},
+		"dataplane": {children: map[string]*schemaNode{
+			"cores":      {args: 1, children: nil},
+			"memory":     {args: 1, children: nil},
+			"socket-mem": {args: 1, children: nil},
+			"rx-mode": {children: map[string]*schemaNode{
+				"idle-threshold":   {args: 1, children: nil},
+				"resume-threshold": {args: 1, children: nil},
+				"sleep-timeout":    {args: 1, children: nil},
+			}},
+			"ports": {wildcard: &schemaNode{children: map[string]*schemaNode{
+				"interface": {args: 1, children: nil},
+				"rx-mode":   {args: 1, children: nil},
+				"cores":     {args: 1, children: nil},
+			}}},
+		}},
 		"services": {children: map[string]*schemaNode{
 			"ssh": {children: map[string]*schemaNode{
 				"root-login": {args: 1, children: nil},

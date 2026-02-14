@@ -7768,3 +7768,86 @@ func TestDomainNameAndSearch(t *testing.T) {
 	}
 }
 
+func TestDPDKConfig(t *testing.T) {
+	lines := []string{
+		"set system dataplane-type dpdk",
+		"set system dataplane cores 2-5",
+		"set system dataplane memory 2048",
+		"set system dataplane socket-mem \"1024,1024\"",
+		"set system dataplane rx-mode adaptive",
+		"set system dataplane rx-mode idle-threshold 256",
+		"set system dataplane rx-mode resume-threshold 32",
+		"set system dataplane rx-mode sleep-timeout 100",
+		"set system dataplane ports 0000:03:00.0 interface wan0",
+		"set system dataplane ports 0000:03:00.0 rx-mode polling",
+		"set system dataplane ports 0000:03:00.0 cores 2-3",
+		"set system dataplane ports 0000:06:00.0 interface trust0",
+	}
+	tree := &ConfigTree{}
+	for _, line := range lines {
+		path, err := ParseSetCommand(line)
+		if err != nil {
+			t.Fatalf("ParseSetCommand(%q): %v", line, err)
+		}
+		if err := tree.SetPath(path); err != nil {
+			t.Fatalf("SetPath(%v): %v", path, err)
+		}
+	}
+	cfg, err := CompileConfig(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.System.DataplaneType != "dpdk" {
+		t.Errorf("DataplaneType = %q, want dpdk", cfg.System.DataplaneType)
+	}
+	dp := cfg.System.DPDKDataplane
+	if dp == nil {
+		t.Fatal("DPDKDataplane is nil")
+	}
+	if dp.Cores != "2-5" {
+		t.Errorf("Cores = %q, want 2-5", dp.Cores)
+	}
+	if dp.Memory != 2048 {
+		t.Errorf("Memory = %d, want 2048", dp.Memory)
+	}
+	if dp.SocketMem != "1024,1024" {
+		t.Errorf("SocketMem = %q, want 1024,1024", dp.SocketMem)
+	}
+	if dp.RXMode != "adaptive" {
+		t.Errorf("RXMode = %q, want adaptive", dp.RXMode)
+	}
+	if dp.AdaptiveConfig == nil {
+		t.Fatal("AdaptiveConfig is nil")
+	}
+	if dp.AdaptiveConfig.IdleThreshold != 256 {
+		t.Errorf("IdleThreshold = %d, want 256", dp.AdaptiveConfig.IdleThreshold)
+	}
+	if dp.AdaptiveConfig.ResumeThreshold != 32 {
+		t.Errorf("ResumeThreshold = %d, want 32", dp.AdaptiveConfig.ResumeThreshold)
+	}
+	if dp.AdaptiveConfig.SleepTimeout != 100 {
+		t.Errorf("SleepTimeout = %d, want 100", dp.AdaptiveConfig.SleepTimeout)
+	}
+	if len(dp.Ports) != 2 {
+		t.Fatalf("Ports len = %d, want 2", len(dp.Ports))
+	}
+	if dp.Ports[0].PCIAddress != "0000:03:00.0" {
+		t.Errorf("Port[0].PCIAddress = %q, want 0000:03:00.0", dp.Ports[0].PCIAddress)
+	}
+	if dp.Ports[0].Interface != "wan0" {
+		t.Errorf("Port[0].Interface = %q, want wan0", dp.Ports[0].Interface)
+	}
+	if dp.Ports[0].RXMode != "polling" {
+		t.Errorf("Port[0].RXMode = %q, want polling", dp.Ports[0].RXMode)
+	}
+	if dp.Ports[0].Cores != "2-3" {
+		t.Errorf("Port[0].Cores = %q, want 2-3", dp.Ports[0].Cores)
+	}
+	if dp.Ports[1].PCIAddress != "0000:06:00.0" {
+		t.Errorf("Port[1].PCIAddress = %q, want 0000:06:00.0", dp.Ports[1].PCIAddress)
+	}
+	if dp.Ports[1].Interface != "trust0" {
+		t.Errorf("Port[1].Interface = %q, want trust0", dp.Ports[1].Interface)
+	}
+}
+

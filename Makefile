@@ -12,7 +12,7 @@ LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.buildTime
 # eBPF compilation flags
 BPF_CFLAGS := -O2 -g -Wall -Werror -target bpf
 
-.PHONY: all generate build build-ctl proto install clean test
+.PHONY: all generate build build-ctl proto install clean test build-dpdk-worker build-dpdk clean-dpdk
 
 all: generate build build-ctl
 
@@ -42,7 +42,7 @@ install: build build-ctl
 test:
 	$(GO) test ./...
 
-clean:
+clean: clean-dpdk
 	rm -f $(BINARY) cli
 	rm -f pkg/dataplane/*_bpfel.go pkg/dataplane/*_bpfeb.go
 	rm -f pkg/dataplane/*_bpfel.o pkg/dataplane/*_bpfeb.o
@@ -85,3 +85,17 @@ test-logs:
 
 test-journal:
 	./test/incus/setup.sh journal
+
+# --- DPDK targets (require dpdk-dev, meson, ninja) ---
+
+build-dpdk-worker:
+	@echo "==> Building DPDK worker..."
+	cd dpdk_worker && meson setup build --buildtype=release 2>/dev/null || true
+	cd dpdk_worker && meson compile -C build
+
+build-dpdk: build-dpdk-worker
+	@echo "==> Building bpfrxd with DPDK support..."
+	CGO_ENABLED=1 go build -tags dpdk -ldflags "$(LDFLAGS)" -o bpfrxd ./cmd/bpfrxd
+
+clean-dpdk:
+	rm -rf dpdk_worker/build

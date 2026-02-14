@@ -3274,6 +3274,11 @@ func compileSystem(node *Node, sys *SystemConfig) error {
 			if child.FindChild("no-ipv6-reject-zero-hop-limit") != nil {
 				sys.InternetOptions.NoIPv6RejectZeroHopLimit = true
 			}
+		case "dataplane":
+			sys.DPDKDataplane = &DPDKConfig{}
+			if err := compileDPDKDataplane(child, sys.DPDKDataplane); err != nil {
+				return err
+			}
 		case "syslog":
 			sys.Syslog = &SystemSyslogConfig{}
 			for _, slInst := range namedInstances(child.FindChildren("host")) {
@@ -3379,6 +3384,65 @@ func compileSystem(node *Node, sys *SystemConfig) error {
 		}
 	}
 
+	return nil
+}
+
+func compileDPDKDataplane(node *Node, cfg *DPDKConfig) error {
+	for _, child := range node.Children {
+		switch child.Name() {
+		case "cores":
+			if v := nodeVal(child); v != "" {
+				cfg.Cores = v
+			}
+		case "memory":
+			if v := nodeVal(child); v != "" {
+				cfg.Memory, _ = strconv.Atoi(v)
+			}
+		case "socket-mem":
+			if v := nodeVal(child); v != "" {
+				cfg.SocketMem = v
+			}
+		case "rx-mode":
+			// rx-mode can be a simple value ("polling") or a block ("adaptive { ... }")
+			if v := nodeVal(child); v != "" {
+				cfg.RXMode = v
+			}
+			if cfg.RXMode == "adaptive" {
+				cfg.AdaptiveConfig = &DPDKAdaptiveConfig{}
+				for _, ac := range child.Children {
+					switch ac.Name() {
+					case "idle-threshold":
+						if v := nodeVal(ac); v != "" {
+							cfg.AdaptiveConfig.IdleThreshold, _ = strconv.Atoi(v)
+						}
+					case "resume-threshold":
+						if v := nodeVal(ac); v != "" {
+							cfg.AdaptiveConfig.ResumeThreshold, _ = strconv.Atoi(v)
+						}
+					case "sleep-timeout":
+						if v := nodeVal(ac); v != "" {
+							cfg.AdaptiveConfig.SleepTimeout, _ = strconv.Atoi(v)
+						}
+					}
+				}
+			}
+		case "ports":
+			for _, portChild := range child.Children {
+				port := DPDKPort{PCIAddress: portChild.Name()}
+				for _, prop := range portChild.Children {
+					switch prop.Name() {
+					case "interface":
+						port.Interface = nodeVal(prop)
+					case "rx-mode":
+						port.RXMode = nodeVal(prop)
+					case "cores":
+						port.Cores = nodeVal(prop)
+					}
+				}
+				cfg.Ports = append(cfg.Ports, port)
+			}
+		}
+	}
 	return nil
 }
 
