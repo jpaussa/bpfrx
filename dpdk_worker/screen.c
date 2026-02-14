@@ -182,3 +182,94 @@ screen_check(struct rte_mbuf *pkt, struct pkt_meta *meta,
 
 	return 0;  /* Passed all checks */
 }
+
+/**
+ * screen_check_egress — Run egress flood-detection checks.
+ *
+ * @pkt:  Packet mbuf
+ * @meta: Parsed packet metadata (egress_zone must be set)
+ * @ctx:  Pipeline context
+ *
+ * Returns 0 if packet passes, -1 if it should be dropped.
+ *
+ * Only rate-based flood checks are performed on egress — stateless
+ * anomaly checks (LAND, SYN+FIN, etc.) are already caught on ingress.
+ * Uses the egress zone's screen profile for threshold lookup.
+ */
+int
+screen_check_egress(struct rte_mbuf *pkt, struct pkt_meta *meta,
+                    struct pipeline_ctx *ctx)
+{
+	(void)pkt;
+
+	/* Get screen profile for egress zone */
+	if (meta->egress_zone >= MAX_ZONES || !ctx->shm->zone_configs)
+		return 0;
+
+	struct zone_config *zc = &ctx->shm->zone_configs[meta->egress_zone];
+	if (zc->screen_profile_id == 0 || !ctx->shm->screen_configs)
+		return 0;
+
+	if (zc->screen_profile_id >= MAX_SCREEN_PROFILES)
+		return 0;
+
+	struct screen_config *sc = &ctx->shm->screen_configs[zc->screen_profile_id];
+	if (sc->flags == 0)
+		return 0;
+
+	/* Only flood-detection flags are relevant for egress */
+	if (!(sc->flags & (SCREEN_SYN_FLOOD | SCREEN_ICMP_FLOOD | SCREEN_UDP_FLOOD)))
+		return 0;
+
+	/* Rate-based flood checks keyed on egress zone */
+	uint64_t now_tsc = rte_rdtsc();
+	uint64_t hz = rte_get_tsc_hz();
+	uint32_t zone_idx = meta->egress_zone;
+
+	if (zone_idx < MAX_ZONES && ctx->flood_states) {
+		struct flood_state *fs = &ctx->flood_states[zone_idx];
+		uint64_t window_tsc = (sc->syn_flood_timeout > 0 ? sc->syn_flood_timeout : 1) * hz;
+
+		/* Reset window if expired */
+		if (now_tsc - fs->window_start > window_tsc) {
+			fs->syn_count = 0;
+			fs->icmp_count = 0;
+			fs->udp_count = 0;
+			fs->window_start = now_tsc;
+		}
+
+		/* SYN flood */
+		if ((sc->flags & SCREEN_SYN_FLOOD) && meta->protocol == PROTO_TCP &&
+		    (meta->tcp_flags & 0x02) && !(meta->tcp_flags & 0x10)) {
+			fs->syn_count++;
+			if (sc->syn_flood_thresh > 0 && fs->syn_count > sc->syn_flood_thresh) {
+				ctr_global_inc(ctx, GLOBAL_CTR_SCREEN_SYN_FLOOD);
+				emit_event(ctx, meta, EVENT_TYPE_SCREEN_DROP, ACTION_DENY);
+				return -1;
+			}
+		}
+
+		/* ICMP flood */
+		if ((sc->flags & SCREEN_ICMP_FLOOD) &&
+		    (meta->protocol == PROTO_ICMP || meta->protocol == PROTO_ICMPV6)) {
+			fs->icmp_count++;
+			if (sc->icmp_flood_thresh > 0 && fs->icmp_count > sc->icmp_flood_thresh) {
+				ctr_global_inc(ctx, GLOBAL_CTR_SCREEN_ICMP_FLOOD);
+				emit_event(ctx, meta, EVENT_TYPE_SCREEN_DROP, ACTION_DENY);
+				return -1;
+			}
+		}
+
+		/* UDP flood */
+		if ((sc->flags & SCREEN_UDP_FLOOD) && meta->protocol == PROTO_UDP) {
+			fs->udp_count++;
+			if (sc->udp_flood_thresh > 0 && fs->udp_count > sc->udp_flood_thresh) {
+				ctr_global_inc(ctx, GLOBAL_CTR_SCREEN_UDP_FLOOD);
+				emit_event(ctx, meta, EVENT_TYPE_SCREEN_DROP, ACTION_DENY);
+				return -1;
+			}
+		}
+	}
+
+	return 0;  /* Passed all egress flood checks */
+}

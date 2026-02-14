@@ -18,6 +18,12 @@
 #include "counters.h"
 #include "events.h"
 
+/* ICMP Time Exceeded generation (reject.c) */
+extern void send_icmp_time_exceeded_v4(struct rte_mbuf *pkt, struct pkt_meta *meta,
+                                       struct pipeline_ctx *ctx);
+extern void send_icmp_time_exceeded_v6(struct rte_mbuf *pkt, struct pkt_meta *meta,
+                                       struct pipeline_ctx *ctx);
+
 /**
  * csum_update_u32 — Incremental checksum update for a 32-bit field change.
  * From RFC 1624.
@@ -67,8 +73,12 @@ nat_rewrite(struct rte_mbuf *pkt, struct pkt_meta *meta,
 	uint8_t *data = rte_pktmbuf_mtod(pkt, uint8_t *);
 
 	/* TTL check before NAT rewrite — preserves original IPs
-	 * for ICMP Time Exceeded generation. */
+	 * for ICMP Time Exceeded generation (important for traceroute). */
 	if (meta->ip_ttl <= 1) {
+		if (meta->addr_family == AF_INET)
+			send_icmp_time_exceeded_v4(pkt, meta, ctx);
+		else
+			send_icmp_time_exceeded_v6(pkt, meta, ctx);
 		emit_event(ctx, meta, EVENT_TYPE_SCREEN_DROP, ACTION_DENY);
 		ctr_global_inc(ctx, GLOBAL_CTR_DROPS);
 		rte_pktmbuf_free(pkt);

@@ -1,9 +1,11 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later
- * reject.c — Packet rejection: TCP RST and ICMP Unreachable.
+ * reject.c — Packet rejection and ICMP error generation.
  *
  * When policy returns ACTION_REJECT, these functions craft and send
  * response packets (TCP RST for TCP, ICMP Unreachable for other
  * protocols) back to the sender via the ingress port.
+ *
+ * Also provides ICMP Time Exceeded generation for TTL-expired packets.
  *
  * Reference: bpf/xdp/xdp_policy.c send_tcp_rst_v4/v6, send_icmp_unreach_v4/v6.
  */
@@ -464,6 +466,200 @@ send_icmp_unreach_v6(struct rte_mbuf *pkt, struct pkt_meta *meta,
 	memset(icmp6, 0, 8);
 	icmp6->type = 1;
 	icmp6->code = 1;
+
+	/* Copy original IPv6 header + 8 bytes L4 to ICMPv6 payload */
+	memcpy(data + 62, orig_hdr, 48);
+
+	/* ICMPv6 checksum: pseudo-header + ICMPv6 message.
+	 * Pseudo-header: src(16) + dst(16) + upper_layer_len(4) + nexthdr(4)
+	 * ICMPv6 message: header(8) + payload(48) = 56 bytes */
+	uint32_t csum = 0;
+	const uint16_t *p16;
+
+	/* Pseudo-header: source address */
+	p16 = (const uint16_t *)resp_saddr;
+	for (int i = 0; i < 8; i++)
+		csum += p16[i];
+
+	/* Pseudo-header: dest address */
+	p16 = (const uint16_t *)meta->src_ip.v6;
+	for (int i = 0; i < 8; i++)
+		csum += p16[i];
+
+	/* Pseudo-header: upper-layer length + next header */
+	csum += rte_cpu_to_be_16(56);
+	csum += rte_cpu_to_be_16(PROTO_ICMPV6);
+
+	/* ICMPv6 header + payload (56 bytes = 28 words) */
+	p16 = (const uint16_t *)(data + 54);
+	for (int i = 0; i < 28; i++)
+		csum += p16[i];
+
+	csum = (csum >> 16) + (csum & 0xFFFF);
+	csum += csum >> 16;
+	icmp6->checksum = (uint16_t)(~csum);
+
+	/* Send on ingress port */
+	uint16_t tx_port = meta->ingress_ifindex;
+	uint16_t sent = rte_eth_tx_burst(tx_port, 0, &icmp_pkt, 1);
+	if (sent == 0)
+		rte_pktmbuf_free(icmp_pkt);
+}
+
+/**
+ * send_icmp_time_exceeded_v4 — Send ICMP Time Exceeded for IPv4 TTL expiry.
+ *
+ * Packet layout: ETH(14) + IP(20) + ICMP(8) + orig_IP(20) + orig_L4(8) = 70 bytes.
+ * ICMP type 11 (time exceeded), code 0 (TTL exceeded in transit).
+ *
+ * Source IP uses the original packet's destination IP (same pattern as
+ * send_icmp_unreach_v4).  The ICMP payload contains the original IP header
+ * plus the first 8 bytes of L4, read directly from the packet data so that
+ * pre-NAT addresses are preserved when called from nat.c.
+ */
+void
+send_icmp_time_exceeded_v4(struct rte_mbuf *pkt, struct pkt_meta *meta,
+                           struct pipeline_ctx *ctx)
+{
+	(void)ctx;
+
+	uint8_t *orig_data = rte_pktmbuf_mtod(pkt, uint8_t *);
+	uint32_t orig_data_len = rte_pktmbuf_data_len(pkt);
+
+	/* Read MACs from original packet */
+	struct rte_ether_hdr *orig_eth = (struct rte_ether_hdr *)orig_data;
+	uint8_t orig_smac[6], orig_dmac[6];
+	memcpy(orig_smac, &orig_eth->src_addr, 6);
+	memcpy(orig_dmac, &orig_eth->dst_addr, 6);
+
+	/* Save original IP header (20 bytes) + first 8 bytes of L4 = 28 bytes */
+	uint8_t orig_hdr[28];
+	if (orig_data_len < 14 + 28)
+		return;
+	memcpy(orig_hdr, orig_data + 14, 28);
+
+	/* Source/dest IPs from meta */
+	uint32_t orig_saddr = meta->src_ip.v4;
+	uint32_t orig_daddr = meta->dst_ip.v4;
+
+	/* Allocate new mbuf */
+	struct rte_mbuf *icmp_pkt = rte_pktmbuf_alloc(pkt->pool);
+	if (!icmp_pkt)
+		return;
+
+	uint8_t *data = (uint8_t *)rte_pktmbuf_append(icmp_pkt, 70);
+	if (!data) {
+		rte_pktmbuf_free(icmp_pkt);
+		return;
+	}
+
+	/* Ethernet: swap MACs */
+	struct rte_ether_hdr *eth = (struct rte_ether_hdr *)data;
+	memcpy(&eth->dst_addr, orig_smac, 6);
+	memcpy(&eth->src_addr, orig_dmac, 6);
+	eth->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
+
+	/* IP header: total_len = 56 (IP 20 + ICMP 8 + payload 28) */
+	struct rte_ipv4_hdr *ip = (struct rte_ipv4_hdr *)(data + 14);
+	memset(ip, 0, 20);
+	ip->version_ihl = (4 << 4) | 5;
+	ip->total_length = rte_cpu_to_be_16(56);
+	ip->fragment_offset = rte_cpu_to_be_16(0x4000);  /* DF */
+	ip->time_to_live = 64;
+	ip->next_proto_id = PROTO_ICMP;
+	ip->src_addr = orig_daddr;  /* firewall responds as dest */
+	ip->dst_addr = orig_saddr;  /* back to sender */
+	ip->hdr_checksum = 0;
+	ip->hdr_checksum = ip4_checksum(ip, 20);
+
+	/* ICMP header: type 11 (time exceeded), code 0 (TTL in transit) */
+	struct icmphdr *icmp = (struct icmphdr *)(data + 34);
+	memset(icmp, 0, 8);
+	icmp->type = 11;
+	icmp->code = 0;
+
+	/* Copy original IP header + 8 bytes L4 to ICMP payload */
+	memcpy(data + 42, orig_hdr, 28);
+
+	/* ICMP checksum: header(8) + payload(28) = 36 bytes = 18 words */
+	uint32_t csum = 0;
+	const uint16_t *p16 = (const uint16_t *)(data + 34);
+	for (int i = 0; i < 18; i++)
+		csum += p16[i];
+	csum = (csum >> 16) + (csum & 0xFFFF);
+	csum += csum >> 16;
+	icmp->checksum = (uint16_t)(~csum);
+
+	/* Send on ingress port */
+	uint16_t tx_port = meta->ingress_ifindex;
+	uint16_t sent = rte_eth_tx_burst(tx_port, 0, &icmp_pkt, 1);
+	if (sent == 0)
+		rte_pktmbuf_free(icmp_pkt);
+}
+
+/**
+ * send_icmp_time_exceeded_v6 — Send ICMPv6 Time Exceeded for IPv6 hop limit expiry.
+ *
+ * Packet layout: ETH(14) + IPv6(40) + ICMPv6(8) + orig_IPv6(40) + orig_L4(8) = 110 bytes.
+ * ICMPv6 type 3 (time exceeded), code 0 (hop limit exceeded in transit).
+ */
+void
+send_icmp_time_exceeded_v6(struct rte_mbuf *pkt, struct pkt_meta *meta,
+                           struct pipeline_ctx *ctx)
+{
+	(void)ctx;
+
+	uint8_t *orig_data = rte_pktmbuf_mtod(pkt, uint8_t *);
+	uint32_t orig_data_len = rte_pktmbuf_data_len(pkt);
+
+	/* Read MACs from original packet */
+	struct rte_ether_hdr *orig_eth = (struct rte_ether_hdr *)orig_data;
+	uint8_t orig_smac[6], orig_dmac[6];
+	memcpy(orig_smac, &orig_eth->src_addr, 6);
+	memcpy(orig_dmac, &orig_eth->dst_addr, 6);
+
+	/* Save original IPv6 header (40 bytes) + first 8 bytes of L4 = 48 bytes */
+	uint8_t orig_hdr[48];
+	if (orig_data_len < 14 + 48)
+		return;
+	memcpy(orig_hdr, orig_data + 14, 48);
+
+	/* Response source = original dst (firewall's perspective) */
+	uint8_t resp_saddr[16];
+	memcpy(resp_saddr, meta->dst_ip.v6, 16);
+
+	/* Allocate new mbuf */
+	struct rte_mbuf *icmp_pkt = rte_pktmbuf_alloc(pkt->pool);
+	if (!icmp_pkt)
+		return;
+
+	uint8_t *data = (uint8_t *)rte_pktmbuf_append(icmp_pkt, 110);
+	if (!data) {
+		rte_pktmbuf_free(icmp_pkt);
+		return;
+	}
+
+	/* Ethernet: swap MACs */
+	struct rte_ether_hdr *eth = (struct rte_ether_hdr *)data;
+	memcpy(&eth->dst_addr, orig_smac, 6);
+	memcpy(&eth->src_addr, orig_dmac, 6);
+	eth->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV6);
+
+	/* IPv6 header: payload_len = 56 (ICMPv6 8 + payload 48) */
+	struct ipv6hdr_raw *ip6 = (struct ipv6hdr_raw *)(data + 14);
+	memset(ip6, 0, 40);
+	ip6->vtc_flow = rte_cpu_to_be_32(0x60000000);  /* version=6 */
+	ip6->payload_len = rte_cpu_to_be_16(56);
+	ip6->nexthdr = PROTO_ICMPV6;
+	ip6->hop_limit = 64;
+	memcpy(ip6->src_addr, resp_saddr, 16);
+	memcpy(ip6->dst_addr, meta->src_ip.v6, 16);
+
+	/* ICMPv6 header: type 3 (time exceeded), code 0 (hop limit) */
+	struct icmp6hdr *icmp6 = (struct icmp6hdr *)(data + 54);
+	memset(icmp6, 0, 8);
+	icmp6->type = 3;
+	icmp6->code = 0;
 
 	/* Copy original IPv6 header + 8 bytes L4 to ICMPv6 payload */
 	memcpy(data + 62, orig_hdr, 48);

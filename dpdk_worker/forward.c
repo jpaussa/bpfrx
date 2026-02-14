@@ -19,6 +19,12 @@
 #include "counters.h"
 #include "events.h"
 
+/* ICMP Time Exceeded generation (reject.c) */
+extern void send_icmp_time_exceeded_v4(struct rte_mbuf *pkt, struct pkt_meta *meta,
+                                       struct pipeline_ctx *ctx);
+extern void send_icmp_time_exceeded_v6(struct rte_mbuf *pkt, struct pkt_meta *meta,
+                                       struct pipeline_ctx *ctx);
+
 /**
  * host_inbound_flag — Map packet protocol/port to HOST_INBOUND_* flag.
  * Returns 0 for unrecognized services (allowed by default).
@@ -115,7 +121,10 @@ forward_packet(struct rte_mbuf *pkt, struct pkt_meta *meta,
 
 	/* 1. TTL check and decrement */
 	if (meta->ip_ttl <= 1) {
-		/* TTL expired — drop (TODO: send ICMP Time Exceeded) */
+		if (meta->addr_family == AF_INET)
+			send_icmp_time_exceeded_v4(pkt, meta, ctx);
+		else
+			send_icmp_time_exceeded_v6(pkt, meta, ctx);
 		rte_pktmbuf_free(pkt);
 		ctr_global_inc(ctx, GLOBAL_CTR_DROPS);
 		return;
@@ -164,13 +173,42 @@ forward_packet(struct rte_mbuf *pkt, struct pkt_meta *meta,
 		}
 	}
 
-	/* 4. VLAN handling */
-	if (meta->egress_vlan_id != 0 && meta->ingress_vlan_id == 0) {
-		/* Push VLAN tag */
-		pkt->vlan_tci = meta->egress_vlan_id;
-		pkt->ol_flags |= RTE_MBUF_F_TX_VLAN;
-	} else if (meta->egress_vlan_id == 0 && meta->ingress_vlan_id != 0) {
-		/* Strip VLAN (already parsed, adjust mbuf if needed) */
+	/* 4. VLAN handling
+	 *
+	 * Ingress VLAN tag is still in the packet (parse.c doesn't strip).
+	 * Egress VLAN tag must be set if forwarding to a VLAN sub-interface.
+	 *
+	 * Cases:
+	 *   ingress=0, egress=0  → nothing
+	 *   ingress=0, egress>0  → push VLAN tag
+	 *   ingress>0, egress=0  → strip VLAN tag
+	 *   ingress>0, egress>0  → rewrite VLAN ID if different
+	 */
+	if (meta->ingress_vlan_id != 0 && meta->egress_vlan_id == 0) {
+		/* Strip VLAN tag: shift ETH header 4 bytes forward,
+		 * overwriting the VLAN bytes */
+		struct rte_ether_hdr *eth = rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
+		struct rte_ether_hdr eth_copy;
+		rte_ether_addr_copy(&eth->dst_addr, &eth_copy.dst_addr);
+		rte_ether_addr_copy(&eth->src_addr, &eth_copy.src_addr);
+		/* Use the ethertype AFTER the VLAN tag (already parsed) */
+		eth_copy.ether_type = (meta->addr_family == AF_INET) ?
+			rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4) :
+			rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV6);
+		rte_pktmbuf_adj(pkt, 4);
+		data = rte_pktmbuf_mtod(pkt, uint8_t *);
+		memcpy(data, &eth_copy, sizeof(struct rte_ether_hdr));
+	} else if (meta->egress_vlan_id != 0) {
+		if (meta->ingress_vlan_id != 0) {
+			/* Rewrite VLAN ID in existing tag */
+			struct rte_vlan_hdr *vlan = (struct rte_vlan_hdr *)(
+				data + sizeof(struct rte_ether_hdr));
+			vlan->vlan_tci = rte_cpu_to_be_16(meta->egress_vlan_id);
+		} else {
+			/* Push new VLAN tag via TX offload */
+			pkt->vlan_tci = meta->egress_vlan_id;
+			pkt->ol_flags |= RTE_MBUF_F_TX_VLAN;
+		}
 	}
 
 	/* 5. Transmit */

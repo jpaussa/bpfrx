@@ -19,6 +19,8 @@ extern int  evaluate_filter(struct rte_mbuf *pkt, struct pkt_meta *meta,
                             struct pipeline_ctx *ctx, uint8_t direction);
 extern int  screen_check(struct rte_mbuf *pkt, struct pkt_meta *meta,
                          struct pipeline_ctx *ctx);
+extern int  screen_check_egress(struct rte_mbuf *pkt, struct pkt_meta *meta,
+                                struct pipeline_ctx *ctx);
 extern void zone_lookup(struct rte_mbuf *pkt, struct pkt_meta *meta,
                         struct pipeline_ctx *ctx);
 extern int  conntrack_lookup(struct rte_mbuf *pkt, struct pkt_meta *meta,
@@ -162,11 +164,17 @@ process_packet(struct rte_mbuf *pkt, struct pipeline_ctx *ctx)
 	}
 
 forward:
-	/* 9. Egress filter */
+	/* 9. Egress screen (flood detection only) */
+	if (screen_check_egress(pkt, &meta, ctx) < 0)
+		goto drop;
+
+	/* 10. Egress filter */
 	if (evaluate_filter(pkt, &meta, ctx, 1) == FILTER_ACTION_DISCARD)
 		goto drop;
 
-	/* 10. Forward (replaces xdp_forward) */
+	ctr_zone_add(ctx, meta.egress_zone, 1, rte_pktmbuf_pkt_len(pkt));
+
+	/* 11. Forward (replaces xdp_forward) */
 	forward_packet(pkt, &meta, ctx);
 	ctr_global_inc(ctx, GLOBAL_CTR_TX_PACKETS);
 	return;
