@@ -142,6 +142,10 @@ struct pipeline_ctx {
 
 	/* Per-lcore SNAT port allocation counter */
 	uint64_t snat_port_counter;
+
+	/* Per-lcore latency histogram (log2 microsecond buckets) */
+	uint64_t *latency_histogram;         /* [LATENCY_BUCKETS] */
+	uint64_t tsc_per_us;                 /* rte_get_tsc_hz() / 1e6 */
 };
 
 /* ============================================================

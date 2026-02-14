@@ -1840,6 +1840,24 @@ func (m *Manager) ClearPacketTrace() {
 // DNATKey helper: the DstIP field in DNATKey is uint32 not [4]byte.
 // bytesToUint32 already handles this via the native endian field.
 
+// ReadLatencyHistogram aggregates per-packet processing latency across
+// all lcores. Returns 16 buckets: bucket 0 = sub-microsecond,
+// bucket N = 2^(N-1) to 2^N microseconds, bucket 15 = 16ms+.
+func (m *Manager) ReadLatencyHistogram() [16]uint64 {
+	var out [16]C.uint64_t
+	C.counters_aggregate_latency(&out[0])
+	var result [16]uint64
+	for i := range result {
+		result[i] = uint64(out[i])
+	}
+	return result
+}
+
+// ClearLatencyHistogram clears latency histograms on all lcores.
+func (m *Manager) ClearLatencyHistogram() {
+	C.counters_clear_latency()
+}
+
 // IsWorkerHealthy checks if DPDK worker lcores are alive by reading
 // their heartbeat timestamps from shared memory. Returns true if all
 // workers updated their heartbeat within the last maxAge duration.

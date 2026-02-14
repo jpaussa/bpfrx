@@ -432,6 +432,8 @@ counters_alloc(struct pipeline_ctx *ctx)
 	ctx->nat_rule_counters  = lc->nat_rule_counters;
 	ctx->flood_states       = lc->flood_states;
 	ctx->nat_port_allocs    = lc->nat_port_allocs;
+	ctx->latency_histogram  = lc->latency_histogram;
+	ctx->tsc_per_us         = rte_get_tsc_hz() / 1000000;
 
 	lcore_counter_array[ctx->lcore_id] = lc;
 	ctx->shm->counter_ptrs[ctx->lcore_id] = lc;
@@ -637,6 +639,29 @@ counters_aggregate_nat_port(uint32_t pool_id,
 		if (!lcore_counter_array[i])
 			continue;
 		*allocs += lcore_counter_array[i]->nat_port_allocs[pool_id];
+	}
+}
+
+void
+counters_aggregate_latency(uint64_t *out)
+{
+	memset(out, 0, sizeof(uint64_t) * LATENCY_BUCKETS);
+
+	for (unsigned i = 0; i < MAX_LCORES; i++) {
+		if (!lcore_counter_array[i])
+			continue;
+		for (unsigned b = 0; b < LATENCY_BUCKETS; b++)
+			out[b] += lcore_counter_array[i]->latency_histogram[b];
+	}
+}
+
+void
+counters_clear_latency(void)
+{
+	for (unsigned i = 0; i < MAX_LCORES; i++) {
+		if (lcore_counter_array[i])
+			memset(lcore_counter_array[i]->latency_histogram, 0,
+			       sizeof(lcore_counter_array[i]->latency_histogram));
 	}
 }
 

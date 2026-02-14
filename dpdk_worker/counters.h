@@ -9,6 +9,7 @@
 #define DPDK_COUNTERS_H
 
 #include <stdint.h>
+#include <rte_cycles.h>
 #include "tables.h"
 #include "shared_mem.h"
 
@@ -18,6 +19,9 @@
  * Allocated per-lcore in NUMA-local memory. Each lcore's pipeline_ctx
  * points to its own instance. Cache-line aligned to avoid false sharing.
  * ============================================================ */
+
+/* Latency histogram: 16 log2 buckets (0-1us, 1-2us, 2-4us, ..., 32ms+) */
+#define LATENCY_BUCKETS 16
 
 struct lcore_counters {
 	struct counter_value       policy_counters[MAX_POLICIES]
@@ -35,6 +39,8 @@ struct lcore_counters {
 	struct flood_state         flood_states[MAX_ZONES]
 		__attribute__((aligned(64)));
 	uint64_t                   nat_port_allocs[MAX_NAT_POOLS]
+		__attribute__((aligned(64)));
+	uint64_t                   latency_histogram[LATENCY_BUCKETS]
 		__attribute__((aligned(64)));
 };
 
@@ -119,6 +125,22 @@ ctr_nat_port_alloc(struct pipeline_ctx *ctx, uint32_t pool_id)
 		ctx->nat_port_allocs[pool_id]++;
 }
 
+static inline void
+ctr_latency_record(struct pipeline_ctx *ctx, uint64_t start_tsc)
+{
+	uint64_t delta = rte_rdtsc() - start_tsc;
+	uint64_t us = delta / ctx->tsc_per_us;
+	unsigned bucket;
+	if (us == 0)
+		bucket = 0;
+	else {
+		bucket = 64 - __builtin_clzll(us);
+		if (bucket >= LATENCY_BUCKETS)
+			bucket = LATENCY_BUCKETS - 1;
+	}
+	ctx->latency_histogram[bucket]++;
+}
+
 /* ============================================================
  * Aggregation functions (called from Go via CGo)
  *
@@ -187,5 +209,16 @@ uint64_t counters_aggregate_snat_port(void);
  * Aggregate SNAT port allocation counter for a specific pool.
  */
 void counters_aggregate_nat_port(uint32_t pool_id, uint64_t *allocs);
+
+/**
+ * Aggregate latency histogram across all lcores.
+ * Output array must have LATENCY_BUCKETS elements.
+ */
+void counters_aggregate_latency(uint64_t *out);
+
+/**
+ * Clear latency histograms on all lcores.
+ */
+void counters_clear_latency(void);
 
 #endif /* DPDK_COUNTERS_H */

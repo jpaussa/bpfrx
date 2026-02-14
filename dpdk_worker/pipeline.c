@@ -8,6 +8,7 @@
 
 #include <rte_mbuf.h>
 #include <rte_ether.h>
+#include <rte_cycles.h>
 
 #include "shared_mem.h"
 #include "tables.h"
@@ -96,6 +97,7 @@ process_packet(struct rte_mbuf *pkt, struct pipeline_ctx *ctx)
 {
 	struct pkt_meta meta;
 	int ct_result;
+	uint64_t start_tsc = rte_rdtsc();
 
 	memset(&meta, 0, sizeof(meta));
 	meta.dscp_rewrite = 0xFF;  /* sentinel: no DSCP rewrite */
@@ -153,6 +155,7 @@ process_packet(struct rte_mbuf *pkt, struct pipeline_ctx *ctx)
 			}
 			rte_pktmbuf_free(pkt);
 			ctr_global_inc(ctx, GLOBAL_CTR_DROPS);
+			ctr_latency_record(ctx, start_tsc);
 			return;
 		}
 		if (action != ACTION_PERMIT) {
@@ -171,6 +174,7 @@ process_packet(struct rte_mbuf *pkt, struct pipeline_ctx *ctx)
 						send_tcp_rst_v6(pkt, &meta, ctx);
 					rte_pktmbuf_free(pkt);
 					ctr_global_inc(ctx, GLOBAL_CTR_DROPS);
+					ctr_latency_record(ctx, start_tsc);
 					return;
 				}
 			}
@@ -182,8 +186,10 @@ process_packet(struct rte_mbuf *pkt, struct pipeline_ctx *ctx)
 
 	/* 7. NAT (replaces xdp_nat) */
 	if (meta.nat_flags & (SESS_FLAG_SNAT | SESS_FLAG_DNAT)) {
-		if (nat_rewrite(pkt, &meta, ctx) < 0)
+		if (nat_rewrite(pkt, &meta, ctx) < 0) {
+			ctr_latency_record(ctx, start_tsc);
 			return;  /* TTL expired — already freed */
+		}
 	}
 
 	/* 8. NAT64 (replaces xdp_nat64) */
@@ -211,6 +217,7 @@ forward:
 	if (ctx->shm->trace_enabled && trace_match(&meta, ctx->shm))
 		emit_event(ctx, &meta, EVENT_TYPE_PACKET_TRACE, ACTION_PERMIT);
 
+	ctr_latency_record(ctx, start_tsc);
 	return;
 
 drop:
@@ -220,6 +227,7 @@ drop:
 
 	rte_pktmbuf_free(pkt);
 	ctr_global_inc(ctx, GLOBAL_CTR_DROPS);
+	ctr_latency_record(ctx, start_tsc);
 }
 
 /**
